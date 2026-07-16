@@ -18,6 +18,7 @@
 #include "Modules/ModuleManager.h"
 #include "Components/LightComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "MuJoCo/Components/Geometry/MjGeom.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
@@ -348,6 +349,48 @@ bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 	Robot->MarkPackageDirty();
 	return true;
 }
+
+bool HideImportedFieldGeoms(UWorld* World, FString& OutError)
+{
+	if (!World)
+	{
+		OutError = TEXT("editor world unavailable");
+		return false;
+	}
+
+	AMjArticulation* Robot = nullptr;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		if (It->ActorId == VisionSmokeRobotId)
+		{
+			Robot = *It;
+			break;
+		}
+	}
+
+	if (!Robot)
+	{
+		OutError = TEXT("spawned robot_rp0 articulation not found");
+		return false;
+	}
+
+	TArray<UMjGeom*> Geoms;
+	Robot->GetComponents<UMjGeom>(Geoms);
+	for (UMjGeom* Geom : Geoms)
+	{
+		if (!Geom)
+			continue;
+
+		const FString MjName = Geom->MjName.IsEmpty() ? Geom->GetName() : Geom->MjName;
+		if (MjName == TEXT("floor") || MjName == TEXT("vision_floor") || MjName == TEXT("vision_marker"))
+		{
+			Geom->SetGeomVisibility(false);
+		}
+	}
+
+	Robot->MarkPackageDirty();
+	return true;
+}
 } // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSVisionSmokeCreateMap,
@@ -429,6 +472,12 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 			ActorName, ActorPath, SpawnClassPath, bWasExisting, SpawnError))
 	{
 		AddError(FString::Printf(TEXT("SpawnActorSync failed: %s"), *SpawnError));
+		return false;
+	}
+
+	if (!HideImportedFieldGeoms(World, SetupError))
+	{
+		AddError(SetupError);
 		return false;
 	}
 

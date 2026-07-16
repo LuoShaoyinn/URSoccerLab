@@ -3,9 +3,10 @@
 
 The source assets live under refs/ and are intentionally not copied into git.
 This script creates local generated XML files that still reference the original
-mesh directories, but add one camera at the root robot body origin:
+mesh directories, but add one camera in front of the root robot body, looking
+outward along +X so the smoke test does not capture the robot body itself:
 
-    <camera name="urlab_origin_camera" pos="0 0 0" fovy="90" resolution="640 480"/>
+    <camera name="urlab_origin_camera" pos="0.25 0 0.2" xyaxes="0 -1 0 0 0 1" fovy="90" resolution="640 480"/>
 """
 
 from __future__ import annotations
@@ -89,7 +90,8 @@ def generate_robot(robot: str, assets: Path, out_root: Path, width: int, height:
         "camera",
         {
             "name": "urlab_origin_camera",
-            "pos": "0 0 0",
+            "pos": "0.25 0 0.2",
+            "xyaxes": "0 -1 0 0 0 1",
             "fovy": f"{fovy:g}",
             "resolution": f"{width} {height}",
         },
