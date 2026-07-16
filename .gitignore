@@ -84,3 +84,5 @@ env/
 # Large game assets: track intentionally with Git LFS or remove this rule.
 *.uasset
 *.umap
+
+refs/
