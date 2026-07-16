@@ -1,0 +1,86 @@
+# Unreal generated files
+/Binaries/
+/Build/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+/.vs/
+/.vscode/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+Makefile
+
+# Unreal local/editor state
+*.code-workspace
+*.user
+*.sublime-workspace
+*.sublime-project
+/.ignore
+
+# Packaged/cooked output
+/Releases/
+/StagedBuilds/
+/WindowsNoEditor/
+/LinuxNoEditor/
+
+# Project-generated URLab/import artifacts
+/Content/MuJoCoImports/
+/Saved/URLab/
+/Saved/URLabShm/
+/Saved/URLabTest/
+
+# Python/local environment artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Logs and dumps
+*.log
+*.trace
+*.utrace
+*.dmp
+*.tmp
+
+# Binary/archive/model artifacts
+*.7z
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.onnx
+*.engine
+*.trt
+
+# Native build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+
+# URLab plugin local machine config and generated dependencies
+/Plugins/UnrealRoboticsLab/Config/LocalUnrealRoboticsLab.ini
+/Plugins/UnrealRoboticsLab/Binaries/
+/Plugins/UnrealRoboticsLab/Intermediate/
+/Plugins/UnrealRoboticsLab/DerivedDataCache/
+/Plugins/UnrealRoboticsLab/Saved/
+/Plugins/UnrealRoboticsLab/third_party/install/
+/Plugins/UnrealRoboticsLab/third_party/*/src/build/
+/Plugins/UnrealRoboticsLab/third_party/*/src/_deps/
+
+# Large game assets: track intentionally with Git LFS or remove this rule.
+*.uasset
+*.umap
