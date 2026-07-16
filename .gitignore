@@ -41,6 +41,9 @@ __pycache__/
 .venv/
 venv/
 env/
+.env
+.env.*
+/py_example/out/
 
 # Logs and dumps
 *.log

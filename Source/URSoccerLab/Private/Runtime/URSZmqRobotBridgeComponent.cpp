@@ -2,9 +2,11 @@
 
 #include "MuJoCo/Components/Actuators/MjActuator.h"
 #include "MuJoCo/Components/Joints/MjJoint.h"
+#include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MuJoCo/Core/MjPhysicsEngine.h"
+#include "Transport/NetworkManager.h"
 #include "Dom/JsonObject.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
@@ -471,6 +473,43 @@ void UURSZmqRobotBridgeComponent::PublishMetadata()
 		}
 		Root->SetArrayField(TEXT("joint_names"), JointNamesJson);
 		Root->SetArrayField(TEXT("joint_ids"), JointIdsJson);
+
+		TArray<TSharedPtr<FJsonValue>> CamerasJson;
+		if (AAMjManager* ManagerPtr = Manager.Get())
+		{
+			if (ManagerPtr->NetworkManager)
+			{
+				const TArray<UMjCamera*> Cameras = ManagerPtr->NetworkManager->GetActiveCameras();
+				for (UMjCamera* Camera : Cameras)
+				{
+					if (!Camera)
+					{
+						continue;
+					}
+					const AMjArticulation* CameraArticulation = Cast<AMjArticulation>(Camera->GetOwner());
+					const FString CameraPrefix = CameraArticulation ? CameraArticulation->GetName()
+																	 : (Camera->GetOwner() ? Camera->GetOwner()->GetName() : TEXT("unknown"));
+					if (CameraArticulation && CameraArticulation->ActorId == Endpoint.RobotName)
+					{
+						// Accept stable ActorId match as equivalent to actor name below.
+					}
+					else if (CameraPrefix != Endpoint.RobotName)
+					{
+						continue;
+					}
+
+					TSharedPtr<FJsonObject> CameraJson = MakeShared<FJsonObject>();
+					CameraJson->SetStringField(TEXT("name"), Camera->GetName());
+					CameraJson->SetStringField(TEXT("topic"), FString::Printf(TEXT("%s/camera/%s"), *CameraPrefix, *Camera->GetName()));
+					CameraJson->SetStringField(TEXT("endpoint"), Camera->GetActualZmqEndpoint());
+					CameraJson->SetStringField(TEXT("format"), Camera->CaptureMode == EMjCameraMode::Depth ? TEXT("float32_depth") : TEXT("bgra8"));
+					CameraJson->SetNumberField(TEXT("width"), Camera->resolution.Num() > 0 ? Camera->resolution[0] : 0);
+					CameraJson->SetNumberField(TEXT("height"), Camera->resolution.Num() > 1 ? Camera->resolution[1] : 0);
+					CamerasJson.Add(MakeShared<FJsonValueObject>(CameraJson));
+				}
+			}
+		}
+		Root->SetArrayField(TEXT("cameras"), CamerasJson);
 
 		FString Json;
 		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
