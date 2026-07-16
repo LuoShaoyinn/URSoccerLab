@@ -61,6 +61,10 @@ void UURSZmqRobotBridgeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	if (!bBridgeStarted)
 	{
+		if (bAutoStart)
+		{
+			StartBridge();
+		}
 		return;
 	}
 	if (bUsePhysicsCallbacks)

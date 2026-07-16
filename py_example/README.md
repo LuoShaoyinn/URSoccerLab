@@ -30,3 +30,13 @@ uv run python main.py \
   --camera-width 640 \
   --camera-height 480
 ```
+
+End-to-end simulator smoke test from the project root:
+
+```bash
+uv run python Tools/run_vision_smoke_test.py
+```
+
+That command refreshes `/Game/Levels/URS_VisionSmoke`, starts it offscreen, runs
+this client, and fails unless `py_example/out/vision_smoke/camera.png` is
+created.

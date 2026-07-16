@@ -34,6 +34,21 @@ python Tools/zmq_smoke_client.py --robot robot_rp0
 
 The script waits for `meta/robot_rp0`, sends one zero motor vector to that robot's command endpoint, then waits for one `state/robot_rp0` packet.
 
+## End-to-End Vision Smoke Test
+
+Run from the project root:
+
+```bash
+uv run python Tools/run_vision_smoke_test.py
+```
+
+The runner:
+
+- creates or refreshes `/Game/Levels/URS_VisionSmoke` with `robot_rp0`, `AAMjManager`, `UURSZmqRobotBridgeComponent`, and a ZMQ-enabled `UMjCamera`;
+- starts that map with `-game -RenderOffscreen`;
+- runs `py_example/main.py` to send all-zero motor commands and receive state/camera data;
+- fails unless `py_example/out/vision_smoke/camera.png` is written.
+
 ## Validation Run
 
 Commands used during implementation:

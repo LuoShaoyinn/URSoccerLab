@@ -11,5 +11,6 @@ public class URSoccerLabEditorTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.V6;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
 		ExtraModuleNames.Add("URSoccerLab");
+		ExtraModuleNames.Add("URSoccerLabEditor");
 	}
 }
