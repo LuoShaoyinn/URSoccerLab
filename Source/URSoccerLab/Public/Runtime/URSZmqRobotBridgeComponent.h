@@ -53,6 +53,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ", meta = (ClampMin = "0.0"))
 	double CommandTimeoutSec = 0.1;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ", meta = (ClampMin = "1.0", ClampMax = "1000.0"))
+	double StatePublishRateHz = 60.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ", meta = (ClampMin = "0.1"))
+	double MetaPublishIntervalSec = 1.0;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ")
 	TArray<FString> RobotNames;
 
@@ -67,6 +73,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "URSoccerLab|ZMQ")
 	int32 DrainCommandSockets();
+
+	UFUNCTION(BlueprintCallable, Category = "URSoccerLab|ZMQ")
+	void PublishMetadata();
+
+	UFUNCTION(BlueprintCallable, Category = "URSoccerLab|ZMQ")
+	void PublishState();
 
 	UFUNCTION(BlueprintPure, Category = "URSoccerLab|ZMQ")
 	const TArray<FURSRobotEndpointInfo>& GetEndpointInfo() const { return EndpointInfo; }
@@ -83,8 +95,11 @@ private:
 		FString StateTopic;
 		TWeakObjectPtr<AMjArticulation> Articulation;
 		TArray<TWeakObjectPtr<UMjActuator>> Actuators;
+		TArray<TWeakObjectPtr<class UMjJoint>> Joints;
 		TArray<FString> ActuatorNames;
 		TArray<int32> ActuatorIds;
+		TArray<FString> JointNames;
+		TArray<int32> JointIds;
 		URSoccerLab::FMotorCommandBuffer CommandBuffer;
 		void* CommandSocket = nullptr;
 	};
@@ -95,10 +110,17 @@ private:
 	TArray<FRobotRuntimeEndpoint> RuntimeEndpoints;
 	TWeakObjectPtr<AAMjManager> Manager;
 	void* ZmqContext = nullptr;
+	void* StatePublisher = nullptr;
+	void* MetaPublisher = nullptr;
 	bool bBridgeStarted = false;
+	double LastStatePublishSec = 0.0;
+	double LastMetaPublishSec = 0.0;
 
 	URSoccerLab::FRobotRuntimeConfig MakeRuntimeConfig() const;
 	bool BindCommandSockets();
+	bool BindPublisherSockets();
 	void CloseCommandSockets();
+	void ClosePublisherSockets();
 	void ApplyLatestCommands(double NowSec);
+	bool SendJsonMessage(void* Socket, const FString& Topic, const FString& Json) const;
 };

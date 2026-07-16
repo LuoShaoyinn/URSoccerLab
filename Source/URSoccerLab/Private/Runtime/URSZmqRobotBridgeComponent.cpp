@@ -1,8 +1,13 @@
 #include "Runtime/URSZmqRobotBridgeComponent.h"
 
 #include "MuJoCo/Components/Actuators/MjActuator.h"
+#include "MuJoCo/Components/Joints/MjJoint.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
+#include "MuJoCo/Core/MjPhysicsEngine.h"
+#include "Dom/JsonObject.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
+#include "Serialization/JsonSerializer.h"
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #endif
@@ -55,6 +60,18 @@ void UURSZmqRobotBridgeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	DrainCommandSockets();
 	const double NowSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
 	ApplyLatestCommands(NowSec);
+
+	const double StateIntervalSec = StatePublishRateHz > 0.0 ? 1.0 / StatePublishRateHz : 0.0;
+	if (StateIntervalSec <= 0.0 || NowSec - LastStatePublishSec >= StateIntervalSec)
+	{
+		PublishState();
+		LastStatePublishSec = NowSec;
+	}
+	if (NowSec - LastMetaPublishSec >= MetaPublishIntervalSec)
+	{
+		PublishMetadata();
+		LastMetaPublishSec = NowSec;
+	}
 }
 
 URSoccerLab::FRobotRuntimeConfig UURSZmqRobotBridgeComponent::MakeRuntimeConfig() const
@@ -92,8 +109,16 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 		StopBridge();
 		return false;
 	}
+	if (!BindPublisherSockets())
+	{
+		StopBridge();
+		return false;
+	}
 
 	bBridgeStarted = true;
+	PublishMetadata();
+	LastMetaPublishSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	LastStatePublishSec = 0.0;
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab ZMQ bridge started with %d robot command endpoints."), RuntimeEndpoints.Num());
 	return true;
 }
@@ -101,6 +126,7 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 void UURSZmqRobotBridgeComponent::StopBridge()
 {
 	CloseCommandSockets();
+	ClosePublisherSockets();
 	if (ZmqContext)
 	{
 		zmq_ctx_term(ZmqContext);
@@ -161,6 +187,13 @@ bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 		Actuators.Sort([](const UMjActuator& Left, const UMjActuator& Right) {
 			return Left.GetMjID() < Right.GetMjID();
 		});
+		TArray<UMjJoint*> Joints = (*ArticulationPtr)->GetJoints();
+		Joints.RemoveAll([](const UMjJoint* Joint) {
+			return !Joint || Joint->GetMjID() < 0;
+		});
+		Joints.Sort([](const UMjJoint& Left, const UMjJoint& Right) {
+			return Left.GetMjID() < Right.GetMjID();
+		});
 
 		FRobotRuntimeEndpoint Endpoint;
 		Endpoint.RobotName = Assignment.RobotName;
@@ -181,6 +214,12 @@ bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 			Endpoint.ActuatorIds.Add(Actuator->GetMjID());
 			Info.ActuatorNames.Add(Actuator->GetMjName());
 			Info.ActuatorIds.Add(Actuator->GetMjID());
+		}
+		for (UMjJoint* Joint : Joints)
+		{
+			Endpoint.Joints.Add(Joint);
+			Endpoint.JointNames.Add(Joint->GetMjName());
+			Endpoint.JointIds.Add(Joint->GetMjID());
 		}
 
 		RuntimeEndpoints.Add(MoveTemp(Endpoint));
@@ -219,6 +258,41 @@ bool UURSZmqRobotBridgeComponent::BindCommandSockets()
 	return true;
 }
 
+bool UURSZmqRobotBridgeComponent::BindPublisherSockets()
+{
+	if (!ZmqContext)
+	{
+		return false;
+	}
+
+	StatePublisher = zmq_socket(ZmqContext, ZMQ_PUB);
+	MetaPublisher = zmq_socket(ZmqContext, ZMQ_PUB);
+	if (!StatePublisher || !MetaPublisher)
+	{
+		UE_LOG(LogTemp, Error, TEXT("URSoccerLab ZMQ bridge: failed to create publisher sockets."));
+		return false;
+	}
+
+	ConfigureNonBlockingSocket(StatePublisher);
+	ConfigureNonBlockingSocket(MetaPublisher);
+
+	const FString StateEndpoint = URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(StatePort);
+	const FString MetaEndpoint = URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(MetaPort);
+	const FTCHARToUTF8 StateUtf8(*StateEndpoint);
+	const FTCHARToUTF8 MetaUtf8(*MetaEndpoint);
+	if (zmq_bind(StatePublisher, StateUtf8.Get()) != 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("URSoccerLab ZMQ bridge: failed to bind state publisher at %s."), *StateEndpoint);
+		return false;
+	}
+	if (zmq_bind(MetaPublisher, MetaUtf8.Get()) != 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("URSoccerLab ZMQ bridge: failed to bind metadata publisher at %s."), *MetaEndpoint);
+		return false;
+	}
+	return true;
+}
+
 void UURSZmqRobotBridgeComponent::CloseCommandSockets()
 {
 	for (FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
@@ -228,6 +302,20 @@ void UURSZmqRobotBridgeComponent::CloseCommandSockets()
 			zmq_close(Endpoint.CommandSocket);
 			Endpoint.CommandSocket = nullptr;
 		}
+	}
+}
+
+void UURSZmqRobotBridgeComponent::ClosePublisherSockets()
+{
+	if (StatePublisher)
+	{
+		zmq_close(StatePublisher);
+		StatePublisher = nullptr;
+	}
+	if (MetaPublisher)
+	{
+		zmq_close(MetaPublisher);
+		MetaPublisher = nullptr;
 	}
 }
 
@@ -298,5 +386,133 @@ void UURSZmqRobotBridgeComponent::ApplyLatestCommands(double NowSec)
 				Actuator->SetNetworkControl(Command[Idx]);
 			}
 		}
+	}
+}
+
+bool UURSZmqRobotBridgeComponent::SendJsonMessage(void* Socket, const FString& Topic, const FString& Json) const
+{
+	if (!Socket)
+	{
+		return false;
+	}
+
+	const FTCHARToUTF8 TopicUtf8(*Topic);
+	const FTCHARToUTF8 JsonUtf8(*Json);
+	if (zmq_send(Socket, TopicUtf8.Get(), TopicUtf8.Length(), ZMQ_SNDMORE) < 0)
+	{
+		return false;
+	}
+	return zmq_send(Socket, JsonUtf8.Get(), JsonUtf8.Length(), ZMQ_DONTWAIT) >= 0;
+}
+
+void UURSZmqRobotBridgeComponent::PublishMetadata()
+{
+	if (!MetaPublisher)
+	{
+		return;
+	}
+
+	for (const FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
+	{
+		TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+		Root->SetStringField(TEXT("version"), TEXT("urs_meta_v1"));
+		Root->SetStringField(TEXT("robot"), Endpoint.RobotName);
+		Root->SetStringField(TEXT("command_endpoint"), Endpoint.CommandEndpoint);
+		Root->SetStringField(TEXT("state_topic"), Endpoint.StateTopic);
+		Root->SetStringField(TEXT("state_endpoint"), URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(StatePort));
+		Root->SetStringField(TEXT("meta_endpoint"), URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(MetaPort));
+		Root->SetNumberField(TEXT("command_timeout_sec"), CommandTimeoutSec);
+
+		TArray<TSharedPtr<FJsonValue>> ActuatorNamesJson;
+		TArray<TSharedPtr<FJsonValue>> ActuatorIdsJson;
+		for (int32 Idx = 0; Idx < Endpoint.ActuatorNames.Num(); ++Idx)
+		{
+			ActuatorNamesJson.Add(MakeShared<FJsonValueString>(Endpoint.ActuatorNames[Idx]));
+			ActuatorIdsJson.Add(MakeShared<FJsonValueNumber>(Endpoint.ActuatorIds.IsValidIndex(Idx) ? Endpoint.ActuatorIds[Idx] : -1));
+		}
+		Root->SetArrayField(TEXT("actuator_names"), ActuatorNamesJson);
+		Root->SetArrayField(TEXT("actuator_ids"), ActuatorIdsJson);
+
+		TArray<TSharedPtr<FJsonValue>> JointNamesJson;
+		TArray<TSharedPtr<FJsonValue>> JointIdsJson;
+		for (int32 Idx = 0; Idx < Endpoint.JointNames.Num(); ++Idx)
+		{
+			JointNamesJson.Add(MakeShared<FJsonValueString>(Endpoint.JointNames[Idx]));
+			JointIdsJson.Add(MakeShared<FJsonValueNumber>(Endpoint.JointIds.IsValidIndex(Idx) ? Endpoint.JointIds[Idx] : -1));
+		}
+		Root->SetArrayField(TEXT("joint_names"), JointNamesJson);
+		Root->SetArrayField(TEXT("joint_ids"), JointIdsJson);
+
+		FString Json;
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
+		FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+		SendJsonMessage(MetaPublisher, FString::Printf(TEXT("meta/%s"), *Endpoint.RobotName), Json);
+	}
+}
+
+void UURSZmqRobotBridgeComponent::PublishState()
+{
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!StatePublisher || !ManagerPtr || !ManagerPtr->PhysicsEngine)
+	{
+		return;
+	}
+
+	mjModel* Model = ManagerPtr->PhysicsEngine->GetModel();
+	mjData* Data = ManagerPtr->PhysicsEngine->GetData();
+	if (!Model || !Data)
+	{
+		return;
+	}
+
+	const double NowSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	for (const FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
+	{
+		TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+		Root->SetStringField(TEXT("version"), TEXT("urs_state_v1"));
+		Root->SetStringField(TEXT("robot"), Endpoint.RobotName);
+		Root->SetNumberField(TEXT("sim_time"), Data->time);
+		Root->SetNumberField(TEXT("sequence"), static_cast<double>(Endpoint.CommandBuffer.GetLastAcceptedSequence()));
+		Root->SetBoolField(TEXT("command_timed_out"), Endpoint.CommandBuffer.IsTimedOut(NowSec));
+
+		TArray<TSharedPtr<FJsonValue>> QposJson;
+		TArray<TSharedPtr<FJsonValue>> QvelJson;
+		for (int32 JointId : Endpoint.JointIds)
+		{
+			if (JointId < 0 || JointId >= Model->njnt)
+			{
+				continue;
+			}
+			const int32 QposBegin = Model->jnt_qposadr[JointId];
+			const int32 QposEnd = JointId + 1 < Model->njnt ? Model->jnt_qposadr[JointId + 1] : Model->nq;
+			for (int32 Idx = QposBegin; Idx < QposEnd; ++Idx)
+			{
+				QposJson.Add(MakeShared<FJsonValueNumber>(Data->qpos[Idx]));
+			}
+
+			const int32 QvelBegin = Model->jnt_dofadr[JointId];
+			const int32 QvelEnd = JointId + 1 < Model->njnt ? Model->jnt_dofadr[JointId + 1] : Model->nv;
+			for (int32 Idx = QvelBegin; Idx < QvelEnd; ++Idx)
+			{
+				QvelJson.Add(MakeShared<FJsonValueNumber>(Data->qvel[Idx]));
+			}
+		}
+		Root->SetArrayField(TEXT("qpos"), QposJson);
+		Root->SetArrayField(TEXT("qvel"), QvelJson);
+
+		TArray<TSharedPtr<FJsonValue>> CommandJson;
+		const TArray<float> Command = Endpoint.CommandBuffer.GetCommandOrZero(NowSec);
+		for (float Value : Command)
+		{
+			CommandJson.Add(MakeShared<FJsonValueNumber>(Value));
+		}
+		Root->SetArrayField(TEXT("motor_command"), CommandJson);
+
+		FString Json;
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
+		FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+		SendJsonMessage(StatePublisher, Endpoint.StateTopic, Json);
 	}
 }
