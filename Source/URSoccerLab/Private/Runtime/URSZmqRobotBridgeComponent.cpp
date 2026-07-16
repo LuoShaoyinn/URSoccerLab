@@ -18,10 +18,15 @@
 
 namespace
 {
-void ConfigureNonBlockingSocket(void* Socket)
+void ConfigureSocketBase(void* Socket)
 {
 	int LingerMs = 0;
 	zmq_setsockopt(Socket, ZMQ_LINGER, &LingerMs, sizeof(LingerMs));
+}
+
+void ConfigureCommandSocket(void* Socket)
+{
+	ConfigureSocketBase(Socket);
 	int Conflate = 1;
 	zmq_setsockopt(Socket, ZMQ_CONFLATE, &Conflate, sizeof(Conflate));
 }
@@ -53,6 +58,10 @@ void UURSZmqRobotBridgeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	if (!bBridgeStarted)
+	{
+		return;
+	}
+	if (bUsePhysicsCallbacks)
 	{
 		return;
 	}
@@ -116,6 +125,7 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 	}
 
 	bBridgeStarted = true;
+	RegisterPhysicsCallbacks();
 	PublishMetadata();
 	LastMetaPublishSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
 	LastStatePublishSec = 0.0;
@@ -125,14 +135,33 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 
 void UURSZmqRobotBridgeComponent::StopBridge()
 {
-	CloseCommandSockets();
-	ClosePublisherSockets();
+	if (AAMjManager* ManagerPtr = Manager.Get())
+	{
+		if (ManagerPtr->PhysicsEngine)
+		{
+			FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+			bBridgeStarted = false;
+			CloseCommandSockets();
+			ClosePublisherSockets();
+		}
+		else
+		{
+			bBridgeStarted = false;
+			CloseCommandSockets();
+			ClosePublisherSockets();
+		}
+	}
+	else
+	{
+		bBridgeStarted = false;
+		CloseCommandSockets();
+		ClosePublisherSockets();
+	}
 	if (ZmqContext)
 	{
 		zmq_ctx_term(ZmqContext);
 		ZmqContext = nullptr;
 	}
-	bBridgeStarted = false;
 }
 
 bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
@@ -245,7 +274,7 @@ bool UURSZmqRobotBridgeComponent::BindCommandSockets()
 			return false;
 		}
 
-		ConfigureNonBlockingSocket(Endpoint.CommandSocket);
+		ConfigureCommandSocket(Endpoint.CommandSocket);
 		const FTCHARToUTF8 EndpointUtf8(*Endpoint.CommandEndpoint);
 		const int Rc = zmq_bind(Endpoint.CommandSocket, EndpointUtf8.Get());
 		if (Rc != 0)
@@ -273,8 +302,8 @@ bool UURSZmqRobotBridgeComponent::BindPublisherSockets()
 		return false;
 	}
 
-	ConfigureNonBlockingSocket(StatePublisher);
-	ConfigureNonBlockingSocket(MetaPublisher);
+	ConfigureSocketBase(StatePublisher);
+	ConfigureSocketBase(MetaPublisher);
 
 	const FString StateEndpoint = URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(StatePort);
 	const FString MetaEndpoint = URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(MetaPort);
@@ -398,7 +427,7 @@ bool UURSZmqRobotBridgeComponent::SendJsonMessage(void* Socket, const FString& T
 
 	const FTCHARToUTF8 TopicUtf8(*Topic);
 	const FTCHARToUTF8 JsonUtf8(*Json);
-	if (zmq_send(Socket, TopicUtf8.Get(), TopicUtf8.Length(), ZMQ_SNDMORE) < 0)
+	if (zmq_send(Socket, TopicUtf8.Get(), TopicUtf8.Length(), ZMQ_SNDMORE | ZMQ_DONTWAIT) < 0)
 	{
 		return false;
 	}
@@ -467,6 +496,79 @@ void UURSZmqRobotBridgeComponent::PublishState()
 	}
 
 	const double NowSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	PublishStateFromData(Model, Data, NowSec);
+}
+
+void UURSZmqRobotBridgeComponent::RegisterPhysicsCallbacks()
+{
+	if (bCallbacksRegistered || !bUsePhysicsCallbacks)
+	{
+		return;
+	}
+
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine)
+	{
+		return;
+	}
+
+	TWeakObjectPtr<UURSZmqRobotBridgeComponent> WeakSelf(this);
+	ManagerPtr->PhysicsEngine->RegisterPreStepCallback([WeakSelf](mjModel* Model, mjData* Data) {
+		if (UURSZmqRobotBridgeComponent* Self = WeakSelf.Get())
+		{
+			Self->PreStepPhysics(Model, Data);
+		}
+	});
+	ManagerPtr->PhysicsEngine->RegisterPostStepCallback([WeakSelf](mjModel* Model, mjData* Data) {
+		if (UURSZmqRobotBridgeComponent* Self = WeakSelf.Get())
+		{
+			Self->PostStepPhysics(Model, Data);
+		}
+	});
+
+	bCallbacksRegistered = true;
+}
+
+void UURSZmqRobotBridgeComponent::PreStepPhysics(mjModel* Model, mjData* Data)
+{
+	if (!bBridgeStarted)
+	{
+		return;
+	}
+
+	const double NowSec = FPlatformTime::Seconds();
+	DrainCommandSockets();
+	ApplyLatestCommands(NowSec);
+}
+
+void UURSZmqRobotBridgeComponent::PostStepPhysics(mjModel* Model, mjData* Data)
+{
+	if (!bBridgeStarted)
+	{
+		return;
+	}
+
+	const double NowSec = FPlatformTime::Seconds();
+	const double StateIntervalSec = StatePublishRateHz > 0.0 ? 1.0 / StatePublishRateHz : 0.0;
+	if (StateIntervalSec <= 0.0 || NowSec - LastStatePublishSec >= StateIntervalSec)
+	{
+		PublishStateFromData(Model, Data, NowSec);
+		LastStatePublishSec = NowSec;
+	}
+	if (NowSec - LastMetaPublishSec >= MetaPublishIntervalSec)
+	{
+		PublishMetadata();
+		LastMetaPublishSec = NowSec;
+	}
+}
+
+void UURSZmqRobotBridgeComponent::PublishStateFromData(mjModel* Model, mjData* Data, double NowSec)
+{
+	if (!StatePublisher || !Model || !Data)
+	{
+		return;
+	}
+
 	for (const FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
 	{
 		TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();

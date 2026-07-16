@@ -41,6 +41,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ")
 	bool bAutoStart = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ")
+	bool bUsePhysicsCallbacks = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|ZMQ", meta = (ClampMin = "10000", ClampMax = "65535"))
 	int32 CommandBasePort = URSoccerLab::DefaultCommandBasePort;
 
@@ -113,6 +116,7 @@ private:
 	void* StatePublisher = nullptr;
 	void* MetaPublisher = nullptr;
 	bool bBridgeStarted = false;
+	bool bCallbacksRegistered = false;
 	double LastStatePublishSec = 0.0;
 	double LastMetaPublishSec = 0.0;
 
@@ -122,5 +126,9 @@ private:
 	void CloseCommandSockets();
 	void ClosePublisherSockets();
 	void ApplyLatestCommands(double NowSec);
+	void RegisterPhysicsCallbacks();
+	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);
+	void PostStepPhysics(struct mjModel_* Model, struct mjData_* Data);
+	void PublishStateFromData(struct mjModel_* Model, struct mjData_* Data, double NowSec);
 	bool SendJsonMessage(void* Socket, const FString& Topic, const FString& Json) const;
 };
