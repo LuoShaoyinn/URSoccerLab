@@ -4,10 +4,16 @@
 #include "Editor.h"
 #include "Engine/Blueprint.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/PointLight.h"
+#include "Engine/SkyLight.h"
+#include "Engine/StaticMeshActor.h"
 #include "EngineUtils.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Components/LightComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
@@ -108,6 +114,67 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 	Bridge->RegisterComponent();
 
 	Manager->MarkPackageDirty();
+	return true;
+}
+
+bool SpawnVisualFixture(UWorld* World, FString& OutError)
+{
+	if (!World)
+	{
+		OutError = TEXT("editor world unavailable");
+		return false;
+	}
+
+	UStaticMesh* PlaneMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+	UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (!PlaneMesh || !CubeMesh)
+	{
+		OutError = TEXT("failed to load engine basic shape meshes");
+		return false;
+	}
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AStaticMeshActor* Floor = World->SpawnActor<AStaticMeshActor>(
+		AStaticMeshActor::StaticClass(), FVector(0.0, 0.0, -1.0), FRotator::ZeroRotator, Params);
+	if (!Floor || !Floor->GetStaticMeshComponent())
+	{
+		OutError = TEXT("failed to spawn vision floor");
+		return false;
+	}
+	Floor->SetActorLabel(TEXT("URS_VisionSmoke_Floor"));
+	Floor->Tags.AddUnique(FName(TEXT("URLab.ActorId=vision_floor_visual")));
+	Floor->GetStaticMeshComponent()->SetStaticMesh(PlaneMesh);
+	Floor->SetActorScale3D(FVector(0.08, 0.08, 1.0));
+
+	AStaticMeshActor* Marker = World->SpawnActor<AStaticMeshActor>(
+		AStaticMeshActor::StaticClass(), FVector(15.0, 0.0, 4.0), FRotator::ZeroRotator, Params);
+	if (!Marker || !Marker->GetStaticMeshComponent())
+	{
+		OutError = TEXT("failed to spawn vision marker");
+		return false;
+	}
+	Marker->SetActorLabel(TEXT("URS_VisionSmoke_Marker"));
+	Marker->Tags.AddUnique(FName(TEXT("URLab.ActorId=vision_marker_visual")));
+	Marker->GetStaticMeshComponent()->SetStaticMesh(CubeMesh);
+	Marker->SetActorScale3D(FVector(0.08, 0.08, 0.08));
+
+	ASkyLight* Sky = World->SpawnActor<ASkyLight>(
+		ASkyLight::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	if (Sky && Sky->GetLightComponent())
+	{
+		Sky->GetLightComponent()->SetIntensity(1.5f);
+	}
+
+	APointLight* Fill = World->SpawnActor<APointLight>(
+		APointLight::StaticClass(), FVector(80.0, -120.0, 180.0), FRotator::ZeroRotator, Params);
+	if (Fill && Fill->GetLightComponent())
+	{
+		Fill->GetLightComponent()->SetIntensity(8000.0f);
+		Fill->GetLightComponent()->SetLightColor(FLinearColor::White);
+	}
+
 	return true;
 }
 
@@ -213,6 +280,12 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	FString SetupError;
 	if (!SpawnManagerWithBridge(World, SetupError))
+	{
+		AddError(SetupError);
+		return false;
+	}
+
+	if (!SpawnVisualFixture(World, SetupError))
 	{
 		AddError(SetupError);
 		return false;

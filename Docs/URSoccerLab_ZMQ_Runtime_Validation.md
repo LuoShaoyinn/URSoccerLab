@@ -47,7 +47,7 @@ The runner:
 - creates or refreshes `/Game/Levels/URS_VisionSmoke` with `robot_rp0`, `AAMjManager`, `UURSZmqRobotBridgeComponent`, and a ZMQ-enabled `UMjCamera`;
 - starts that map with `-game -RenderOffscreen`;
 - runs `py_example/main.py` to send all-zero motor commands and receive state/camera data;
-- fails unless `py_example/out/vision_smoke/camera.png` is written.
+- drains multiple camera frames and fails unless `py_example/out/vision_smoke/camera.png` has nonblank RGB content.
 
 ## Validation Run
 

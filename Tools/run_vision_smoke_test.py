@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import zlib
 from pathlib import Path
 
 
@@ -21,6 +22,112 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_VisionSmoke"
+
+
+def paeth_predictor(left: int, above: int, upper_left: int) -> int:
+    estimate = left + above - upper_left
+    left_dist = abs(estimate - left)
+    above_dist = abs(estimate - above)
+    upper_left_dist = abs(estimate - upper_left)
+    if left_dist <= above_dist and left_dist <= upper_left_dist:
+        return left
+    if above_dist <= upper_left_dist:
+        return above
+    return upper_left
+
+
+def png_rgb_stats(path: Path) -> dict[str, float | int]:
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise RuntimeError(f"{path} is not a PNG")
+
+    offset = 8
+    width = height = bit_depth = color_type = None
+    compressed = bytearray()
+    while offset < len(data):
+        if offset + 8 > len(data):
+            raise RuntimeError(f"{path} has a truncated PNG chunk header")
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_data = data[offset + 8 : offset + 8 + length]
+        offset += 12 + length
+        if chunk_type == b"IHDR":
+            width = int.from_bytes(chunk_data[0:4], "big")
+            height = int.from_bytes(chunk_data[4:8], "big")
+            bit_depth = chunk_data[8]
+            color_type = chunk_data[9]
+            interlace = chunk_data[12]
+            if bit_depth != 8 or color_type not in (2, 6) or interlace != 0:
+                raise RuntimeError(
+                    f"unsupported PNG format: bit_depth={bit_depth}, "
+                    f"color_type={color_type}, interlace={interlace}"
+                )
+        elif chunk_type == b"IDAT":
+            compressed.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if width is None or height is None or color_type is None:
+        raise RuntimeError(f"{path} is missing PNG metadata")
+
+    channels = 4 if color_type == 6 else 3
+    row_bytes = width * channels
+    raw = zlib.decompress(bytes(compressed))
+    expected = (row_bytes + 1) * height
+    if len(raw) != expected:
+        raise RuntimeError(f"{path} decoded to {len(raw)} bytes, expected {expected}")
+
+    prev = bytearray(row_bytes)
+    pixels = 0
+    total = 0
+    max_channel = 0
+    non_black = 0
+    unique_sample: set[tuple[int, int, int]] = set()
+    sample_stride = max((width * height) // 4096, 1)
+
+    for y in range(height):
+        start = y * (row_bytes + 1)
+        filter_type = raw[start]
+        encoded = raw[start + 1 : start + 1 + row_bytes]
+        row = bytearray(row_bytes)
+        for i, value in enumerate(encoded):
+            left = row[i - channels] if i >= channels else 0
+            above = prev[i]
+            upper_left = prev[i - channels] if i >= channels else 0
+            if filter_type == 0:
+                decoded = value
+            elif filter_type == 1:
+                decoded = value + left
+            elif filter_type == 2:
+                decoded = value + above
+            elif filter_type == 3:
+                decoded = value + ((left + above) // 2)
+            elif filter_type == 4:
+                decoded = value + paeth_predictor(left, above, upper_left)
+            else:
+                raise RuntimeError(f"{path} has unsupported PNG filter {filter_type}")
+            row[i] = decoded & 0xFF
+
+        for x in range(width):
+            idx = x * channels
+            r, g, b = row[idx], row[idx + 1], row[idx + 2]
+            total += r + g + b
+            max_channel = max(max_channel, r, g, b)
+            if r > 4 or g > 4 or b > 4:
+                non_black += 1
+            if pixels % sample_stride == 0:
+                unique_sample.add((r, g, b))
+            pixels += 1
+        prev = row
+
+    return {
+        "width": width,
+        "height": height,
+        "mean_rgb": total / (pixels * 3),
+        "max_channel": max_channel,
+        "non_black_ratio": non_black / pixels,
+        "unique_sample": len(unique_sample),
+    }
 
 
 def run_checked(cmd: list[str], cwd: Path, log_path: Path | None = None) -> None:
@@ -103,6 +210,8 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=ROOT / "py_example" / "out" / "vision_smoke")
     parser.add_argument("--skip-setup", action="store_true")
     parser.add_argument("--sim-extra-arg", action="append", default=[])
+    parser.add_argument("--render-warmup-sec", type=float, default=2.0)
+    parser.add_argument("--camera-frame-count", type=int, default=20)
     args = parser.parse_args()
 
     if not args.ue.exists():
@@ -150,6 +259,9 @@ def main() -> int:
         if not sim_ready.is_set():
             raise RuntimeError(f"simulator did not start the URSoccerLab ZMQ bridge. See {sim_log_path}")
 
+        if args.render_warmup_sec > 0:
+            time.sleep(args.render_warmup_sec)
+
         result = subprocess.run(
             [
                 "uv",
@@ -164,6 +276,8 @@ def main() -> int:
                 str(args.timeout_ms),
                 "--out",
                 str(args.out),
+                "--camera-frame-count",
+                str(args.camera_frame_count),
             ],
             cwd=ROOT / "py_example",
             text=True,
@@ -184,7 +298,17 @@ def main() -> int:
         meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
         raise RuntimeError(f"camera.png was not produced. Metadata cameras={meta.get('cameras')!r}")
 
+    stats = png_rgb_stats(camera_path)
+    if (
+        stats["mean_rgb"] < 2.0
+        or stats["max_channel"] < 16
+        or stats["non_black_ratio"] < 0.01
+        or stats["unique_sample"] < 4
+    ):
+        raise RuntimeError(f"camera.png appears blank or nearly black: {stats}. See {sim_log_path}")
+
     print(f"vision smoke passed: {camera_path}")
+    print(json.dumps({"camera_stats": stats}, indent=2, sort_keys=True))
     return 0
 
 

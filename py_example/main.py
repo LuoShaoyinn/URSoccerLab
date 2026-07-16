@@ -41,6 +41,16 @@ def recv_frame(socket: zmq.Socket, timeout_ms: int) -> tuple[str, bytes]:
     return topic.decode("utf-8").strip(), payload
 
 
+def recv_latest_frame(socket: zmq.Socket, timeout_ms: int, frame_count: int) -> tuple[str, bytes, int]:
+    frame_count = max(frame_count, 1)
+    topic = ""
+    payload = b""
+    for index in range(frame_count):
+        per_frame_timeout = timeout_ms if index == 0 else max(timeout_ms // 3, 1000)
+        topic, payload = recv_frame(socket, per_frame_timeout)
+    return topic, payload, frame_count
+
+
 def wait_for_meta(ctx: zmq.Context, host: str, port: int, robot: str, timeout_ms: int) -> dict[str, Any]:
     sub = ctx.socket(zmq.SUB)
     sub.setsockopt_string(zmq.SUBSCRIBE, f"meta/{robot}")
@@ -73,6 +83,7 @@ def main() -> int:
     parser.add_argument("--camera-topic", default="")
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
+    parser.add_argument("--camera-frame-count", type=int, default=1)
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -128,12 +139,15 @@ def main() -> int:
             cam_sub.setsockopt_string(zmq.SUBSCRIBE, camera_topic)
             cam_sub.connect(client_endpoint(camera_endpoint, args.host))
             try:
-                frame_topic, frame = recv_frame(cam_sub, args.timeout_ms)
+                frame_topic, frame, camera_frame_count = recv_latest_frame(
+                    cam_sub, args.timeout_ms, args.camera_frame_count
+                )
             finally:
                 cam_sub.close(linger=0)
 
             result["camera_topic"] = frame_topic
             result["camera_bytes"] = len(frame)
+            result["camera_frame_count"] = camera_frame_count
             if camera_format == "bgra8":
                 image_path = out_dir / "camera.png"
                 save_bgra_png(frame, camera_width, camera_height, image_path)
