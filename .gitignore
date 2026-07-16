@@ -28,6 +28,7 @@ Makefile
 /StagedBuilds/
 /WindowsNoEditor/
 /LinuxNoEditor/
+/Generated/
 
 # Project-generated URLab/import artifacts
 /Content/MuJoCoImports/
