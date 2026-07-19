@@ -333,6 +333,10 @@ bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 		Camera->bEnableZmqBroadcast = true;
 		Camera->bEnableShmBroadcast = false;
 		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + Index);
+		if (Camera->CaptureComponent)
+		{
+			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
+		}
 		if (Camera->resolution.Num() < 2)
 		{
 			Camera->bOverride_resolution = true;

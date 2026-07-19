@@ -216,6 +216,7 @@ def main() -> int:
 
     if not args.ue.exists():
         raise FileNotFoundError(args.ue)
+    args.out = args.out.resolve()
 
     if not args.skip_setup:
         run_checked(
