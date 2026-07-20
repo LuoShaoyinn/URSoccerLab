@@ -56,7 +56,6 @@ Motor command plus camera validation:
 ```bash
 uv run python Tools/run_vision_smoke_test.py \
   --motion-regex head \
-  --motion-duration-sec 0.75 \
   --require-nonzero-command \
   --out py_example/out/motor_vision_smoke
 ```
@@ -68,6 +67,9 @@ link names are hardcoded in the project fixture instead of dynamically resolved.
 Metadata reports clean component names such as `head_pitch_joint`; generated
 URLab import prefixes are stripped at the URSoccerLab bridge boundary. The
 camera topic is `robot_rp0/camera/urlab_origin_camera`.
+Motion smoke defaults to a constant amplitude `1.0` command for `3.0` seconds
+and writes `camera_before.png`, `camera_after.png`, and `camera.png` without
+image-diff assertions.
 
 ## Validation Run
 

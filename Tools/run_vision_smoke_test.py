@@ -213,9 +213,9 @@ def main() -> int:
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
     parser.add_argument("--camera-frame-count", type=int, default=20)
     parser.add_argument("--motion-regex", default="")
-    parser.add_argument("--motion-amplitude", type=float, default=0.25)
-    parser.add_argument("--motion-frequency-hz", type=float, default=0.5)
-    parser.add_argument("--motion-duration-sec", type=float, default=0.0)
+    parser.add_argument("--motion-amplitude", type=float, default=1.0)
+    parser.add_argument("--motion-frequency-hz", type=float, default=0.0)
+    parser.add_argument("--motion-duration-sec", type=float, default=3.0)
     parser.add_argument("--motion-rate-hz", type=float, default=30.0)
     parser.add_argument("--require-nonzero-command", action="store_true")
     args = parser.parse_args()
@@ -321,6 +321,11 @@ def main() -> int:
         meta_path = args.out / "meta.json"
         meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
         raise RuntimeError(f"camera.png was not produced. Metadata cameras={meta.get('cameras')!r}")
+    if args.motion_regex:
+        for motion_camera_name in ("camera_before.png", "camera_after.png"):
+            motion_camera_path = args.out / motion_camera_name
+            if not motion_camera_path.exists() or motion_camera_path.stat().st_size <= 0:
+                raise RuntimeError(f"{motion_camera_name} was not produced")
 
     stats = png_rgb_stats(camera_path)
     if (

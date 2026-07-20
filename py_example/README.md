@@ -29,7 +29,8 @@ uv run python main.py \
   --robot robot_rp0 \
   --out out/head_motion \
   --motion-regex head \
-  --motion-duration-sec 0.75 \
+  --motion-amplitude 1.0 \
+  --motion-duration-sec 3.0 \
   --camera-frame-count 20
 ```
 
@@ -45,9 +46,14 @@ uv run python main.py \
   --robot robot_rp0 \
   --out out/pi_motion \
   --motion-regex head \
-  --motion-duration-sec 0.75 \
+  --motion-amplitude 1.0 \
+  --motion-duration-sec 3.0 \
   --camera-frame-count 20
 ```
+
+Motion runs save `camera_before.png`, `camera_after.png`, and keep
+`camera.png` as the after frame. By default `--motion-frequency-hz 0` sends a
+constant command; set a positive frequency to send a sine wave.
 
 Manual camera override:
 
@@ -74,7 +80,6 @@ End-to-end motor plus vision smoke test from the project root:
 ```bash
 uv run python Tools/run_vision_smoke_test.py \
   --motion-regex head \
-  --motion-duration-sec 0.75 \
   --require-nonzero-command \
   --out py_example/out/motor_vision_smoke
 ```

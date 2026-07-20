@@ -79,7 +79,10 @@ def build_motion_command(
     if not motion_indices:
         return motors
 
-    value = amplitude * math.sin(2.0 * math.pi * frequency_hz * elapsed_sec)
+    if frequency_hz <= 0.0:
+        value = amplitude
+    else:
+        value = amplitude * math.sin(2.0 * math.pi * frequency_hz * elapsed_sec)
     for offset, index in enumerate(motion_indices):
         motors[index] = value if offset % 2 == 0 else -value
     return motors
@@ -143,6 +146,7 @@ def send_motion_stream_and_recv_state(
     start = time.monotonic()
     next_send = start
     latest: tuple[str, dict[str, Any]] | None = None
+    latest_nonzero: tuple[str, dict[str, Any]] | None = None
     last_sequence = sequence - 1
     last_motors = [0.0] * motor_count
 
@@ -162,14 +166,18 @@ def send_motion_stream_and_recv_state(
             latest = received
             _, state = received
             if int(state.get("sequence", 0)) >= last_sequence and state_motor_max_abs(state) > 1.0e-5:
-                return last_sequence, last_motors, received[0], state
+                latest_nonzero = received
 
         if now > motion_deadline and latest is not None:
+            if latest_nonzero is not None:
+                return last_sequence, last_motors, latest_nonzero[0], latest_nonzero[1]
             return last_sequence, last_motors, latest[0], latest[1]
 
         time.sleep(0.002)
 
     if latest is not None:
+        if latest_nonzero is not None:
+            return last_sequence, last_motors, latest_nonzero[0], latest_nonzero[1]
         return last_sequence, last_motors, latest[0], latest[1]
     raise TimeoutError(f"timed out after {timeout_ms} ms")
 
@@ -193,6 +201,31 @@ def save_bgra_png(payload: bytes, width: int, height: int, path: Path) -> None:
     image.convert("RGB").save(path)
 
 
+def capture_camera_png(
+    ctx: zmq.Context,
+    endpoint: str,
+    topic: str,
+    host: str,
+    timeout_ms: int,
+    frame_count: int,
+    width: int,
+    height: int,
+    path: Path,
+) -> tuple[str, int, int]:
+    cam_sub = ctx.socket(zmq.SUB)
+    cam_sub.setsockopt_string(zmq.SUBSCRIBE, topic)
+    cam_sub.connect(client_endpoint(endpoint, host))
+    try:
+        frame_topic, frame, actual_frame_count = recv_latest_frame(
+            cam_sub, timeout_ms, frame_count
+        )
+    finally:
+        cam_sub.close(linger=0)
+
+    save_bgra_png(frame, width, height, path)
+    return frame_topic, len(frame), actual_frame_count
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -209,7 +242,7 @@ def main() -> int:
     parser.add_argument("--camera-frame-count", type=int, default=1)
     parser.add_argument("--motion-regex", default="")
     parser.add_argument("--motion-amplitude", type=float, default=0.25)
-    parser.add_argument("--motion-frequency-hz", type=float, default=0.5)
+    parser.add_argument("--motion-frequency-hz", type=float, default=0.0)
     parser.add_argument("--motion-duration-sec", type=float, default=0.0)
     parser.add_argument("--motion-rate-hz", type=float, default=30.0)
     args = parser.parse_args()
@@ -225,6 +258,37 @@ def main() -> int:
         actuator_names = list(meta.get("actuator_names", []))
         motors = len(actuator_names)
         motion_indices = select_motion_indices(actuator_names, args.motion_regex)
+
+        cameras = list(meta.get("cameras", []))
+        camera_endpoint = args.camera_endpoint
+        camera_topic = args.camera_topic
+        camera_width = args.camera_width
+        camera_height = args.camera_height
+        camera_format = "bgra8"
+
+        if not camera_endpoint and cameras:
+            camera = cameras[args.camera_index]
+            camera_endpoint = camera["endpoint"]
+            camera_topic = camera["topic"]
+            camera_width = int(camera["width"])
+            camera_height = int(camera["height"])
+            camera_format = camera.get("format", "bgra8")
+
+        camera_before_path: Path | None = None
+        if camera_endpoint and camera_topic and camera_format == "bgra8" and motion_indices:
+            camera_before_path = out_dir / "camera_before.png"
+            capture_camera_png(
+                ctx,
+                camera_endpoint,
+                camera_topic,
+                args.host,
+                args.timeout_ms,
+                args.camera_frame_count,
+                camera_width,
+                camera_height,
+                camera_before_path,
+            )
+
         push = ctx.socket(zmq.PUSH)
         push.connect(client_endpoint(meta["command_endpoint"], args.host))
 
@@ -250,21 +314,6 @@ def main() -> int:
             push.close(linger=0)
             state_sub.close(linger=0)
 
-        cameras = list(meta.get("cameras", []))
-        camera_endpoint = args.camera_endpoint
-        camera_topic = args.camera_topic
-        camera_width = args.camera_width
-        camera_height = args.camera_height
-        camera_format = "bgra8"
-
-        if not camera_endpoint and cameras:
-            camera = cameras[args.camera_index]
-            camera_endpoint = camera["endpoint"]
-            camera_topic = camera["topic"]
-            camera_width = int(camera["width"])
-            camera_height = int(camera["height"])
-            camera_format = camera.get("format", "bgra8")
-
         result: dict[str, Any] = {
             "robot": args.robot,
             "motors": motors,
@@ -279,26 +328,43 @@ def main() -> int:
         }
 
         if camera_endpoint and camera_topic:
-            cam_sub = ctx.socket(zmq.SUB)
-            cam_sub.setsockopt_string(zmq.SUBSCRIBE, camera_topic)
-            cam_sub.connect(client_endpoint(camera_endpoint, args.host))
-            try:
-                frame_topic, frame, camera_frame_count = recv_latest_frame(
-                    cam_sub, args.timeout_ms, args.camera_frame_count
-                )
-            finally:
-                cam_sub.close(linger=0)
-
-            result["camera_topic"] = frame_topic
-            result["camera_bytes"] = len(frame)
-            result["camera_frame_count"] = camera_frame_count
             if camera_format == "bgra8":
                 image_path = out_dir / "camera.png"
-                save_bgra_png(frame, camera_width, camera_height, image_path)
+                frame_topic, camera_bytes, camera_frame_count = capture_camera_png(
+                    ctx,
+                    camera_endpoint,
+                    camera_topic,
+                    args.host,
+                    args.timeout_ms,
+                    args.camera_frame_count,
+                    camera_width,
+                    camera_height,
+                    image_path,
+                )
+                result["camera_topic"] = frame_topic
+                result["camera_bytes"] = camera_bytes
+                result["camera_frame_count"] = camera_frame_count
                 result["camera_path"] = str(image_path)
+                if camera_before_path:
+                    camera_after_path = out_dir / "camera_after.png"
+                    camera_after_path.write_bytes(image_path.read_bytes())
+                    result["camera_before_path"] = str(camera_before_path)
+                    result["camera_after_path"] = str(camera_after_path)
             else:
+                cam_sub = ctx.socket(zmq.SUB)
+                cam_sub.setsockopt_string(zmq.SUBSCRIBE, camera_topic)
+                cam_sub.connect(client_endpoint(camera_endpoint, args.host))
+                try:
+                    frame_topic, frame, camera_frame_count = recv_latest_frame(
+                        cam_sub, args.timeout_ms, args.camera_frame_count
+                    )
+                finally:
+                    cam_sub.close(linger=0)
                 raw_path = out_dir / "camera.raw"
                 raw_path.write_bytes(frame)
+                result["camera_topic"] = frame_topic
+                result["camera_bytes"] = len(frame)
+                result["camera_frame_count"] = camera_frame_count
                 result["camera_path"] = str(raw_path)
                 result["camera_format"] = camera_format
         else:

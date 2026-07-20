@@ -40,6 +40,17 @@ class MotionCommandTest(unittest.TestCase):
         self.assertEqual(command[2], 0.0)
         self.assertTrue(math.isclose(command[3], -0.5, abs_tol=1.0e-6))
 
+    def test_builds_opposed_constant_command_when_frequency_is_zero(self) -> None:
+        command = main.build_motion_command(
+            motor_count=4,
+            motion_indices=[1, 3],
+            amplitude=1.0,
+            frequency_hz=0.0,
+            elapsed_sec=1.5,
+        )
+
+        self.assertEqual(command, [0.0, 1.0, 0.0, -1.0])
+
     def test_no_motion_indices_keep_zero_command(self) -> None:
         self.assertEqual(
             main.build_motion_command(
