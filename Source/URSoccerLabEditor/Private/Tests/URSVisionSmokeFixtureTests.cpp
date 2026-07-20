@@ -95,6 +95,7 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 	}
 
 	Manager->bAutoCreateSimulateWidget = false;
+	Manager->SetPaused(false);
 	if (Manager->NetworkManager)
 	{
 		Manager->NetworkManager->bEnableAllCameras = true;
