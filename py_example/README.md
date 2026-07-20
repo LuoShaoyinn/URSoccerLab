@@ -33,9 +33,10 @@ uv run python main.py \
   --camera-frame-count 20
 ```
 
-The current `pi_plus` smoke MJCF has head meshes but no head actuators, so use
-`--motion-fallback-first-n 2` to validate the motor-command path with that
-fixture:
+The project-owned `pi_plus` camera fixture unlocks `head_yaw_joint` and
+`head_pitch_joint`, so `--motion-regex head` targets those motors directly:
+The matching tuned URDF is
+`Assets/MosBrainCameraTest/pi_plus/pi_plus_head_camera.urdf`.
 
 ```bash
 uv run python main.py \
@@ -43,7 +44,6 @@ uv run python main.py \
   --robot robot_rp0 \
   --out out/pi_motion \
   --motion-regex head \
-  --motion-fallback-first-n 2 \
   --motion-duration-sec 0.75 \
   --camera-frame-count 20
 ```
@@ -73,13 +73,10 @@ End-to-end motor plus vision smoke test from the project root:
 ```bash
 uv run python Tools/run_vision_smoke_test.py \
   --motion-regex head \
-  --motion-fallback-first-n 2 \
   --motion-duration-sec 0.75 \
   --require-nonzero-command \
   --out py_example/out/motor_vision_smoke
 ```
-
-For a robot with real head actuators, drop `--motion-fallback-first-n 2`.
 
 Reusable UE soccer-field scene:
 

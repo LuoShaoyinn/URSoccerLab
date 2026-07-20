@@ -56,16 +56,15 @@ Motor command plus camera validation:
 ```bash
 uv run python Tools/run_vision_smoke_test.py \
   --motion-regex head \
-  --motion-fallback-first-n 2 \
   --motion-duration-sec 0.75 \
   --require-nonzero-command \
   --out py_example/out/motor_vision_smoke
 ```
 
-The current `pi_plus` fixture has head visual meshes but no head actuators, so
-the fallback option moves the first two actuators while still testing the same
-ZMQ motor command path. Remove the fallback for a robot whose metadata contains
-head actuator names.
+The project-owned `pi_plus` fixture unlocks `head_yaw_joint` and
+`head_pitch_joint`, and mounts `urlab_origin_camera` on `head_pitch_link`.
+For this phase, Pi is treated as a built-in fixed robot type; those joint and
+link names are hardcoded in the project fixture instead of dynamically resolved.
 
 ## Validation Run
 
