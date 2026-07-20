@@ -2,21 +2,19 @@
 
 #include "CoreMinimal.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "AssetImportTask.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
+#include "Engine/SkyLight.h"
 #include "Engine/StaticMeshActor.h"
-#include "Engine/Texture2D.h"
+#include "Engine/TextureCube.h"
 #include "EngineUtils.h"
-#include "IImageWrapper.h"
-#include "IImageWrapperModule.h"
-#include "Materials/Material.h"
-#include "Materials/MaterialInstanceConstant.h"
-#include "Misc/FileHelper.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
-#include "Modules/ModuleManager.h"
 #include "Components/LightComponent.h"
+#include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "MuJoCo/Components/Geometry/MjGeom.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
@@ -31,7 +29,8 @@ namespace
 {
 constexpr const TCHAR* VisionSmokeLevelName = TEXT("URS_VisionSmoke");
 constexpr const TCHAR* VisionSmokeRobotId = TEXT("robot_rp0");
-constexpr const TCHAR* VisionSmokeAssetPath = TEXT("/Game/URSoccerLab/VisionSmoke");
+constexpr const TCHAR* SoccerFieldSourcePath = TEXT("Assets/Scenes/SoccerField/source/field.glb");
+constexpr const TCHAR* SoccerFieldImportPath = TEXT("/Game/URSoccerLab/Scenes/SoccerField");
 
 bool SavePackageForObject(UObject* Object, FString& OutError)
 {
@@ -77,118 +76,22 @@ bool SaveImportedBlueprint(const FString& BlueprintShortName, FString& OutError)
 	return SavePackageForObject(Blueprint, OutError);
 }
 
-UTexture2D* ImportPitchTexture(const FString& SourcePath, FString& OutError)
+bool FindImportedSoccerFieldMeshes(TArray<UStaticMesh*>& OutMeshes)
 {
-	const FString PackageName = FPaths::Combine(VisionSmokeAssetPath, TEXT("T_VisionSmoke_Pitch"));
-	UTexture2D* ExistingTexture = LoadObject<UTexture2D>(nullptr, *PackageName);
-	if (ExistingTexture)
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	TArray<FAssetData> Assets;
+	AssetRegistry.GetAssetsByPath(FName(SoccerFieldImportPath), Assets, true);
+	for (const FAssetData& Asset : Assets)
 	{
-		return ExistingTexture;
-	}
-
-	TArray64<uint8> CompressedData;
-	if (!FFileHelper::LoadFileToArray(CompressedData, *SourcePath))
-	{
-		OutError = FString::Printf(TEXT("failed to load pitch texture file: %s"), *SourcePath);
-		return nullptr;
-	}
-
-	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-	if (!ImageWrapper.IsValid() || !ImageWrapper->SetCompressed(CompressedData.GetData(), CompressedData.Num()))
-	{
-		OutError = FString::Printf(TEXT("failed to decode pitch texture file: %s"), *SourcePath);
-		return nullptr;
-	}
-
-	TArray<uint8> RawData;
-	if (!ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
-	{
-		OutError = FString::Printf(TEXT("failed to extract pitch texture pixels: %s"), *SourcePath);
-		return nullptr;
-	}
-
-	UPackage* Package = CreatePackage(*PackageName);
-	Package->FullyLoad();
-
-	UTexture2D* Texture = NewObject<UTexture2D>(
-		Package, TEXT("T_VisionSmoke_Pitch"), RF_Public | RF_Standalone);
-	Texture->Source.Init(ImageWrapper->GetWidth(), ImageWrapper->GetHeight(), 1, 1, TSF_BGRA8, RawData.GetData());
-	Texture->SRGB = true;
-	Texture->CompressionSettings = TextureCompressionSettings::TC_Default;
-	Texture->MipGenSettings = TextureMipGenSettings::TMGS_FromTextureGroup;
-	Texture->UpdateResource();
-
-	Package->MarkPackageDirty();
-	FAssetRegistryModule::AssetCreated(Texture);
-	if (!SavePackageForObject(Texture, OutError))
-	{
-		return nullptr;
-	}
-
-	return Texture;
-}
-
-UMaterialInstanceConstant* CreatePitchMaterial(UTexture2D* PitchTexture, FString& OutError)
-{
-	if (!PitchTexture)
-	{
-		OutError = TEXT("cannot create pitch material without a texture");
-		return nullptr;
-	}
-
-	const FString PackageName = FPaths::Combine(VisionSmokeAssetPath, TEXT("MI_VisionSmoke_Pitch"));
-	UMaterialInstanceConstant* ExistingMaterial = LoadObject<UMaterialInstanceConstant>(nullptr, *PackageName);
-	if (ExistingMaterial)
-	{
-		return ExistingMaterial;
-	}
-
-	UMaterial* MasterMaterial = LoadObject<UMaterial>(
-		nullptr, TEXT("/UnrealRoboticsLab/Materials/M_MuJoCo_Master.M_MuJoCo_Master"));
-	if (!MasterMaterial)
-	{
-		OutError = TEXT("failed to load URLab master material");
-		return nullptr;
-	}
-
-	UPackage* Package = CreatePackage(*PackageName);
-	Package->FullyLoad();
-
-	UMaterialInstanceConstant* Material = NewObject<UMaterialInstanceConstant>(
-		Package, TEXT("MI_VisionSmoke_Pitch"), RF_Public | RF_Standalone);
-	Material->SetParentEditorOnly(MasterMaterial);
-	Material->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(TEXT("BaseColor")), FLinearColor::White);
-	Material->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(TEXT("BaseColorTexture")), PitchTexture);
-
-	FTextureParameterValue TextureParam;
-	TextureParam.ParameterInfo = FMaterialParameterInfo(TEXT("BaseColorTexture"));
-	TextureParam.ParameterValue = PitchTexture;
-	TextureParam.ExpressionGUID = FGuid();
-	Material->TextureParameterValues.Add(TextureParam);
-
-	FStaticParameterSet StaticParams;
-	Material->GetStaticParameterValues(StaticParams);
-	for (FStaticSwitchParameter& Param : StaticParams.StaticSwitchParameters)
-	{
-		if (Param.ParameterInfo.Name == TEXT("bUseTexture"))
+		if (Asset.AssetClassPath.GetAssetName() == TEXT("StaticMesh"))
 		{
-			Param.Value = true;
-			Param.bOverride = true;
-			break;
+			if (UStaticMesh* Mesh = Cast<UStaticMesh>(Asset.GetAsset()))
+			{
+				OutMeshes.AddUnique(Mesh);
+			}
 		}
 	}
-	Material->UpdateStaticPermutation(StaticParams);
-	Material->PostEditChange();
-
-	Package->MarkPackageDirty();
-	FAssetRegistryModule::AssetCreated(Material);
-	if (!SavePackageForObject(Material, OutError))
-	{
-		return nullptr;
-	}
-
-	return Material;
+	return !OutMeshes.IsEmpty();
 }
 
 bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
@@ -245,50 +148,90 @@ bool SpawnVisualFixture(UWorld* World, FString& OutError)
 		return false;
 	}
 
-	UStaticMesh* PlaneMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-	if (!PlaneMesh)
+	const FString FieldSourcePath = FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(FPaths::ProjectDir(), SoccerFieldSourcePath));
+	if (!FPaths::FileExists(FieldSourcePath))
 	{
-		OutError = TEXT("failed to load engine plane mesh");
+		OutError = FString::Printf(TEXT("soccer field GLB is missing: %s"), *FieldSourcePath);
 		return false;
 	}
 
-	const FString PitchTexturePath = FPaths::ConvertRelativePathToFull(
-		FPaths::Combine(FPaths::ProjectDir(),
-			TEXT("refs/mos-brain/simulation/mujoco/assets/environments/soccer/assets/pitch_nologo_l.png")));
-	if (!FPaths::FileExists(PitchTexturePath))
+	TArray<UStaticMesh*> FieldMeshes;
+	if (!FindImportedSoccerFieldMeshes(FieldMeshes))
 	{
-		OutError = FString::Printf(TEXT("soccer pitch texture is missing: %s"), *PitchTexturePath);
-		return false;
-	}
+		UAssetImportTask* ImportTask = NewObject<UAssetImportTask>();
+		ImportTask->Filename = FieldSourcePath;
+		ImportTask->DestinationPath = SoccerFieldImportPath;
+		ImportTask->bAutomated = true;
+		ImportTask->bSave = true;
+		ImportTask->bReplaceExisting = true;
+		ImportTask->bReplaceExistingSettings = true;
 
-	UTexture2D* PitchTexture = ImportPitchTexture(PitchTexturePath, OutError);
-	if (!PitchTexture)
-	{
-		return false;
-	}
+		TArray<UAssetImportTask*> ImportTasks;
+		ImportTasks.Add(ImportTask);
+		FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get().ImportAssetTasks(ImportTasks);
 
-	UMaterialInstanceConstant* PitchMaterial = CreatePitchMaterial(PitchTexture, OutError);
-	if (!PitchMaterial)
-	{
-		return false;
+		if (!FindImportedSoccerFieldMeshes(FieldMeshes))
+		{
+			OutError = FString::Printf(TEXT("failed to import static meshes from soccer field GLB: %s"), *FieldSourcePath);
+			return false;
+		}
 	}
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-	AStaticMeshActor* Floor = World->SpawnActor<AStaticMeshActor>(
-		AStaticMeshActor::StaticClass(), FVector(0.0, 0.0, -0.5), FRotator::ZeroRotator, Params);
-	if (!Floor || !Floor->GetStaticMeshComponent())
+	for (int32 MeshIndex = 0; MeshIndex < FieldMeshes.Num(); ++MeshIndex)
 	{
-		OutError = TEXT("failed to spawn vision floor");
+		UStaticMesh* FieldMesh = FieldMeshes[MeshIndex];
+		if (!FieldMesh)
+			continue;
+
+		AStaticMeshActor* FieldActor = World->SpawnActor<AStaticMeshActor>(
+			AStaticMeshActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+		if (!FieldActor || !FieldActor->GetStaticMeshComponent())
+		{
+			OutError = TEXT("failed to spawn soccer field mesh");
+			return false;
+		}
+
+		FieldActor->SetActorLabel(FString::Printf(TEXT("URS_SoccerField_%d"), MeshIndex));
+		FieldActor->Tags.AddUnique(FName(TEXT("URLab.ActorId=soccer_field_visual")));
+		FieldActor->GetStaticMeshComponent()->SetStaticMesh(FieldMesh);
+	}
+
+	return true;
+}
+
+bool SpawnSkyLight(UWorld* World, FString& OutError)
+{
+	if (!World)
+	{
+		OutError = TEXT("editor world unavailable");
 		return false;
 	}
-	Floor->SetActorLabel(TEXT("URS_VisionSmoke_Floor"));
-	Floor->Tags.AddUnique(FName(TEXT("URLab.ActorId=vision_floor_visual")));
-	Floor->GetStaticMeshComponent()->SetStaticMesh(PlaneMesh);
-	Floor->GetStaticMeshComponent()->SetMaterial(0, PitchMaterial);
-	Floor->SetActorScale3D(FVector(9.0, 6.0, 1.0));
 
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ASkyLight* Sky = World->SpawnActor<ASkyLight>(
+		ASkyLight::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	if (!Sky || !Sky->GetLightComponent())
+	{
+		OutError = TEXT("failed to spawn sky light");
+		return false;
+	}
+
+	Sky->SetActorLabel(TEXT("URS_VisionSmoke_SkyLight"));
+	Sky->Tags.AddUnique(FName(TEXT("URLab.ActorId=vision_sky_light")));
+	USkyLightComponent* SkyComponent = Sky->GetLightComponent();
+	SkyComponent->SourceType = SLS_SpecifiedCubemap;
+	SkyComponent->SetCubemap(LoadObject<UTextureCube>(
+		nullptr, TEXT("/Engine/MapTemplates/Sky/DaylightAmbientCubemap.DaylightAmbientCubemap")));
+	SkyComponent->bLowerHemisphereIsBlack = false;
+	SkyComponent->SetLowerHemisphereColor(FLinearColor::White);
+	SkyComponent->SetIntensity(3.0f);
+	SkyComponent->SetMobility(EComponentMobility::Movable);
+	SkyComponent->RecaptureSky();
 	return true;
 }
 
@@ -451,17 +394,9 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	FString LightName;
-	FString LightPath;
-	FString LightKind;
-	FString LightError;
-	if (!URLabLevelOps::SpawnLightSync(
-			TEXT("point"), TEXT("vision_key_light"),
-			FVector(0.0, 0.0, 4.0), FVector::ZeroVector,
-			50000.0f, FLinearColor::White,
-			LightName, LightPath, LightKind, LightError))
+	if (!SpawnSkyLight(World, SetupError))
 	{
-		AddError(FString::Printf(TEXT("SpawnLightSync failed: %s"), *LightError));
+		AddError(SetupError);
 		return false;
 	}
 
