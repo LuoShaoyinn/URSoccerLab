@@ -190,6 +190,51 @@ bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 	return true;
 }
 
+bool EnsureRobotActorName(UWorld* World, FString& OutError)
+{
+	if (!World)
+	{
+		OutError = TEXT("editor world unavailable");
+		return false;
+	}
+
+	AMjArticulation* Robot = nullptr;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		if (It->ActorId == VisionSmokeRobotId)
+		{
+			Robot = *It;
+			break;
+		}
+	}
+
+	if (!Robot)
+	{
+		OutError = TEXT("spawned robot_rp0 articulation not found");
+		return false;
+	}
+
+	if (Robot->GetName() != VisionSmokeRobotId)
+	{
+		if (UObject* Existing = StaticFindObjectFast(AActor::StaticClass(), Robot->GetOuter(), FName(VisionSmokeRobotId)))
+		{
+			if (Existing != Robot)
+			{
+				OutError = FString::Printf(TEXT("cannot rename robot actor to %s; object already exists"), VisionSmokeRobotId);
+				return false;
+			}
+		}
+		if (!Robot->Rename(VisionSmokeRobotId, nullptr, REN_DontCreateRedirectors | REN_NonTransactional))
+		{
+			OutError = FString::Printf(TEXT("failed to rename robot actor to %s"), VisionSmokeRobotId);
+			return false;
+		}
+	}
+	Robot->SetActorLabel(VisionSmokeRobotId);
+	Robot->MarkPackageDirty();
+	return true;
+}
+
 bool HideImportedFieldGeoms(UWorld* World, FString& OutError)
 {
 	if (!World)
@@ -292,6 +337,12 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 			ActorName, ActorPath, SpawnClassPath, bWasExisting, SpawnError))
 	{
 		AddError(FString::Printf(TEXT("SpawnActorSync failed: %s"), *SpawnError));
+		return false;
+	}
+
+	if (!EnsureRobotActorName(World, SetupError))
+	{
+		AddError(SetupError);
 		return false;
 	}
 

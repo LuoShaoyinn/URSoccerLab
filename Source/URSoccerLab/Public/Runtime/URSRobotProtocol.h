@@ -61,6 +61,8 @@ public:
 	static bool IsValidCommandBasePort(int32 BasePort, int32 RobotCount);
 	static bool BuildPortAssignments(const FRobotRuntimeConfig& Config, TArray<FRobotPortAssignment>& OutAssignments);
 	static FString BuildTcpBindEndpoint(int32 Port);
+	static FString NormalizeImportedComponentName(const FString& Name);
+	static FString NormalizeRobotComponentName(const FString& Name, const FString& RobotName);
 
 	static TArray<uint8> EncodeMotorCommand(const FMotorCommand& Command);
 	static FMotorCommandParseResult DecodeMotorCommand(const TArrayView<const uint8> Payload, int32 ExpectedMotorCount);

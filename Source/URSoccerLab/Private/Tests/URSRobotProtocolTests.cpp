@@ -59,6 +59,30 @@ bool FURSMotorCommandDecodeTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSImportedComponentNameTest,
+	"URSoccerLab.Runtime.Protocol.ImportedComponentNameNormalization",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FURSImportedComponentNameTest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("generated blueprint prefix stripped"),
+		FRobotProtocol::NormalizeImportedComponentName(TEXT("pi_plus_urlab_origin_camera_C_0_head_pitch_joint")),
+		FString(TEXT("head_pitch_joint")));
+	TestEqual(TEXT("normal joint name unchanged"),
+		FRobotProtocol::NormalizeImportedComponentName(TEXT("l_hip_pitch_joint")),
+		FString(TEXT("l_hip_pitch_joint")));
+	TestEqual(TEXT("incomplete marker unchanged"),
+		FRobotProtocol::NormalizeImportedComponentName(TEXT("robot_C_head_pitch_joint")),
+		FString(TEXT("robot_C_head_pitch_joint")));
+	TestEqual(TEXT("robot actor prefix stripped"),
+		FRobotProtocol::NormalizeRobotComponentName(TEXT("robot_rp0_head_pitch_joint"), TEXT("robot_rp0")),
+		FString(TEXT("head_pitch_joint")));
+	TestEqual(TEXT("generated blueprint and robot prefixes stripped"),
+		FRobotProtocol::NormalizeRobotComponentName(TEXT("pi_plus_urlab_origin_camera_C_0_head_pitch_joint"), TEXT("robot_rp0")),
+		FString(TEXT("head_pitch_joint")));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSMotorCommandBufferTest,
 	"URSoccerLab.Runtime.Protocol.CommandBufferIsolationAndTimeout",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)

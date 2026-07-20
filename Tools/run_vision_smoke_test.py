@@ -217,7 +217,6 @@ def main() -> int:
     parser.add_argument("--motion-frequency-hz", type=float, default=0.5)
     parser.add_argument("--motion-duration-sec", type=float, default=0.0)
     parser.add_argument("--motion-rate-hz", type=float, default=30.0)
-    parser.add_argument("--motion-fallback-first-n", type=int, default=0)
     parser.add_argument("--require-nonzero-command", action="store_true")
     args = parser.parse_args()
 
@@ -299,8 +298,6 @@ def main() -> int:
                     str(args.motion_duration_sec),
                     "--motion-rate-hz",
                     str(args.motion_rate_hz),
-                    "--motion-fallback-first-n",
-                    str(args.motion_fallback_first_n),
                 ]
             )
 

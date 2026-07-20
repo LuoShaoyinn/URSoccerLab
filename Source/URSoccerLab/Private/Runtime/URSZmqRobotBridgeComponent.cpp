@@ -32,6 +32,7 @@ void ConfigureCommandSocket(void* Socket)
 	int Conflate = 1;
 	zmq_setsockopt(Socket, ZMQ_CONFLATE, &Conflate, sizeof(Conflate));
 }
+
 } // namespace
 
 UURSZmqRobotBridgeComponent::UURSZmqRobotBridgeComponent()
@@ -244,16 +245,20 @@ bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 
 		for (UMjActuator* Actuator : Actuators)
 		{
+			const FString CleanActuatorName =
+				URSoccerLab::FRobotProtocol::NormalizeRobotComponentName(Actuator->GetMjName(), Endpoint.RobotName);
 			Endpoint.Actuators.Add(Actuator);
-			Endpoint.ActuatorNames.Add(Actuator->GetMjName());
+			Endpoint.ActuatorNames.Add(CleanActuatorName);
 			Endpoint.ActuatorIds.Add(Actuator->GetMjID());
-			Info.ActuatorNames.Add(Actuator->GetMjName());
+			Info.ActuatorNames.Add(CleanActuatorName);
 			Info.ActuatorIds.Add(Actuator->GetMjID());
 		}
 		for (UMjJoint* Joint : Joints)
 		{
+			const FString CleanJointName =
+				URSoccerLab::FRobotProtocol::NormalizeRobotComponentName(Joint->GetMjName(), Endpoint.RobotName);
 			Endpoint.Joints.Add(Joint);
-			Endpoint.JointNames.Add(Joint->GetMjName());
+			Endpoint.JointNames.Add(CleanJointName);
 			Endpoint.JointIds.Add(Joint->GetMjID());
 		}
 

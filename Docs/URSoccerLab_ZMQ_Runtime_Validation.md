@@ -46,7 +46,7 @@ uv run python Tools/run_vision_smoke_test.py
 
 The runner:
 
-- creates or refreshes `/Game/Levels/URS_VisionSmoke` with `robot_rp0`, `AAMjManager`, `UURSZmqRobotBridgeComponent`, and a ZMQ-enabled `UMjCamera`;
+- creates or refreshes `/Game/Levels/URS_SoccerField` with `robot_rp0`, `AAMjManager`, `UURSZmqRobotBridgeComponent`, and a ZMQ-enabled `UMjCamera`;
 - starts that map with `-game -RenderOffscreen`;
 - runs `py_example/main.py` to send all-zero motor commands and receive state/camera data;
 - drains multiple camera frames and fails unless `py_example/out/vision_smoke/camera.png` has nonblank RGB content.
@@ -65,6 +65,9 @@ The project-owned `pi_plus` fixture unlocks `head_yaw_joint` and
 `head_pitch_joint`, and mounts `urlab_origin_camera` on `head_pitch_link`.
 For this phase, Pi is treated as a built-in fixed robot type; those joint and
 link names are hardcoded in the project fixture instead of dynamically resolved.
+Metadata reports clean component names such as `head_pitch_joint`; generated
+URLab import prefixes are stripped at the URSoccerLab bridge boundary. The
+camera topic is `robot_rp0/camera/urlab_origin_camera`.
 
 ## Validation Run
 

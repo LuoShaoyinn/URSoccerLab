@@ -35,6 +35,7 @@ uv run python main.py \
 
 The project-owned `pi_plus` camera fixture unlocks `head_yaw_joint` and
 `head_pitch_joint`, so `--motion-regex head` targets those motors directly:
+
 The matching tuned URDF is
 `Assets/MosBrainCameraTest/pi_plus/pi_plus_head_camera.urdf`.
 
@@ -53,7 +54,7 @@ Manual camera override:
 ```bash
 uv run python main.py \
   --camera-endpoint tcp://127.0.0.1:5558 \
-  --camera-topic robot_rp0/camera/Camera \
+  --camera-topic robot_rp0/camera/urlab_origin_camera \
   --camera-width 640 \
   --camera-height 480
 ```

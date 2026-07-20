@@ -14,16 +14,17 @@ class MotionCommandTest(unittest.TestCase):
             "robot_Head_pitch",
         ]
 
-        self.assertEqual(main.select_motion_indices(names, "head", 0), [1, 2])
+        self.assertEqual(main.select_motion_indices(names, "head"), [1, 2])
 
-    def test_falls_back_to_first_actuators_when_pattern_is_absent(self) -> None:
+    def test_missing_motion_actuator_fails(self) -> None:
         names = [
             "pi_l_hip_pitch_joint",
             "pi_l_hip_roll_joint",
             "pi_l_shoulder_pitch_joint",
         ]
 
-        self.assertEqual(main.select_motion_indices(names, "head", 2), [0, 1])
+        with self.assertRaisesRegex(RuntimeError, "no actuator name matched"):
+            main.select_motion_indices(names, "head")
 
     def test_builds_opposed_sine_command_for_selected_actuators(self) -> None:
         command = main.build_motion_command(

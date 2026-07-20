@@ -56,7 +56,6 @@ def recv_latest_frame(socket: zmq.Socket, timeout_ms: int, frame_count: int) -> 
 def select_motion_indices(
     actuator_names: list[str],
     pattern: str,
-    fallback_first_n: int,
 ) -> list[int]:
     if not pattern:
         return []
@@ -65,9 +64,6 @@ def select_motion_indices(
     indices = [index for index, name in enumerate(actuator_names) if compiled.search(name)]
     if indices:
         return indices
-
-    if fallback_first_n > 0:
-        return list(range(min(fallback_first_n, len(actuator_names))))
 
     raise RuntimeError(f"no actuator name matched --motion-regex {pattern!r}")
 
@@ -216,7 +212,6 @@ def main() -> int:
     parser.add_argument("--motion-frequency-hz", type=float, default=0.5)
     parser.add_argument("--motion-duration-sec", type=float, default=0.0)
     parser.add_argument("--motion-rate-hz", type=float, default=30.0)
-    parser.add_argument("--motion-fallback-first-n", type=int, default=0)
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -229,9 +224,7 @@ def main() -> int:
 
         actuator_names = list(meta.get("actuator_names", []))
         motors = len(actuator_names)
-        motion_indices = select_motion_indices(
-            actuator_names, args.motion_regex, args.motion_fallback_first_n
-        )
+        motion_indices = select_motion_indices(actuator_names, args.motion_regex)
         push = ctx.socket(zmq.PUSH)
         push.connect(client_endpoint(meta["command_endpoint"], args.host))
 
