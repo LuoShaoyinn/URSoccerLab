@@ -129,6 +129,29 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 	return true;
 }
 
+void DestroyExistingVisionSmokeRobot(UWorld* World)
+{
+	if (!World)
+		return;
+
+	TArray<AActor*> ActorsToDestroy;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		AMjArticulation* Robot = *It;
+		if (Robot && Robot->ActorId == VisionSmokeRobotId)
+		{
+			ActorsToDestroy.Add(Robot);
+		}
+	}
+
+	for (AActor* Actor : ActorsToDestroy)
+	{
+		const FName StaleName = MakeUniqueObjectName(Actor->GetOuter(), Actor->GetClass(), FName(TEXT("stale_robot_rp0")));
+		Actor->Rename(*StaleName.ToString(), Actor->GetOuter(), REN_DontCreateRedirectors | REN_NonTransactional);
+		World->DestroyActor(Actor);
+	}
+}
+
 bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 {
 	if (!World)
@@ -167,11 +190,17 @@ bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 		if (!Camera)
 			continue;
 
+		Camera->SetUsingAbsoluteLocation(false);
+		Camera->SetUsingAbsoluteRotation(false);
+		Camera->SetRelativeLocation(FVector(80.0f, 0.0f, 15.0f));
+		Camera->SetRelativeRotation(FRotator(35.0f, 0.0f, 0.0f));
 		Camera->bEnableZmqBroadcast = true;
 		Camera->bEnableShmBroadcast = false;
 		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + Index);
 		if (Camera->CaptureComponent)
 		{
+			Camera->CaptureComponent->SetRelativeLocation(FVector::ZeroVector);
+			Camera->CaptureComponent->SetRelativeRotation(FRotator::ZeroRotator);
 			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
 		}
 		if (Camera->resolution.Num() < 2)
@@ -320,6 +349,8 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 	}
 
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	DestroyExistingVisionSmokeRobot(World);
+
 	FString SetupError;
 	if (!SpawnManagerWithBridge(World, SetupError))
 	{

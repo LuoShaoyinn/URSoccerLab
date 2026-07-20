@@ -4,8 +4,7 @@
 The source assets live under refs/ and are intentionally not copied into git.
 This script creates local generated XML files that still reference the original
 mesh directories, but add one camera mounted to the selected camera body,
-looking outward along +X so the smoke test does not capture the robot body
-itself:
+looking outward along +X:
 
     <camera name="urlab_origin_camera" pos="0.06 0 0.04" xyaxes="0 -1 0 0 0 1" fovy="90" resolution="640 480"/>
 """
@@ -29,6 +28,8 @@ ROBOTS = {
         "root_body": "base_link",
         "camera_body": "head_pitch_link",
         "camera_pos": "0.06 0 0.04",
+        "camera_xyaxes": "0 -1 0 0 0 1",
+        "fixed_base": True,
         "meshdir": "meshes",
     },
     "k1": {
@@ -36,6 +37,8 @@ ROBOTS = {
         "root_body": "Trunk",
         "camera_body": "Head_2",
         "camera_pos": "0.04 0 0.02",
+        "camera_xyaxes": "0 -1 0 0 0 1",
+        "fixed_base": False,
         "meshdir": "meshes",
     },
 }
@@ -111,6 +114,12 @@ def ensure_motor(actuator: ET.Element, name: str, joint: str, ctrlrange: str) ->
             },
         ),
     )
+
+
+def remove_freejoints(body: ET.Element) -> None:
+    for joint in list(body.findall("joint")):
+        if joint.get("type") == "free":
+            body.remove(joint)
 
 
 def configure_pi_plus_head(root_body: ET.Element, root: ET.Element) -> None:
@@ -203,6 +212,8 @@ def generate_robot(robot: str, assets: Path, out_root: Path, width: int, height:
     if worldbody is None:
         raise RuntimeError(f"{src} has no worldbody")
     root_body = find_named_body(worldbody, spec["root_body"])
+    if spec.get("fixed_base", False):
+        remove_freejoints(root_body)
     if robot == "pi_plus":
         configure_pi_plus_head(root_body, root)
 
@@ -222,7 +233,7 @@ def generate_robot(robot: str, assets: Path, out_root: Path, width: int, height:
         {
             "name": "urlab_origin_camera",
             "pos": spec["camera_pos"],
-            "xyaxes": "0 -1 0 0 0 1",
+            "xyaxes": spec["camera_xyaxes"],
             "fovy": f"{fovy:g}",
             "resolution": f"{width} {height}",
         },

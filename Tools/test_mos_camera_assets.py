@@ -34,9 +34,12 @@ class PiHeadCameraAssetTest(unittest.TestCase):
         self.assertIsNotNone(head_yaw)
         head_pitch = head_yaw.find("./body[@name='head_pitch_link']")
         self.assertIsNotNone(head_pitch)
-        self.assertIsNotNone(head_pitch.find("./camera[@name='urlab_origin_camera']"))
+        camera = head_pitch.find("./camera[@name='urlab_origin_camera']")
+        self.assertIsNotNone(camera)
+        self.assertEqual(camera.get("xyaxes"), "0 -1 0 0 0 1")
         self.assertIsNotNone(head_yaw.find("./joint[@name='head_yaw_joint']"))
         self.assertIsNotNone(head_pitch.find("./joint[@name='head_pitch_joint']"))
+        self.assertIsNone(root.find(".//joint[@name='floating_base_joint']"))
 
         actuated_joints = {
             motor.get("joint")
