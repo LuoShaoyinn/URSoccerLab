@@ -89,5 +89,12 @@ env/
 # Large game assets: track intentionally with Git LFS or remove this rule.
 *.uasset
 *.umap
+!/Content/
+!/Content/Levels/
+!/Content/Levels/URS_SoccerField.umap
+!/Content/URSoccerLab/
+!/Content/URSoccerLab/Scenes/
+!/Content/URSoccerLab/Scenes/SoccerField/
+!/Content/URSoccerLab/Scenes/SoccerField/**/*.uasset
 
 refs/

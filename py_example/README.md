@@ -40,3 +40,13 @@ uv run python Tools/run_vision_smoke_test.py
 That command refreshes `/Game/Levels/URS_VisionSmoke`, starts it offscreen, runs
 this client, drains multiple camera frames, and fails unless
 `py_example/out/vision_smoke/camera.png` has nonblank RGB content.
+
+Reusable UE soccer-field scene:
+
+```bash
+uv run python Tools/create_soccer_field_scene.py
+```
+
+That command creates `/Game/Levels/URS_SoccerField` as a saved UE scene asset.
+It contains the imported GLB field visuals and a default UE skylight. Runtime
+simulator code should load this map and only add dynamic robots/cameras/control.

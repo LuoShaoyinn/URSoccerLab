@@ -1,27 +1,19 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "CoreMinimal.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetToolsModule.h"
-#include "AssetImportTask.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
-#include "Engine/SkyLight.h"
-#include "Engine/StaticMeshActor.h"
-#include "Engine/TextureCube.h"
 #include "EngineUtils.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
-#include "Components/LightComponent.h"
-#include "Components/SkyLightComponent.h"
-#include "Components/StaticMeshComponent.h"
 #include "MuJoCo/Components/Geometry/MjGeom.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MjLevelOps.h"
 #include "Runtime/URSZmqRobotBridgeComponent.h"
+#include "Scene/URSSoccerFieldSceneBuilder.h"
 #include "Transport/NetworkManager.h"
 #include "UObject/SavePackage.h"
 
@@ -29,8 +21,6 @@ namespace
 {
 constexpr const TCHAR* VisionSmokeLevelName = TEXT("URS_VisionSmoke");
 constexpr const TCHAR* VisionSmokeRobotId = TEXT("robot_rp0");
-constexpr const TCHAR* SoccerFieldSourcePath = TEXT("Assets/Scenes/SoccerField/source/field.glb");
-constexpr const TCHAR* SoccerFieldImportPath = TEXT("/Game/URSoccerLab/Scenes/SoccerField");
 
 bool SavePackageForObject(UObject* Object, FString& OutError)
 {
@@ -76,24 +66,6 @@ bool SaveImportedBlueprint(const FString& BlueprintShortName, FString& OutError)
 	return SavePackageForObject(Blueprint, OutError);
 }
 
-bool FindImportedSoccerFieldMeshes(TArray<UStaticMesh*>& OutMeshes)
-{
-	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-	TArray<FAssetData> Assets;
-	AssetRegistry.GetAssetsByPath(FName(SoccerFieldImportPath), Assets, true);
-	for (const FAssetData& Asset : Assets)
-	{
-		if (Asset.AssetClassPath.GetAssetName() == TEXT("StaticMesh"))
-		{
-			if (UStaticMesh* Mesh = Cast<UStaticMesh>(Asset.GetAsset()))
-			{
-				OutMeshes.AddUnique(Mesh);
-			}
-		}
-	}
-	return !OutMeshes.IsEmpty();
-}
-
 bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 {
 	if (!World)
@@ -137,101 +109,6 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 	Bridge->RegisterComponent();
 
 	Manager->MarkPackageDirty();
-	return true;
-}
-
-bool SpawnVisualFixture(UWorld* World, FString& OutError)
-{
-	if (!World)
-	{
-		OutError = TEXT("editor world unavailable");
-		return false;
-	}
-
-	const FString FieldSourcePath = FPaths::ConvertRelativePathToFull(
-		FPaths::Combine(FPaths::ProjectDir(), SoccerFieldSourcePath));
-	if (!FPaths::FileExists(FieldSourcePath))
-	{
-		OutError = FString::Printf(TEXT("soccer field GLB is missing: %s"), *FieldSourcePath);
-		return false;
-	}
-
-	TArray<UStaticMesh*> FieldMeshes;
-	if (!FindImportedSoccerFieldMeshes(FieldMeshes))
-	{
-		UAssetImportTask* ImportTask = NewObject<UAssetImportTask>();
-		ImportTask->Filename = FieldSourcePath;
-		ImportTask->DestinationPath = SoccerFieldImportPath;
-		ImportTask->bAutomated = true;
-		ImportTask->bSave = true;
-		ImportTask->bReplaceExisting = true;
-		ImportTask->bReplaceExistingSettings = true;
-
-		TArray<UAssetImportTask*> ImportTasks;
-		ImportTasks.Add(ImportTask);
-		FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get().ImportAssetTasks(ImportTasks);
-
-		if (!FindImportedSoccerFieldMeshes(FieldMeshes))
-		{
-			OutError = FString::Printf(TEXT("failed to import static meshes from soccer field GLB: %s"), *FieldSourcePath);
-			return false;
-		}
-	}
-
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	for (int32 MeshIndex = 0; MeshIndex < FieldMeshes.Num(); ++MeshIndex)
-	{
-		UStaticMesh* FieldMesh = FieldMeshes[MeshIndex];
-		if (!FieldMesh)
-			continue;
-
-		AStaticMeshActor* FieldActor = World->SpawnActor<AStaticMeshActor>(
-			AStaticMeshActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
-		if (!FieldActor || !FieldActor->GetStaticMeshComponent())
-		{
-			OutError = TEXT("failed to spawn soccer field mesh");
-			return false;
-		}
-
-		FieldActor->SetActorLabel(FString::Printf(TEXT("URS_SoccerField_%d"), MeshIndex));
-		FieldActor->Tags.AddUnique(FName(TEXT("URLab.ActorId=soccer_field_visual")));
-		FieldActor->GetStaticMeshComponent()->SetStaticMesh(FieldMesh);
-	}
-
-	return true;
-}
-
-bool SpawnSkyLight(UWorld* World, FString& OutError)
-{
-	if (!World)
-	{
-		OutError = TEXT("editor world unavailable");
-		return false;
-	}
-
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	ASkyLight* Sky = World->SpawnActor<ASkyLight>(
-		ASkyLight::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
-	if (!Sky || !Sky->GetLightComponent())
-	{
-		OutError = TEXT("failed to spawn sky light");
-		return false;
-	}
-
-	Sky->SetActorLabel(TEXT("URS_VisionSmoke_SkyLight"));
-	Sky->Tags.AddUnique(FName(TEXT("URLab.ActorId=vision_sky_light")));
-	USkyLightComponent* SkyComponent = Sky->GetLightComponent();
-	SkyComponent->SourceType = SLS_SpecifiedCubemap;
-	SkyComponent->SetCubemap(LoadObject<UTextureCube>(
-		nullptr, TEXT("/Engine/MapTemplates/Sky/DaylightAmbientCubemap.DaylightAmbientCubemap")));
-	SkyComponent->bLowerHemisphereIsBlack = false;
-	SkyComponent->SetLowerHemisphereColor(FLinearColor::White);
-	SkyComponent->SetIntensity(3.0f);
-	SkyComponent->SetMobility(EComponentMobility::Movable);
-	SkyComponent->RecaptureSky();
 	return true;
 }
 
@@ -388,13 +265,15 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	if (!SpawnVisualFixture(World, SetupError))
+	FURSSoccerFieldSceneBuildOptions SceneOptions;
+	SceneOptions.bForceOverwriteLevel = false;
+	if (!FURSSoccerFieldSceneBuilder::SpawnVisualFixture(World, SceneOptions, SetupError))
 	{
 		AddError(SetupError);
 		return false;
 	}
 
-	if (!SpawnSkyLight(World, SetupError))
+	if (!FURSSoccerFieldSceneBuilder::SpawnDefaultSkyLight(World, SceneOptions, SetupError))
 	{
 		AddError(SetupError);
 		return false;
