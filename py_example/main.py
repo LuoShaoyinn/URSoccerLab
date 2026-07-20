@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
 import struct
 import time
 from pathlib import Path
@@ -21,9 +23,9 @@ def client_endpoint(bind_endpoint: str, host: str) -> str:
     )
 
 
-def encode_zero_command(sequence: int, motor_count: int) -> bytes:
-    header = struct.pack("<IHHQdI", MAGIC, VERSION, 0, sequence, time.time(), motor_count)
-    body = struct.pack(f"<{motor_count}f", *([0.0] * motor_count)) if motor_count else b""
+def encode_motor_command(sequence: int, motors: list[float]) -> bytes:
+    header = struct.pack("<IHHQdI", MAGIC, VERSION, 0, sequence, time.time(), len(motors))
+    body = struct.pack(f"<{len(motors)}f", *motors) if motors else b""
     return header + body
 
 
@@ -49,6 +51,131 @@ def recv_latest_frame(socket: zmq.Socket, timeout_ms: int, frame_count: int) -> 
         per_frame_timeout = timeout_ms if index == 0 else max(timeout_ms // 3, 1000)
         topic, payload = recv_frame(socket, per_frame_timeout)
     return topic, payload, frame_count
+
+
+def select_motion_indices(
+    actuator_names: list[str],
+    pattern: str,
+    fallback_first_n: int,
+) -> list[int]:
+    if not pattern:
+        return []
+
+    compiled = re.compile(pattern, re.IGNORECASE)
+    indices = [index for index, name in enumerate(actuator_names) if compiled.search(name)]
+    if indices:
+        return indices
+
+    if fallback_first_n > 0:
+        return list(range(min(fallback_first_n, len(actuator_names))))
+
+    raise RuntimeError(f"no actuator name matched --motion-regex {pattern!r}")
+
+
+def build_motion_command(
+    motor_count: int,
+    motion_indices: list[int],
+    amplitude: float,
+    frequency_hz: float,
+    elapsed_sec: float,
+) -> list[float]:
+    motors = [0.0] * motor_count
+    if not motion_indices:
+        return motors
+
+    value = amplitude * math.sin(2.0 * math.pi * frequency_hz * elapsed_sec)
+    for offset, index in enumerate(motion_indices):
+        motors[index] = value if offset % 2 == 0 else -value
+    return motors
+
+
+def recv_state_at_sequence(
+    socket: zmq.Socket,
+    timeout_ms: int,
+    min_sequence: int,
+) -> tuple[str, dict[str, Any]]:
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    latest: tuple[str, dict[str, Any]] | None = None
+    while True:
+        remaining_ms = int(max((deadline - time.monotonic()) * 1000.0, 0.0))
+        if remaining_ms <= 0:
+            if latest is not None:
+                return latest
+            raise TimeoutError(f"timed out after {timeout_ms} ms")
+        topic, state = recv_json(socket, remaining_ms)
+        latest = (topic, state)
+        if int(state.get("sequence", 0)) >= min_sequence:
+            return topic, state
+
+
+def recv_available_json(socket: zmq.Socket) -> tuple[str, dict[str, Any]] | None:
+    if socket.poll(0) == 0:
+        return None
+    topic, payload = socket.recv_multipart()
+    return topic.decode("utf-8").strip(), json.loads(payload.decode("utf-8"))
+
+
+def max_abs(values: list[float]) -> float:
+    return max((abs(value) for value in values), default=0.0)
+
+
+def state_motor_max_abs(state: dict[str, Any]) -> float:
+    return max_abs([float(value) for value in state.get("motor_command", [])])
+
+
+def send_motion_stream_and_recv_state(
+    push: zmq.Socket,
+    state_sub: zmq.Socket,
+    timeout_ms: int,
+    sequence: int,
+    motor_count: int,
+    motion_indices: list[int],
+    amplitude: float,
+    frequency_hz: float,
+    duration_sec: float,
+    rate_hz: float,
+) -> tuple[int, list[float], str, dict[str, Any]]:
+    if duration_sec <= 0.0 or not motion_indices:
+        motors = [0.0] * motor_count
+        push.send(encode_motor_command(sequence, motors))
+        state_topic, state = recv_state_at_sequence(state_sub, timeout_ms, sequence)
+        return sequence, motors, state_topic, state
+
+    interval_sec = 1.0 / max(rate_hz, 1.0)
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    motion_deadline = time.monotonic() + duration_sec
+    start = time.monotonic()
+    next_send = start
+    latest: tuple[str, dict[str, Any]] | None = None
+    last_sequence = sequence - 1
+    last_motors = [0.0] * motor_count
+
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        if now >= next_send and now <= motion_deadline:
+            last_sequence += 1
+            elapsed = now - start
+            last_motors = build_motion_command(
+                motor_count, motion_indices, amplitude, frequency_hz, elapsed
+            )
+            push.send(encode_motor_command(last_sequence, last_motors))
+            next_send = now + interval_sec
+
+        received = recv_available_json(state_sub)
+        if received is not None:
+            latest = received
+            _, state = received
+            if int(state.get("sequence", 0)) >= last_sequence and state_motor_max_abs(state) > 1.0e-5:
+                return last_sequence, last_motors, received[0], state
+
+        if now > motion_deadline and latest is not None:
+            return last_sequence, last_motors, latest[0], latest[1]
+
+        time.sleep(0.002)
+
+    if latest is not None:
+        return last_sequence, last_motors, latest[0], latest[1]
+    raise TimeoutError(f"timed out after {timeout_ms} ms")
 
 
 def wait_for_meta(ctx: zmq.Context, host: str, port: int, robot: str, timeout_ms: int) -> dict[str, Any]:
@@ -84,6 +211,12 @@ def main() -> int:
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--camera-frame-count", type=int, default=1)
+    parser.add_argument("--motion-regex", default="")
+    parser.add_argument("--motion-amplitude", type=float, default=0.25)
+    parser.add_argument("--motion-frequency-hz", type=float, default=0.5)
+    parser.add_argument("--motion-duration-sec", type=float, default=0.0)
+    parser.add_argument("--motion-rate-hz", type=float, default=30.0)
+    parser.add_argument("--motion-fallback-first-n", type=int, default=0)
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -94,7 +227,11 @@ def main() -> int:
         meta = wait_for_meta(ctx, args.host, args.meta_port, args.robot, args.timeout_ms)
         (out_dir / "meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True))
 
-        motors = len(meta.get("actuator_names", []))
+        actuator_names = list(meta.get("actuator_names", []))
+        motors = len(actuator_names)
+        motion_indices = select_motion_indices(
+            actuator_names, args.motion_regex, args.motion_fallback_first_n
+        )
         push = ctx.socket(zmq.PUSH)
         push.connect(client_endpoint(meta["command_endpoint"], args.host))
 
@@ -103,8 +240,18 @@ def main() -> int:
         state_sub.connect(client_endpoint(meta["state_endpoint"], args.host))
 
         try:
-            push.send(encode_zero_command(args.sequence, motors))
-            state_topic, state = recv_json(state_sub, args.timeout_ms)
+            last_sequence, last_command, state_topic, state = send_motion_stream_and_recv_state(
+                push,
+                state_sub,
+                args.timeout_ms,
+                args.sequence,
+                motors,
+                motion_indices,
+                args.motion_amplitude,
+                args.motion_frequency_hz,
+                args.motion_duration_sec,
+                args.motion_rate_hz,
+            )
             (out_dir / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True))
         finally:
             push.close(linger=0)
@@ -132,6 +279,10 @@ def main() -> int:
             "state_sequence": state.get("sequence"),
             "state_path": str(out_dir / "state.json"),
             "meta_path": str(out_dir / "meta.json"),
+            "motion_actuators": [actuator_names[index] for index in motion_indices],
+            "motion_indices": motion_indices,
+            "last_command_sequence": last_sequence,
+            "last_command_max_abs": max((abs(value) for value in last_command), default=0.0),
         }
 
         if camera_endpoint and camera_topic:

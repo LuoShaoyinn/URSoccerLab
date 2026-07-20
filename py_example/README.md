@@ -1,8 +1,8 @@
 ## URSoccerLab Zero-Command Vision Smoke Test
 
-This client waits for URSoccerLab ZMQ metadata, sends an all-zero motor command,
+This client waits for URSoccerLab ZMQ metadata, sends a motor command stream,
 saves one proprioception/state packet, and saves one camera frame when a camera is
-advertised.
+advertised. With no motion arguments it sends an all-zero motor command.
 
 Run from the project root:
 
@@ -20,6 +20,33 @@ Outputs:
 
 If no camera is advertised, the script still tests command/state and prints a
 clear `camera_note`.
+
+Move named head motors while capturing camera output:
+
+```bash
+uv run python main.py \
+  --host 127.0.0.1 \
+  --robot robot_rp0 \
+  --out out/head_motion \
+  --motion-regex head \
+  --motion-duration-sec 0.75 \
+  --camera-frame-count 20
+```
+
+The current `pi_plus` smoke MJCF has head meshes but no head actuators, so use
+`--motion-fallback-first-n 2` to validate the motor-command path with that
+fixture:
+
+```bash
+uv run python main.py \
+  --host 127.0.0.1 \
+  --robot robot_rp0 \
+  --out out/pi_motion \
+  --motion-regex head \
+  --motion-fallback-first-n 2 \
+  --motion-duration-sec 0.75 \
+  --camera-frame-count 20
+```
 
 Manual camera override:
 
@@ -40,6 +67,19 @@ uv run python Tools/run_vision_smoke_test.py
 That command prepares `/Game/Levels/URS_SoccerField`, starts it offscreen, runs
 this client, drains multiple camera frames, and fails unless
 `py_example/out/vision_smoke/camera.png` has nonblank RGB content.
+
+End-to-end motor plus vision smoke test from the project root:
+
+```bash
+uv run python Tools/run_vision_smoke_test.py \
+  --motion-regex head \
+  --motion-fallback-first-n 2 \
+  --motion-duration-sec 0.75 \
+  --require-nonzero-command \
+  --out py_example/out/motor_vision_smoke
+```
+
+For a robot with real head actuators, drop `--motion-fallback-first-n 2`.
 
 Reusable UE soccer-field scene:
 

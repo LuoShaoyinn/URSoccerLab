@@ -73,7 +73,7 @@ void UURSZmqRobotBridgeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	}
 
 	DrainCommandSockets();
-	const double NowSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	const double NowSec = FPlatformTime::Seconds();
 	ApplyLatestCommands(NowSec);
 
 	const double StateIntervalSec = StatePublishRateHz > 0.0 ? 1.0 / StatePublishRateHz : 0.0;
@@ -133,7 +133,7 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 	bBridgeStarted = true;
 	RegisterPhysicsCallbacks();
 	PublishMetadata();
-	LastMetaPublishSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	LastMetaPublishSec = FPlatformTime::Seconds();
 	LastStatePublishSec = 0.0;
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab ZMQ bridge started with %d robot command endpoints."), RuntimeEndpoints.Num());
 	return true;
@@ -357,7 +357,7 @@ void UURSZmqRobotBridgeComponent::ClosePublisherSockets()
 int32 UURSZmqRobotBridgeComponent::DrainCommandSockets()
 {
 	int32 AcceptedCount = 0;
-	const double NowSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	const double NowSec = FPlatformTime::Seconds();
 
 	for (FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
 	{
@@ -538,7 +538,7 @@ void UURSZmqRobotBridgeComponent::PublishState()
 		return;
 	}
 
-	const double NowSec = GetWorld() ? GetWorld()->GetTimeSeconds() : FPlatformTime::Seconds();
+	const double NowSec = FPlatformTime::Seconds();
 	PublishStateFromData(Model, Data, NowSec);
 }
 

@@ -33,6 +33,8 @@ python Tools/zmq_smoke_client.py --robot robot_rp0
 ```
 
 The script waits for `meta/robot_rp0`, sends one zero motor vector to that robot's command endpoint, then waits for one `state/robot_rp0` packet.
+`py_example/main.py` also supports a time-varying motor command stream using
+`--motion-regex`, `--motion-duration-sec`, and related options.
 
 ## End-to-End Vision Smoke Test
 
@@ -48,6 +50,22 @@ The runner:
 - starts that map with `-game -RenderOffscreen`;
 - runs `py_example/main.py` to send all-zero motor commands and receive state/camera data;
 - drains multiple camera frames and fails unless `py_example/out/vision_smoke/camera.png` has nonblank RGB content.
+
+Motor command plus camera validation:
+
+```bash
+uv run python Tools/run_vision_smoke_test.py \
+  --motion-regex head \
+  --motion-fallback-first-n 2 \
+  --motion-duration-sec 0.75 \
+  --require-nonzero-command \
+  --out py_example/out/motor_vision_smoke
+```
+
+The current `pi_plus` fixture has head visual meshes but no head actuators, so
+the fallback option moves the first two actuators while still testing the same
+ZMQ motor command path. Remove the fallback for a robot whose metadata contains
+head actuator names.
 
 ## Validation Run
 

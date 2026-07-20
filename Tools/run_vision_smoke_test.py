@@ -212,6 +212,13 @@ def main() -> int:
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
     parser.add_argument("--camera-frame-count", type=int, default=20)
+    parser.add_argument("--motion-regex", default="")
+    parser.add_argument("--motion-amplitude", type=float, default=0.25)
+    parser.add_argument("--motion-frequency-hz", type=float, default=0.5)
+    parser.add_argument("--motion-duration-sec", type=float, default=0.0)
+    parser.add_argument("--motion-rate-hz", type=float, default=30.0)
+    parser.add_argument("--motion-fallback-first-n", type=int, default=0)
+    parser.add_argument("--require-nonzero-command", action="store_true")
     args = parser.parse_args()
 
     if not args.ue.exists():
@@ -263,23 +270,42 @@ def main() -> int:
         if args.render_warmup_sec > 0:
             time.sleep(args.render_warmup_sec)
 
+        client_cmd = [
+            "uv",
+            "run",
+            "python",
+            "main.py",
+            "--host",
+            args.host,
+            "--robot",
+            args.robot,
+            "--timeout-ms",
+            str(args.timeout_ms),
+            "--out",
+            str(args.out),
+            "--camera-frame-count",
+            str(args.camera_frame_count),
+        ]
+        if args.motion_regex:
+            client_cmd.extend(
+                [
+                    "--motion-regex",
+                    args.motion_regex,
+                    "--motion-amplitude",
+                    str(args.motion_amplitude),
+                    "--motion-frequency-hz",
+                    str(args.motion_frequency_hz),
+                    "--motion-duration-sec",
+                    str(args.motion_duration_sec),
+                    "--motion-rate-hz",
+                    str(args.motion_rate_hz),
+                    "--motion-fallback-first-n",
+                    str(args.motion_fallback_first_n),
+                ]
+            )
+
         result = subprocess.run(
-            [
-                "uv",
-                "run",
-                "python",
-                "main.py",
-                "--host",
-                args.host,
-                "--robot",
-                args.robot,
-                "--timeout-ms",
-                str(args.timeout_ms),
-                "--out",
-                str(args.out),
-                "--camera-frame-count",
-                str(args.camera_frame_count),
-            ],
+            client_cmd,
             cwd=ROOT / "py_example",
             text=True,
             capture_output=True,
@@ -307,6 +333,16 @@ def main() -> int:
         or stats["unique_sample"] < 4
     ):
         raise RuntimeError(f"camera.png appears blank or nearly black: {stats}. See {sim_log_path}")
+
+    if args.require_nonzero_command:
+        state_path = args.out / "state.json"
+        state = json.loads(state_path.read_text())
+        command = [float(value) for value in state.get("motor_command", [])]
+        max_abs_command = max((abs(value) for value in command), default=0.0)
+        if max_abs_command <= 1.0e-5:
+            raise RuntimeError(
+                f"state motor_command stayed zero while nonzero command was required. See {state_path}"
+            )
 
     print(f"vision smoke passed: {camera_path}")
     print(json.dumps({"camera_stats": stats}, indent=2, sort_keys=True))
