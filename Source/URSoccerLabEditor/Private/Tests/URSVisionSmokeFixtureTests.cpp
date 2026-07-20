@@ -13,14 +13,13 @@
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MjLevelOps.h"
 #include "Runtime/URSZmqRobotBridgeComponent.h"
-#include "Scene/URSSoccerFieldSceneBuilder.h"
 #include "Transport/NetworkManager.h"
 #include "UObject/SavePackage.h"
 
 namespace
 {
-constexpr const TCHAR* VisionSmokeLevelName = TEXT("URS_VisionSmoke");
 constexpr const TCHAR* VisionSmokeRobotId = TEXT("robot_rp0");
+constexpr const TCHAR* SoccerFieldLevelName = TEXT("URS_SoccerField");
 
 bool SavePackageForObject(UObject* Object, FString& OutError)
 {
@@ -74,11 +73,21 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 		return false;
 	}
 
-	FActorSpawnParameters Params;
-	Params.Name = TEXT("URS_VisionSmoke_Manager");
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AAMjManager* Manager = World->SpawnActor<AAMjManager>(
-		AAMjManager::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	AAMjManager* Manager = nullptr;
+	for (TActorIterator<AAMjManager> It(World); It; ++It)
+	{
+		Manager = *It;
+		break;
+	}
+
+	if (!Manager)
+	{
+		FActorSpawnParameters Params;
+		Params.Name = TEXT("URS_VisionSmoke_Manager");
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Manager = World->SpawnActor<AAMjManager>(
+			AAMjManager::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	}
 	if (!Manager)
 	{
 		OutError = TEXT("failed to spawn AAMjManager");
@@ -91,8 +100,12 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 		Manager->NetworkManager->bEnableAllCameras = true;
 	}
 
-	UURSZmqRobotBridgeComponent* Bridge = NewObject<UURSZmqRobotBridgeComponent>(
-		Manager, UURSZmqRobotBridgeComponent::StaticClass(), TEXT("URSZmqRobotBridge"));
+	UURSZmqRobotBridgeComponent* Bridge = FindObject<UURSZmqRobotBridgeComponent>(Manager, TEXT("URSZmqRobotBridge"));
+	if (!Bridge)
+	{
+		Bridge = NewObject<UURSZmqRobotBridgeComponent>(
+			Manager, UURSZmqRobotBridgeComponent::StaticClass(), TEXT("URSZmqRobotBridge"));
+	}
 	if (!Bridge)
 	{
 		OutError = TEXT("failed to create UURSZmqRobotBridgeComponent");
@@ -105,8 +118,11 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 	Bridge->StatePort = 10100;
 	Bridge->MetaPort = 10101;
 	Bridge->StatePublishRateHz = 30.0;
-	Manager->AddInstanceComponent(Bridge);
-	Bridge->RegisterComponent();
+	if (!Bridge->IsRegistered())
+	{
+		Manager->AddInstanceComponent(Bridge);
+		Bridge->RegisterComponent();
+	}
 
 	Manager->MarkPackageDirty();
 	return true;
@@ -251,29 +267,15 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 
 	FString LevelPath;
 	FString LevelError;
-	if (!URLabLevelOps::CreateLevelSync(VisionSmokeLevelName, true, LevelPath, LevelError))
+	if (!URLabLevelOps::LoadLevelSync(SoccerFieldLevelName, LevelPath, LevelError))
 	{
-		AddError(FString::Printf(TEXT("CreateLevelSync failed: %s"), *LevelError));
+		AddError(FString::Printf(TEXT("LoadLevelSync failed: %s"), *LevelError));
 		return false;
 	}
 
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	FString SetupError;
 	if (!SpawnManagerWithBridge(World, SetupError))
-	{
-		AddError(SetupError);
-		return false;
-	}
-
-	FURSSoccerFieldSceneBuildOptions SceneOptions;
-	SceneOptions.bForceOverwriteLevel = false;
-	if (!FURSSoccerFieldSceneBuilder::SpawnVisualFixture(World, SceneOptions, SetupError))
-	{
-		AddError(SetupError);
-		return false;
-	}
-
-	if (!FURSSoccerFieldSceneBuilder::SpawnDefaultSkyLight(World, SceneOptions, SetupError))
 	{
 		AddError(SetupError);
 		return false;
@@ -313,7 +315,7 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	TestEqual(TEXT("saved level path"), SavedLevelPath, FString(TEXT("/Game/Levels/URS_VisionSmoke")));
+	TestEqual(TEXT("saved level path"), SavedLevelPath, FString(TEXT("/Game/Levels/URS_SoccerField")));
 	UE_LOG(LogTemp, Display, TEXT("URSoccerLab vision smoke map ready at %s"), *SavedLevelPath);
 	return true;
 }

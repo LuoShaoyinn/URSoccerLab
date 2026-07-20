@@ -37,7 +37,7 @@ End-to-end simulator smoke test from the project root:
 uv run python Tools/run_vision_smoke_test.py
 ```
 
-That command refreshes `/Game/Levels/URS_VisionSmoke`, starts it offscreen, runs
+That command prepares `/Game/Levels/URS_SoccerField`, starts it offscreen, runs
 this client, drains multiple camera frames, and fails unless
 `py_example/out/vision_smoke/camera.png` has nonblank RGB content.
 

@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
-MAP_PATH = "/Game/Levels/URS_VisionSmoke"
+MAP_PATH = "/Game/Levels/URS_SoccerField"
 
 
 def paeth_predictor(left: int, above: int, upper_left: int) -> int:
