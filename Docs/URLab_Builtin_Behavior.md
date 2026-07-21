@@ -57,7 +57,8 @@ Project code should therefore:
   shared-memory enablement, resolution fallback, FOV fallback, and ray-tracing
   use.
 
-For the current Pi Plus smoke robot, the tested head-mounted camera is:
+For the older single-camera Pi Plus smoke robot, the tested head-mounted camera
+was:
 
 ```xml
 <camera name="urlab_origin_camera"
@@ -67,8 +68,10 @@ For the current Pi Plus smoke robot, the tested head-mounted camera is:
         resolution="640 480" />
 ```
 
-The negative X offset is intentional for this asset: the old positive-X
-location was inside the `head_pitch_link` mesh and caused self-occlusion.
+The negative X offset was intentional for that asset: the old positive-X
+location was inside the previous `head_pitch_link` mesh and caused
+self-occlusion. The current Pi Plus fixture is stereo and uses fixed eye bodies
+under `head_pitch_link`.
 
 ## Fixed Pi Plus Robot Contract
 
@@ -100,17 +103,20 @@ physical head-to-eye placement for documentation and non-URLab tooling. The
 MJCF `<camera>` `pos` and orientation are the source URLab actually renders
 from.
 
-Expected camera optical convention in MJCF:
+Current stereo camera mount convention in MJCF:
 
 ```xml
-<camera name="left_eye_camera"
-        pos="<x y z relative to head_pitch_link>"
-        xyaxes="0 1 0 -1 0 0"
-        fovy="90"
-        resolution="640 480" />
+<body name="left_eye_camera_link" pos="0.16 0.03 0.05">
+  <camera name="left_eye_camera"
+          pos="0 0 0"
+          fovy="90"
+          resolution="640 480" />
+</body>
 ```
 
-The same `xyaxes` should be used for `right_eye_camera` unless the physical
+The current stereo fixture intentionally leaves `xyaxes` unset until the Pi
+eye optical frame is calibrated against the new mesh. If an explicit orientation
+is added, use the same convention for `right_eye_camera` unless the physical
 camera model intentionally has a different optical frame.
 
 ## URSoccerLab Ownership

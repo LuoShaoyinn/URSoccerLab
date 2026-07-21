@@ -313,7 +313,7 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 {
 	const FString XmlPath = FPaths::ConvertRelativePathToFull(
 		FPaths::Combine(FPaths::ProjectDir(),
-			TEXT("Assets/MosBrainCameraTest/pi_plus/pi_plus_urlab_origin_camera.xml")));
+			TEXT("Assets/MosBrainCameraTest/pi_plus/pi_plus_stereo_camera.xml")));
 
 	if (!FPaths::FileExists(XmlPath))
 	{

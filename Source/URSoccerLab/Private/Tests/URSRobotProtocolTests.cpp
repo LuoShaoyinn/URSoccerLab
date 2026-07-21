@@ -66,7 +66,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSImportedComponentNameTest,
 bool FURSImportedComponentNameTest::RunTest(const FString& Parameters)
 {
 	TestEqual(TEXT("generated blueprint prefix stripped"),
-		FRobotProtocol::NormalizeImportedComponentName(TEXT("pi_plus_urlab_origin_camera_C_0_head_pitch_joint")),
+		FRobotProtocol::NormalizeImportedComponentName(TEXT("pi_plus_stereo_camera_C_0_head_pitch_joint")),
 		FString(TEXT("head_pitch_joint")));
 	TestEqual(TEXT("normal joint name unchanged"),
 		FRobotProtocol::NormalizeImportedComponentName(TEXT("l_hip_pitch_joint")),
@@ -78,7 +78,7 @@ bool FURSImportedComponentNameTest::RunTest(const FString& Parameters)
 		FRobotProtocol::NormalizeRobotComponentName(TEXT("robot_rp0_head_pitch_joint"), TEXT("robot_rp0")),
 		FString(TEXT("head_pitch_joint")));
 	TestEqual(TEXT("generated blueprint and robot prefixes stripped"),
-		FRobotProtocol::NormalizeRobotComponentName(TEXT("pi_plus_urlab_origin_camera_C_0_head_pitch_joint"), TEXT("robot_rp0")),
+		FRobotProtocol::NormalizeRobotComponentName(TEXT("pi_plus_stereo_camera_C_0_head_pitch_joint"), TEXT("robot_rp0")),
 		FString(TEXT("head_pitch_joint")));
 	return true;
 }
