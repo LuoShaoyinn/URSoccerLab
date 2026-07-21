@@ -20,6 +20,7 @@ namespace
 {
 constexpr const TCHAR* VisionSmokeRobotId = TEXT("robot_rp0");
 constexpr const TCHAR* SoccerFieldLevelName = TEXT("URS_SoccerField");
+constexpr float PiPlusStandingBaseHeightMeters = 0.3762f;
 
 bool SavePackageForObject(UObject* Object, FString& OutError)
 {
@@ -362,7 +363,7 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 	bool bWasExisting = false;
 	if (!URLabLevelOps::SpawnActorSync(
 			BlueprintClassPath, VisionSmokeRobotId,
-			FVector::ZeroVector, FQuat::Identity, FVector::OneVector,
+			FVector(0.0f, 0.0f, PiPlusStandingBaseHeightMeters), FQuat::Identity, FVector::OneVector,
 			ActorName, ActorPath, SpawnClassPath, bWasExisting, SpawnError))
 	{
 		AddError(FString::Printf(TEXT("SpawnActorSync failed: %s"), *SpawnError));

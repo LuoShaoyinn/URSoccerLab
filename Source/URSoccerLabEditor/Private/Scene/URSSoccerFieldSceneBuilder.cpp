@@ -14,6 +14,63 @@
 
 namespace
 {
+struct FFieldNodeTransform
+{
+	FVector LocationCm = FVector::ZeroVector;
+	FRotator Rotation = FRotator::ZeroRotator;
+	FVector Scale = FVector::OneVector;
+};
+
+bool GetFieldNodeTransform(const FString& MeshName, FFieldNodeTransform& OutTransform)
+{
+	if (MeshName == TEXT("Plane"))
+	{
+		OutTransform.Scale = FVector(5.3000002f, 3.9000001f, 1.0f);
+		return true;
+	}
+
+	if (MeshName == TEXT("goal_00"))
+	{
+		OutTransform.LocationCm = FVector(-450.0f, 94.0f, 50.0f);
+		OutTransform.Scale = FVector(0.05f, 0.05f, 0.5f);
+		return true;
+	}
+	if (MeshName == TEXT("goal_01"))
+	{
+		OutTransform.LocationCm = FVector(-450.0f, -94.0f, 50.0f);
+		OutTransform.Scale = FVector(0.05f, 0.05f, 0.5f);
+		return true;
+	}
+	if (MeshName == TEXT("goal_10"))
+	{
+		OutTransform.LocationCm = FVector(450.0f, 94.0f, 50.0f);
+		OutTransform.Scale = FVector(0.05f, 0.05f, 0.5f);
+		return true;
+	}
+	if (MeshName == TEXT("goal_11"))
+	{
+		OutTransform.LocationCm = FVector(450.0f, -94.0f, 50.0f);
+		OutTransform.Scale = FVector(0.05f, 0.05f, 0.5f);
+		return true;
+	}
+	if (MeshName == TEXT("goal_0"))
+	{
+		OutTransform.LocationCm = FVector(450.0f, 0.0f, 96.0f);
+		OutTransform.Rotation = FRotator(0.0f, 0.0f, 90.0f);
+		OutTransform.Scale = FVector(0.05f, 0.05f, 0.95f);
+		return true;
+	}
+	if (MeshName == TEXT("goal_1"))
+	{
+		OutTransform.LocationCm = FVector(-450.0f, 0.0f, 96.0f);
+		OutTransform.Rotation = FRotator(0.0f, 0.0f, 90.0f);
+		OutTransform.Scale = FVector(0.05f, 0.05f, 0.95f);
+		return true;
+	}
+
+	return false;
+}
+
 bool FindImportedStaticMeshes(const FString& ImportPath, TArray<UStaticMesh*>& OutMeshes)
 {
 	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
@@ -128,6 +185,14 @@ bool FURSSoccerFieldSceneBuilder::SpawnVisualFixture(
 		FieldActor->SetActorLabel(FString::Printf(TEXT("URS_SoccerField_%d"), MeshIndex));
 		FieldActor->Tags.AddUnique(FName(TEXT("URLab.ActorId=soccer_field_visual")));
 		FieldActor->GetStaticMeshComponent()->SetStaticMesh(FieldMesh);
+
+		FFieldNodeTransform NodeTransform;
+		if (GetFieldNodeTransform(FieldMesh->GetName(), NodeTransform))
+		{
+			FieldActor->SetActorLocation(NodeTransform.LocationCm);
+			FieldActor->SetActorRotation(NodeTransform.Rotation);
+			FieldActor->SetActorScale3D(NodeTransform.Scale);
+		}
 	}
 
 	return true;

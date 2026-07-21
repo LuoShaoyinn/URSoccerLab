@@ -61,17 +61,27 @@ uv run python Tools/run_vision_smoke_test.py \
 ```
 
 The project-owned `pi_plus` fixture unlocks `head_yaw_joint` and
-`head_pitch_joint`, and mounts `left_eye_camera` and `right_eye_camera` under
+`head_pitch_joint`, and mounts `left_eye` and `right_eye` under
 `head_pitch_link`.
 For this phase, Pi is treated as a built-in fixed robot type; those joint and
 link names are hardcoded in the project fixture instead of dynamically resolved.
 Metadata reports clean component names such as `head_pitch_joint`; generated
 URLab import prefixes are stripped at the URSoccerLab bridge boundary. The
-camera topics are `robot_rp0/camera/left_eye_camera` and
-`robot_rp0/camera/right_eye_camera`.
+camera topics are `robot_rp0/camera/left_eye` and
+`robot_rp0/camera/right_eye`.
 Motion smoke defaults to a constant amplitude `1.0` command for `3.0` seconds
 and writes `camera_before.png`, `camera_after.png`, and `camera.png` without
 image-diff assertions.
+
+The saved soccer-field scene is built from `Assets/Scenes/SoccerField/source/field.glb`.
+The field uses robot/MuJoCo world convention: `+X` points to the opponent goal,
+`+Y` is robot-left, and `+Z` is up. The GLB stores the visual layout in node
+transforms, so the one-time UE scene builder must preserve those transforms
+when it creates `/Game/Levels/URS_SoccerField`.
+
+The vision smoke robot spawn location is passed to `URLabLevelOps::SpawnActorSync`
+in meters. URLab converts that to Unreal centimeters internally. The Pi Plus
+zero-pose base height is therefore `0.3762 m`, not `37.62 cm` in the API call.
 
 ## Validation Run
 

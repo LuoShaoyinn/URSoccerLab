@@ -57,21 +57,15 @@ Project code should therefore:
   shared-memory enablement, resolution fallback, FOV fallback, and ray-tracing
   use.
 
-For the older single-camera Pi Plus smoke robot, the tested head-mounted camera
-was:
+For a robot eye link with `+X` forward, `+Y` left, and `+Z` up, use pure
+MuJoCo camera axes:
 
 ```xml
-<camera name="urlab_origin_camera"
-        pos="-0.08 0 0.04"
-        xyaxes="0 1 0 -1 0 0"
-        fovy="90"
-        resolution="640 480" />
+xyaxes="0 -1 0 0 0 1"
 ```
 
-The negative X offset was intentional for that asset: the old positive-X
-location was inside the previous `head_pitch_link` mesh and caused
-self-occlusion. The current Pi Plus fixture is stereo and uses fixed eye bodies
-under `head_pitch_link`.
+That maps camera image-right to eye `-Y`, camera image-up to eye `+Z`, and
+camera optical forward `-Z` to eye `+X`.
 
 ## Fixed Pi Plus Robot Contract
 
@@ -84,35 +78,26 @@ loader. URSoccerLab code may therefore treat these names as stable ABI:
 - Head yaw actuator/joint: `head_yaw_joint`
 - Head pitch actuator/joint: `head_pitch_joint`
 
-Stereo cameras should be represented as fixed child links/joints in the robot
-asset and as URLab MJCF cameras under the same moving parent body. Do not encode
-the head-to-eye offsets in C++.
+Stereo cameras should be represented directly in the per-robot MJCF under the
+moving head body. Do not encode the head-to-eye offsets in C++.
 
 Use these names for the stereo camera contract:
 
-- Left camera link: `left_eye_camera_link`
-- Left camera fixed joint: `left_eye_camera_joint`
-- Left URLab/MJCF camera: `left_eye_camera`
-- Right camera link: `right_eye_camera_link`
-- Right camera fixed joint: `right_eye_camera_joint`
-- Right URLab/MJCF camera: `right_eye_camera`
+- Left URLab/MJCF camera: `left_eye`
+- Right URLab/MJCF camera: `right_eye`
 
-Both fixed camera joints should have parent `head_pitch_link`, so yaw and pitch
-motion naturally moves both eyes. The URDF fixed joint origin records the
-physical head-to-eye placement for documentation and non-URLab tooling. The
-MJCF `<camera>` `pos` and orientation are the source URLab actually renders
-from.
+Both cameras are children of `head_pitch_link`, so yaw and pitch motion
+naturally moves both eyes. The MJCF `<camera>` `pos` and orientation are the
+source URLab renders from.
 
 Current stereo camera mount convention in MJCF:
 
 ```xml
-<body name="left_eye_camera_link" pos="0.16 0.03 0.05">
-  <camera name="left_eye_camera"
-          pos="0 0 0"
-          xyaxes="0 1 0 0 0 -1"
-          fovy="90"
-          resolution="640 480" />
-</body>
+<camera name="left_eye"
+        pos="0.1 0.03 0.05"
+        xyaxes="0 -1 0 0 0 1"
+        fovy="60"
+        resolution="640 480" />
 ```
 
 This means:
@@ -120,11 +105,11 @@ This means:
 - Rendered optical forward is eye `+X`.
 - Rendered image-left is eye `+Y`.
 - Rendered image-up is eye `+Z`.
-- URLab's `UMjCamera` capture child renders along imported camera local `-Z`
-  with rendered up from imported local `-Y`, so this differs from the pure
-  MuJoCo camera-frame derivation.
+- The MJCF remains valid for native MuJoCo tooling.
+- URLab imports this camera frame, converts it to Unreal coordinates, and lets
+  `UMjCamera` apply its built-in capture-component correction.
 
-Use the same `xyaxes` convention for `right_eye_camera` unless the physical
+Use the same `xyaxes` convention for `right_eye` unless the physical
 camera model intentionally has a different optical frame.
 
 ## URSoccerLab Ownership
