@@ -3,10 +3,11 @@
 
 The source assets live under refs/ and are intentionally not copied into git.
 This script creates local generated XML files that still reference the original
-mesh directories, but add one camera mounted to the selected camera body,
-looking outward along +X:
+mesh directories, but add one camera mounted to the selected camera body.
+For Pi Plus, the camera is placed just in front of the head mesh and aimed
+toward the opponent goal through URLab's MuJoCo-to-UE camera conversion:
 
-    <camera name="urlab_origin_camera" pos="0.06 0 0.04" xyaxes="0 -1 0 0 0 1" fovy="90" resolution="640 480"/>
+    <camera name="urlab_origin_camera" pos="-0.08 0 0.04" xyaxes="0 1 0 -1 0 0" fovy="90" resolution="640 480"/>
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ ROBOTS = {
         "source": "robots/pi_plus/pi_plus.xml",
         "root_body": "base_link",
         "camera_body": "head_pitch_link",
-        "camera_pos": "0.06 0 0.04",
-        "camera_xyaxes": "0 -1 0 0 0 1",
+        "camera_pos": "-0.08 0 0.04",
+        "camera_xyaxes": "0 1 0 -1 0 0",
         "fixed_base": True,
         "meshdir": "meshes",
     },

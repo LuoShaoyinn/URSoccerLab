@@ -23,6 +23,7 @@ class PiHeadCameraAssetTest(unittest.TestCase):
 
         camera_joint = joints["urlab_origin_camera_joint"]
         self.assertEqual(camera_joint.get("type"), "fixed")
+        self.assertEqual(camera_joint.find("origin").get("xyz"), "-0.08 0 0.04")
         self.assertEqual(camera_joint.find("parent").get("link"), "head_pitch_link")
         self.assertEqual(camera_joint.find("child").get("link"), "urlab_origin_camera_link")
         self.assertIsNotNone(root.find("./link[@name='urlab_origin_camera_link']"))
@@ -36,7 +37,8 @@ class PiHeadCameraAssetTest(unittest.TestCase):
         self.assertIsNotNone(head_pitch)
         camera = head_pitch.find("./camera[@name='urlab_origin_camera']")
         self.assertIsNotNone(camera)
-        self.assertEqual(camera.get("xyaxes"), "0 -1 0 0 0 1")
+        self.assertEqual(camera.get("pos"), "-0.08 0 0.04")
+        self.assertEqual(camera.get("xyaxes"), "0 1 0 -1 0 0")
         self.assertIsNotNone(head_yaw.find("./joint[@name='head_yaw_joint']"))
         self.assertIsNotNone(head_pitch.find("./joint[@name='head_pitch_joint']"))
         self.assertIsNone(root.find(".//joint[@name='floating_base_joint']"))
