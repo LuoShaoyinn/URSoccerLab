@@ -109,14 +109,22 @@ Current stereo camera mount convention in MJCF:
 <body name="left_eye_camera_link" pos="0.16 0.03 0.05">
   <camera name="left_eye_camera"
           pos="0 0 0"
+          xyaxes="0 1 0 0 0 -1"
           fovy="90"
           resolution="640 480" />
 </body>
 ```
 
-The current stereo fixture intentionally leaves `xyaxes` unset until the Pi
-eye optical frame is calibrated against the new mesh. If an explicit orientation
-is added, use the same convention for `right_eye_camera` unless the physical
+This means:
+
+- Rendered optical forward is eye `+X`.
+- Rendered image-left is eye `+Y`.
+- Rendered image-up is eye `+Z`.
+- URLab's `UMjCamera` capture child renders along imported camera local `-Z`
+  with rendered up from imported local `-Y`, so this differs from the pure
+  MuJoCo camera-frame derivation.
+
+Use the same `xyaxes` convention for `right_eye_camera` unless the physical
 camera model intentionally has a different optical frame.
 
 ## URSoccerLab Ownership

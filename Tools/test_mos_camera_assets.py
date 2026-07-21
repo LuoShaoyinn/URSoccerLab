@@ -32,7 +32,11 @@ class PiStereoCameraAssetTest(unittest.TestCase):
                 self.assertEqual(camera_joint.find("origin").get("xyz"), xyz)
                 self.assertEqual(camera_joint.find("parent").get("link"), "head_pitch_link")
                 self.assertEqual(camera_joint.find("child").get("link"), link_name)
-                self.assertIsNotNone(root.find(f"./link[@name='{link_name}']"))
+                link = root.find(f"./link[@name='{link_name}']")
+                self.assertIsNotNone(link)
+                self.assertIsNone(link.find("collision"))
+                self.assertEqual(link.find("./inertial/mass").get("value"), "0")
+                self.assertEqual(link.find("./inertial/inertia").get("ixx"), "0")
 
     def test_mjcf_head_joints_are_actuated_and_cameras_are_head_mounted(self) -> None:
         root = ET.parse(PI_MJCF).getroot()
@@ -54,7 +58,8 @@ class PiStereoCameraAssetTest(unittest.TestCase):
                 camera = camera_body.find(f"./camera[@name='{camera_name}']")
                 self.assertIsNotNone(camera)
                 self.assertEqual(camera.get("pos"), "0 0 0")
-                self.assertIsNone(camera.get("xyaxes"))
+                self.assertEqual(camera.get("xyaxes"), "0 1 0 0 0 -1")
+                self.assertIsNone(camera_body.find("inertial"))
 
         self.assertIsNotNone(head_yaw.find("./joint[@name='head_yaw_joint']"))
         self.assertIsNotNone(head_pitch.find("./joint[@name='head_pitch_joint']"))
