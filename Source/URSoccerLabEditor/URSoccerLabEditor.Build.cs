@@ -18,8 +18,6 @@ public class URSoccerLabEditor : ModuleRules
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
-			"AssetRegistry",
-			"AssetTools",
 			"UnrealEd"
 		});
 	}

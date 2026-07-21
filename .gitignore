@@ -33,6 +33,7 @@ Makefile
 # Project-generated URLab/import artifacts
 /Content/MuJoCoImports/
 /Assets/MosBrainCameraTest/**/*_ue.xml
+/Assets/MosBrainCameraTest/**/*.glb
 /Saved/URLab/
 /Saved/URLabShm/
 /Saved/URLabTest/

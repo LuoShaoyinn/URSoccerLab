@@ -87,9 +87,11 @@ uv run python Tools/run_vision_smoke_test.py \
 Reusable UE soccer-field scene:
 
 ```bash
-uv run python Tools/create_soccer_field_scene.py
+uv run python Tools/create_soccer_field_scene.py --nullrhi
 ```
 
 That command creates `/Game/Levels/URS_SoccerField` as a saved UE scene asset.
-It contains the imported GLB field visuals and a default UE skylight. Runtime
-simulator code should load this map and only add dynamic robots/cameras/control.
+`Tools/ue_bake_soccer_field_scene.py` contains the scene recipe: it imports the
+GLB field visuals, converts Blender/glTF Y-up node transforms into the UE level
+frame, and adds a default UE skylight. Runtime simulator code should load this
+map and only add dynamic robots/cameras/control.

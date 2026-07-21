@@ -76,7 +76,7 @@ class PiStereoCameraAssetTest(unittest.TestCase):
 
 
 class SoccerFieldAssetTest(unittest.TestCase):
-    def test_field_glb_uses_expected_robot_world_frame(self) -> None:
+    def test_field_glb_is_blender_y_up_and_bake_script_converts_to_ue(self) -> None:
         glb = read_glb_json(FIELD_GLB)
         nodes = {node["name"]: node for node in glb["nodes"]}
 
@@ -85,6 +85,10 @@ class SoccerFieldAssetTest(unittest.TestCase):
         self.assertEqual(nodes["goal_11"].get("translation"), [4.5, 0.5, -0.940000057220459])
         self.assertEqual(nodes["goal_0"].get("translation"), [4.5, 0.9599999785423279, 0])
         self.assertEqual(nodes["goal_1"].get("translation"), [-4.5, 0.9599999785423279, 0])
+
+        bake_script = (ROOT / "Tools/ue_bake_soccer_field_scene.py").read_text(encoding="utf-8")
+        self.assertIn("return unreal.Vector(x * 100.0, z_width * 100.0, y_up * 100.0)", bake_script)
+        self.assertIn("return unreal.Vector(x, z_width, y_up)", bake_script)
 
 
 if __name__ == "__main__":

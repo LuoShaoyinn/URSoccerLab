@@ -30,6 +30,13 @@
 		{
 			"Name": "ActorLayerUtilities",
 			"Enabled": false
+		},
+		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
 		}
 	]
 }
