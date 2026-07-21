@@ -5,6 +5,7 @@ import json
 import math
 import re
 import struct
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -226,6 +227,34 @@ def capture_camera_png(
     return frame_topic, len(frame), actual_frame_count
 
 
+def start_command_hold_thread(
+    ctx: zmq.Context,
+    endpoint: str,
+    host: str,
+    first_sequence: int,
+    motors: list[float],
+    rate_hz: float,
+) -> tuple[threading.Event, threading.Thread]:
+    stop_event = threading.Event()
+
+    def run() -> None:
+        push = ctx.socket(zmq.PUSH)
+        push.connect(client_endpoint(endpoint, host))
+        sequence = first_sequence
+        interval_sec = 1.0 / max(rate_hz, 1.0)
+        try:
+            while not stop_event.is_set():
+                push.send(encode_motor_command(sequence, motors))
+                sequence += 1
+                stop_event.wait(interval_sec)
+        finally:
+            push.close(linger=0)
+
+    thread = threading.Thread(target=run, name="urs-command-hold", daemon=True)
+    thread.start()
+    return stop_event, thread
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -346,8 +375,33 @@ def main() -> int:
                 result["camera_frame_count"] = camera_frame_count
                 result["camera_path"] = str(image_path)
                 if camera_before_path:
+                    hold_stop, hold_thread = start_command_hold_thread(
+                        ctx,
+                        meta["command_endpoint"],
+                        args.host,
+                        last_sequence + 1,
+                        last_command,
+                        args.motion_rate_hz,
+                    )
                     camera_after_path = out_dir / "camera_after.png"
-                    camera_after_path.write_bytes(image_path.read_bytes())
+                    try:
+                        frame_topic, camera_bytes, camera_frame_count = capture_camera_png(
+                            ctx,
+                            camera_endpoint,
+                            camera_topic,
+                            args.host,
+                            args.timeout_ms,
+                            args.camera_frame_count,
+                            camera_width,
+                            camera_height,
+                            camera_after_path,
+                        )
+                        result["camera_topic"] = frame_topic
+                        result["camera_bytes"] = camera_bytes
+                        result["camera_frame_count"] = camera_frame_count
+                    finally:
+                        hold_stop.set()
+                        hold_thread.join(timeout=1.0)
                     result["camera_before_path"] = str(camera_before_path)
                     result["camera_after_path"] = str(camera_after_path)
             else:

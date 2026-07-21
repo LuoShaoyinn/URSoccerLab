@@ -1,11 +1,14 @@
 #include "Runtime/URSZmqRobotBridgeComponent.h"
 
 #include "MuJoCo/Components/Actuators/MjActuator.h"
+#include "MuJoCo/Components/Bodies/MjBody.h"
 #include "MuJoCo/Components/Joints/MjJoint.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MuJoCo/Core/MjPhysicsEngine.h"
+#include "MuJoCo/Core/MjRenderSnapshot.h"
+#include "MuJoCo/Utils/MjUtils.h"
 #include "Transport/NetworkManager.h"
 #include "Dom/JsonObject.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
@@ -68,6 +71,7 @@ void UURSZmqRobotBridgeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		}
 		return;
 	}
+	SyncActiveCameraTransformsFromRenderSnapshot();
 	if (bUsePhysicsCallbacks)
 	{
 		return;
@@ -545,6 +549,64 @@ void UURSZmqRobotBridgeComponent::PublishState()
 
 	const double NowSec = FPlatformTime::Seconds();
 	PublishStateFromData(Model, Data, NowSec);
+}
+
+void UURSZmqRobotBridgeComponent::SyncActiveCameraTransformsFromRenderSnapshot()
+{
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine || !ManagerPtr->NetworkManager)
+	{
+		return;
+	}
+
+	const TArray<UMjCamera*> Cameras = ManagerPtr->NetworkManager->GetActiveCameras();
+	if (Cameras.IsEmpty())
+	{
+		return;
+	}
+
+	ManagerPtr->PhysicsEngine->WithRenderState([this, &Cameras](const FMjRenderSnapshot& Snap) {
+		for (UMjCamera* Camera : Cameras)
+		{
+			if (!Camera)
+			{
+				continue;
+			}
+
+			const UMjBody* ParentBody = Cast<UMjBody>(Camera->GetAttachParent());
+			if (!ParentBody)
+			{
+				continue;
+			}
+
+			const int32 BodyId = ParentBody->GetMjID();
+			if (BodyId < 0)
+			{
+				continue;
+			}
+
+			const int32 PosIdx = BodyId * 3;
+			const int32 QuatIdx = BodyId * 4;
+			if (Snap.XPos.Num() <= PosIdx + 2 || Snap.XQuat.Num() <= QuatIdx + 3)
+			{
+				continue;
+			}
+
+			FTransform* CachedLocal = CameraLocalTransforms.Find(Camera);
+			if (!CachedLocal)
+			{
+				CachedLocal = &CameraLocalTransforms.Add(Camera, Camera->GetRelativeTransform());
+			}
+
+			const FVector BodyWorldPos = MjUtils::MjToUEPosition(&Snap.XPos[PosIdx]);
+			const FQuat BodyWorldRot = MjUtils::MjToUERotation(&Snap.XQuat[QuatIdx]);
+			const FTransform BodyWorldTransform(BodyWorldRot, BodyWorldPos);
+			const FTransform CameraWorldTransform = (*CachedLocal) * BodyWorldTransform;
+			Camera->SetWorldLocationAndRotation(
+				CameraWorldTransform.GetLocation(),
+				CameraWorldTransform.GetRotation());
+		}
+	});
 }
 
 void UURSZmqRobotBridgeComponent::RegisterPhysicsCallbacks()
