@@ -127,7 +127,6 @@ bool FURSSoccerFieldSceneBuilder::SpawnVisualFixture(
 
 		FieldActor->SetActorLabel(FString::Printf(TEXT("URS_SoccerField_%d"), MeshIndex));
 		FieldActor->Tags.AddUnique(FName(TEXT("URLab.ActorId=soccer_field_visual")));
-		FieldActor->SetActorScale3D(FVector(100.0f));
 		FieldActor->GetStaticMeshComponent()->SetStaticMesh(FieldMesh);
 	}
 

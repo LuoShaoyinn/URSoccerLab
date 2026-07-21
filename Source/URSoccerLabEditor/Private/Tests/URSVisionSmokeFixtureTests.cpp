@@ -190,17 +190,16 @@ bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 		if (!Camera)
 			continue;
 
-		Camera->SetUsingAbsoluteLocation(false);
-		Camera->SetUsingAbsoluteRotation(false);
-		Camera->SetRelativeLocation(FVector(80.0f, 0.0f, 15.0f));
-		Camera->SetRelativeRotation(FRotator(35.0f, 0.0f, 0.0f));
 		Camera->bEnableZmqBroadcast = true;
 		Camera->bEnableShmBroadcast = false;
 		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + Index);
 		if (Camera->CaptureComponent)
 		{
+			const FVector MjForward = FVector(0.0f, 0.0f, -1.0f);
+			const FVector MjUp = FVector(0.0f, -1.0f, 0.0f);
+			const FRotator CorrectionRot = FRotationMatrix::MakeFromXZ(MjForward, MjUp).Rotator();
 			Camera->CaptureComponent->SetRelativeLocation(FVector::ZeroVector);
-			Camera->CaptureComponent->SetRelativeRotation(FRotator::ZeroRotator);
+			Camera->CaptureComponent->SetRelativeRotation(CorrectionRot);
 			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
 		}
 		if (Camera->resolution.Num() < 2)
@@ -306,6 +305,7 @@ bool HideImportedFieldGeoms(UWorld* World, FString& OutError)
 	Robot->MarkPackageDirty();
 	return true;
 }
+
 } // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSVisionSmokeCreateMap,
