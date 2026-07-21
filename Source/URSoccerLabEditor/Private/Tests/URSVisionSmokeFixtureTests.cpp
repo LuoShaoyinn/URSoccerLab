@@ -188,18 +188,15 @@ bool ConfigureRobotCameras(UWorld* World, FString& OutError)
 	{
 		UMjCamera* Camera = Cameras[Index];
 		if (!Camera)
+		{
 			continue;
+		}
 
 		Camera->bEnableZmqBroadcast = true;
 		Camera->bEnableShmBroadcast = false;
 		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + Index);
 		if (Camera->CaptureComponent)
 		{
-			const FVector MjForward = FVector(0.0f, 0.0f, -1.0f);
-			const FVector MjUp = FVector(0.0f, -1.0f, 0.0f);
-			const FRotator CorrectionRot = FRotationMatrix::MakeFromXZ(MjForward, MjUp).Rotator();
-			Camera->CaptureComponent->SetRelativeLocation(FVector::ZeroVector);
-			Camera->CaptureComponent->SetRelativeRotation(CorrectionRot);
 			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
 		}
 		if (Camera->resolution.Num() < 2)
