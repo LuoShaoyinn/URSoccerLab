@@ -70,6 +70,49 @@ For the current Pi Plus smoke robot, the tested head-mounted camera is:
 The negative X offset is intentional for this asset: the old positive-X
 location was inside the `head_pitch_link` mesh and caused self-occlusion.
 
+## Fixed Pi Plus Robot Contract
+
+The shipped Pi Plus fixture is a fixed robot type, not a runtime-dynamic URDF
+loader. URSoccerLab code may therefore treat these names as stable ABI:
+
+- Root link: `base_link`
+- Head yaw link: `head_yaw_link`
+- Head pitch link: `head_pitch_link`
+- Head yaw actuator/joint: `head_yaw_joint`
+- Head pitch actuator/joint: `head_pitch_joint`
+
+Stereo cameras should be represented as fixed child links/joints in the robot
+asset and as URLab MJCF cameras under the same moving parent body. Do not encode
+the head-to-eye offsets in C++.
+
+Use these names for the stereo camera contract:
+
+- Left camera link: `left_eye_camera_link`
+- Left camera fixed joint: `left_eye_camera_joint`
+- Left URLab/MJCF camera: `left_eye_camera`
+- Right camera link: `right_eye_camera_link`
+- Right camera fixed joint: `right_eye_camera_joint`
+- Right URLab/MJCF camera: `right_eye_camera`
+
+Both fixed camera joints should have parent `head_pitch_link`, so yaw and pitch
+motion naturally moves both eyes. The URDF fixed joint origin records the
+physical head-to-eye placement for documentation and non-URLab tooling. The
+MJCF `<camera>` `pos` and orientation are the source URLab actually renders
+from.
+
+Expected camera optical convention in MJCF:
+
+```xml
+<camera name="left_eye_camera"
+        pos="<x y z relative to head_pitch_link>"
+        xyaxes="0 1 0 -1 0 0"
+        fovy="90"
+        resolution="640 480" />
+```
+
+The same `xyaxes` should be used for `right_eye_camera` unless the physical
+camera model intentionally has a different optical frame.
+
 ## URSoccerLab Ownership
 
 URLab owns:
