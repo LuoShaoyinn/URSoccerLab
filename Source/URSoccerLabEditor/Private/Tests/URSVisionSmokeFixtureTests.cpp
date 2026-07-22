@@ -3,7 +3,9 @@
 #include "CoreMinimal.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
+#include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/WorldSettings.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -13,8 +15,10 @@
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MjLevelOps.h"
 #include "Runtime/URSZmqRobotBridgeComponent.h"
+#include "Scene/URSSceneConfigComponent.h"
 #include "Transport/NetworkManager.h"
 #include "UObject/SavePackage.h"
+#include "URSSoccerGameMode.h"
 
 namespace
 {
@@ -124,6 +128,24 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 	{
 		Manager->AddInstanceComponent(Bridge);
 		Bridge->RegisterComponent();
+	}
+
+	// Attach the scene config component so AURSSoccerGameMode::InitGame can
+	// call ApplyConfig and spawn robots before URLab compiles.
+	UURSSceneConfigComponent* SceneComp = FindObject<UURSSceneConfigComponent>(Manager, TEXT("URSSceneConfig"));
+	if (!SceneComp)
+	{
+		SceneComp = NewObject<UURSSceneConfigComponent>(
+			Manager, UURSSceneConfigComponent::StaticClass(), TEXT("URSSceneConfig"));
+	}
+	if (SceneComp)
+	{
+		SceneComp->CreationMethod = EComponentCreationMethod::Instance;
+		if (!SceneComp->IsRegistered())
+		{
+			Manager->AddInstanceComponent(SceneComp);
+			SceneComp->RegisterComponent();
+		}
 	}
 
 	Manager->MarkPackageDirty();
@@ -356,36 +378,15 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	FString ActorName;
-	FString ActorPath;
-	FString SpawnClassPath;
-	FString SpawnError;
-	bool bWasExisting = false;
-	if (!URLabLevelOps::SpawnActorSync(
-			BlueprintClassPath, VisionSmokeRobotId,
-			FVector(0.0f, 0.0f, PiPlusStandingBaseHeightMeters), FQuat::Identity, FVector::OneVector,
-			ActorName, ActorPath, SpawnClassPath, bWasExisting, SpawnError))
-	{
-		AddError(FString::Printf(TEXT("SpawnActorSync failed: %s"), *SpawnError));
-		return false;
-	}
+	// Field-only map: no baked robot. Robots are spawned at runtime by
+	// AURSSoccerGameMode::InitGame from Config/URS_scene.json before URLab
+	// compiles. The blueprint import above guarantees the pi_plus Blueprint
+	// is available for LoadClass at runtime.
 
-	if (!EnsureRobotActorName(World, SetupError))
+	// Ensure the level uses our GameMode so the bootstrap runs.
+	if (AWorldSettings* WS = World->GetWorldSettings(true))
 	{
-		AddError(SetupError);
-		return false;
-	}
-
-	if (!HideImportedFieldGeoms(World, SetupError))
-	{
-		AddError(SetupError);
-		return false;
-	}
-
-	if (!ConfigureRobotCameras(World, SetupError))
-	{
-		AddError(SetupError);
-		return false;
+		WS->DefaultGameMode = AURSSoccerGameMode::StaticClass();
 	}
 
 	FString SavedLevelPath;
@@ -397,7 +398,7 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 	}
 
 	TestEqual(TEXT("saved level path"), SavedLevelPath, FString(TEXT("/Game/Levels/URS_SoccerField")));
-	UE_LOG(LogTemp, Display, TEXT("URSoccerLab vision smoke map ready at %s"), *SavedLevelPath);
+	UE_LOG(LogTemp, Display, TEXT("URSoccerLab field-only map ready at %s"), *SavedLevelPath);
 	return true;
 }
 

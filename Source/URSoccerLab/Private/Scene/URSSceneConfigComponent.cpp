@@ -1,5 +1,7 @@
 #include "Scene/URSSceneConfigComponent.h"
 
+#include "MuJoCo/Components/Geometry/MjGeom.h"
+#include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MuJoCo/Utils/MjUtils.h"
@@ -16,14 +18,8 @@ UURSSceneConfigComponent::UURSSceneConfigComponent()
 void UURSSceneConfigComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	if (bAutoApplyOnBeginPlay)
-	{
-		FString Error;
-		if (!ApplyConfig(Error))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("URSoccerLab scene config auto-apply failed: %s"), *Error);
-		}
-	}
+	// Robot spawning is owned by AURSSoccerGameMode::InitGame, which runs
+	// BEFORE BeginPlay to guarantee robots are in the compiled MuJoCo model.
 }
 
 bool UURSSceneConfigComponent::ReloadConfig(FString& OutError)
@@ -193,6 +189,9 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	}
 	Articulation->SetActorLabel(Spawn.ActorId);
 
+	ConfigureRobotCameras(Articulation, Spawn.ActorId);
+	HideImportedFieldGeoms(Articulation);
+
 	FURSSpawnedRobotInfo Info;
 	Info.ActorId = Spawn.ActorId;
 	Info.TypeName = Spawn.Type;
@@ -215,4 +214,87 @@ bool UURSSceneConfigComponent::GetInitialPose(
 	OutTranslationMeters = Info->InitialTranslationMeters;
 	OutRotationXyzw = Info->InitialRotationXyzw;
 	return true;
+}
+
+void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId)
+{
+	if (!Articulation)
+	{
+		return;
+	}
+
+	// Stable per-actor port assignment: robot_rp0 gets 5558/5559,
+	// robot_rp1 gets 5560/5561, etc. Extract trailing digits from actor_id.
+	int32 RobotIndex = 0;
+	if (ActorId.Len() > 0)
+	{
+		int32 LastDigit = -1;
+		for (int32 i = ActorId.Len() - 1; i >= 0; --i)
+		{
+			if (FChar::IsDigit(ActorId[i]))
+			{
+				LastDigit = i;
+			}
+			else
+			{
+				break;
+			}
+		}
+		if (LastDigit >= 0)
+		{
+			RobotIndex = FCString::Atoi(*ActorId.RightChop(LastDigit));
+		}
+	}
+
+	TArray<UMjCamera*> Cameras;
+	Articulation->GetComponents<UMjCamera>(Cameras);
+	for (int32 CamIdx = 0; CamIdx < Cameras.Num(); ++CamIdx)
+	{
+		UMjCamera* Camera = Cameras[CamIdx];
+		if (!Camera)
+		{
+			continue;
+		}
+		Camera->bEnableZmqBroadcast = true;
+		Camera->bEnableShmBroadcast = false;
+		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + RobotIndex * 2 + CamIdx);
+		if (Camera->CaptureComponent)
+		{
+			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
+		}
+		if (Camera->resolution.Num() < 2)
+		{
+			Camera->bOverride_resolution = true;
+			Camera->resolution = {640, 480};
+		}
+		if (Camera->fovy <= 0.0f)
+		{
+			Camera->bOverride_fovy = true;
+			Camera->fovy = 90.0f;
+		}
+		Camera->Modify();
+	}
+}
+
+void UURSSceneConfigComponent::HideImportedFieldGeoms(AMjArticulation* Articulation)
+{
+	if (!Articulation)
+	{
+		return;
+	}
+
+	TArray<UMjGeom*> Geoms;
+	Articulation->GetComponents<UMjGeom>(Geoms);
+	for (UMjGeom* Geom : Geoms)
+	{
+		if (!Geom)
+		{
+			continue;
+		}
+		const FString MjName = Geom->MjName.IsEmpty() ? Geom->GetName() : Geom->MjName;
+		if (MjName == TEXT("floor") || MjName == TEXT("vision_floor") || MjName == TEXT("vision_marker"))
+		{
+			Geom->SetGeomVisibility(false);
+		}
+	}
 }

@@ -39,7 +39,7 @@ public:
 	FString ConfigPath = TEXT("Config/URS_scene.json");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab|Scene")
-	bool bAutoApplyOnBeginPlay = true;
+	bool bAutoApplyOnBeginPlay = false;
 
 	UPROPERTY(BlueprintAssignable, Category = "URSoccerLab|Scene")
 	FOnSceneConfigApplied OnSceneConfigApplied;
@@ -71,4 +71,6 @@ private:
 	void DestroyConfiguredRobots();
 	void DestroyActorsWithIds(const TSet<FString>& ActorIds);
 	bool SpawnOneRobot(AAMjManager* Manager, const URSoccerLab::FURSRobotSpawn& Spawn, FString& OutError);
+	void ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId);
+	void HideImportedFieldGeoms(AMjArticulation* Articulation);
 };

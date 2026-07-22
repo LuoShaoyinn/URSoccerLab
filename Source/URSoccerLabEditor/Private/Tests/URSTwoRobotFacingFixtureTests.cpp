@@ -1,0 +1,314 @@
+#if WITH_DEV_AUTOMATION_TESTS
+
+#include "CoreMinimal.h"
+#include "Editor.h"
+#include "Engine/Blueprint.h"
+#include "EngineUtils.h"
+#include "Misc/AutomationTest.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "MuJoCo/Components/Geometry/MjGeom.h"
+#include "MuJoCo/Components/Sensors/MjCamera.h"
+#include "MuJoCo/Core/AMjManager.h"
+#include "MuJoCo/Core/MjArticulation.h"
+#include "MjLevelOps.h"
+#include "Runtime/URSZmqRobotBridgeComponent.h"
+#include "Scene/URSSceneConfig.h"
+#include "Scene/URSSceneConfigComponent.h"
+#include "Scene/URSRobotTypeRegistry.h"
+#include "Transport/NetworkManager.h"
+#include "UObject/SavePackage.h"
+
+namespace
+{
+constexpr const TCHAR* TwoRobotLevelName = TEXT("URS_TwoRobotFacing");
+constexpr const TCHAR* TwoRobotSceneConfigPath = TEXT("Config/URS_two_robot_scene.json");
+
+bool SaveImportedBlueprint(const FString& BlueprintShortName, FString& OutError)
+{
+	const FString BlueprintObjectPath = FString::Printf(
+		TEXT("/Game/MuJoCoImports/%s.%s"), *BlueprintShortName, *BlueprintShortName);
+	UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintObjectPath);
+	if (!Blueprint)
+	{
+		OutError = FString::Printf(TEXT("failed to load imported blueprint %s"), *BlueprintObjectPath);
+		return false;
+	}
+
+	UPackage* Package = Blueprint->GetOutermost();
+	if (!Package)
+	{
+		OutError = FString::Printf(TEXT("object %s has no outer package"), *Blueprint->GetName());
+		return false;
+	}
+	const FString PackageFileName = FPackageName::LongPackageNameToFilename(
+		Package->GetName(), FPackageName::GetAssetPackageExtension());
+	FSavePackageArgs SaveArgs;
+	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+	SaveArgs.SaveFlags = SAVE_NoError;
+	if (!UPackage::SavePackage(Package, Blueprint, *PackageFileName, SaveArgs))
+	{
+		OutError = FString::Printf(TEXT("failed to save package %s"), *Package->GetName());
+		return false;
+	}
+	return true;
+}
+
+bool EnsureRobotCameras(UWorld* World, const FString& ActorId, FString& OutError)
+{
+	AMjArticulation* Robot = nullptr;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		if (It->ActorId == ActorId)
+		{
+			Robot = *It;
+			break;
+		}
+	}
+	if (!Robot)
+	{
+		OutError = FString::Printf(TEXT("spawned %s articulation not found"), *ActorId);
+		return false;
+	}
+
+	TArray<UMjCamera*> Cameras;
+	Robot->GetComponents<UMjCamera>(Cameras);
+	int32 CameraIndex = 0;
+	for (UMjCamera* Camera : Cameras)
+	{
+		if (!Camera)
+		{
+			continue;
+		}
+		Camera->bEnableZmqBroadcast = true;
+		Camera->bEnableShmBroadcast = false;
+		// Stable per-actor port: 5558 + offset based on robot index + camera index.
+		// robot_rp0 uses 5558/5559, robot_rp1 uses 5560/5561.
+		int32 PortOffset = 0;
+		if (ActorId.EndsWith(TEXT("rp1")))
+		{
+			PortOffset = 2;
+		}
+		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + PortOffset + CameraIndex);
+		++CameraIndex;
+		if (Camera->CaptureComponent)
+		{
+			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
+		}
+		if (Camera->resolution.Num() < 2)
+		{
+			Camera->bOverride_resolution = true;
+			Camera->resolution = {640, 480};
+		}
+		if (Camera->fovy <= 0.0f)
+		{
+			Camera->bOverride_fovy = true;
+			Camera->fovy = 90.0f;
+		}
+		Camera->Modify();
+	}
+	Robot->MarkPackageDirty();
+	return true;
+}
+
+bool HideImportedFieldGeoms(UWorld* World, const FString& ActorId, FString& OutError)
+{
+	AMjArticulation* Robot = nullptr;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		if (It->ActorId == ActorId)
+		{
+			Robot = *It;
+			break;
+		}
+	}
+	if (!Robot)
+	{
+		OutError = FString::Printf(TEXT("spawned %s articulation not found"), *ActorId);
+		return false;
+	}
+
+	TArray<UMjGeom*> Geoms;
+	Robot->GetComponents<UMjGeom>(Geoms);
+	for (UMjGeom* Geom : Geoms)
+	{
+		if (!Geom)
+		{
+			continue;
+		}
+		const FString MjName = Geom->MjName.IsEmpty() ? Geom->GetName() : Geom->MjName;
+		if (MjName == TEXT("floor") || MjName == TEXT("vision_floor") || MjName == TEXT("vision_marker"))
+		{
+			Geom->SetGeomVisibility(false);
+		}
+	}
+	Robot->MarkPackageDirty();
+	return true;
+}
+} // namespace
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSTwoRobotFacingCreateMap,
+	"URSoccerLab.E2E.CreateTwoRobotFacingMap",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
+{
+	URSoccerLab::FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+
+	const FString XmlPath = FPaths::ConvertRelativePathToFull(
+		FPaths::Combine(FPaths::ProjectDir(),
+			TEXT("Assets/MosBrainCameraTest/pi_plus/pi_plus_stereo_camera.xml")));
+	TestTrue(TEXT("pi_plus source XML present"), FPaths::FileExists(XmlPath));
+
+	FString BlueprintClassPath;
+	FString BlueprintShortName;
+	FString ImportError;
+	bool bImportedNow = false;
+	TestTrue(TEXT("import pi_plus blueprint"),
+		URLabLevelOps::ImportXmlSync(
+			XmlPath, true, BlueprintClassPath, BlueprintShortName, bImportedNow, ImportError));
+	TestTrue(TEXT("save imported blueprint"), SaveImportedBlueprint(BlueprintShortName, ImportError));
+
+	// Start from the baked field + sky level so we do not have to recreate it.
+	FString LevelPath;
+	FString LevelError;
+	TestTrue(TEXT("load soccer field level"),
+		URLabLevelOps::LoadLevelSync(TEXT("URS_SoccerField"), LevelPath, LevelError));
+
+	// Destroy any pre-existing robots inherited from URS_SoccerField so the
+	// scene config is the sole source of truth. Rename first so the actor
+	// name is released before DestroyActor's cleanup races the new spawn.
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	TestNotNull(TEXT("editor world"), World);
+
+	TArray<AMjArticulation*> ExistingRobots;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		ExistingRobots.Add(*It);
+	}
+	for (AMjArticulation* Actor : ExistingRobots)
+	{
+		const FName StaleName = MakeUniqueObjectName(
+			Actor->GetOuter(), Actor->GetClass(),
+			FName(*FString::Printf(TEXT("stale_%s"), *Actor->GetName())));
+		Actor->Rename(*StaleName.ToString(), Actor->GetOuter(),
+			REN_DontCreateRedirectors | REN_NonTransactional);
+		World->DestroyActor(Actor);
+	}
+
+	AAMjManager* Manager = nullptr;
+	for (TActorIterator<AAMjManager> It(World); It; ++It)
+	{
+		Manager = *It;
+		break;
+	}
+	if (!Manager)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Manager = World->SpawnActor<AAMjManager>(
+			AAMjManager::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	}
+	TestNotNull(TEXT("AAMjManager present"), Manager);
+	if (!Manager)
+	{
+		return false;
+	}
+	Manager->bAutoCreateSimulateWidget = false;
+	Manager->SetPaused(false);
+	if (Manager->NetworkManager)
+	{
+		Manager->NetworkManager->bEnableAllCameras = true;
+	}
+
+	// Fresh bridge with the default one-robot RobotNames; the scene config
+	// delegate will pull in the two-robot list when ApplyConfig fires.
+	UURSZmqRobotBridgeComponent* Bridge = FindObject<UURSZmqRobotBridgeComponent>(Manager, TEXT("URSZmqRobotBridge"));
+	if (!Bridge)
+	{
+		Bridge = NewObject<UURSZmqRobotBridgeComponent>(
+			Manager, UURSZmqRobotBridgeComponent::StaticClass(), TEXT("URSZmqRobotBridge"));
+	}
+	TestNotNull(TEXT("bridge component"), Bridge);
+	if (!Bridge)
+	{
+		return false;
+	}
+	Bridge->CreationMethod = EComponentCreationMethod::Instance;
+	Bridge->CommandBasePort = 10000;
+	Bridge->AdminBasePort = 11000;
+	Bridge->StatePort = 10100;
+	Bridge->MetaPort = 10101;
+	Bridge->StatePublishRateHz = 30.0;
+	if (!Bridge->IsRegistered())
+	{
+		Manager->AddInstanceComponent(Bridge);
+		Bridge->RegisterComponent();
+	}
+
+	// Attach the scene config component pointed at the two-robot file.
+	UURSSceneConfigComponent* SceneComp = FindObject<UURSSceneConfigComponent>(Manager, TEXT("URSSceneConfig"));
+	if (!SceneComp)
+	{
+		SceneComp = NewObject<UURSSceneConfigComponent>(
+			Manager, UURSSceneConfigComponent::StaticClass(), TEXT("URSSceneConfig"));
+	}
+	TestNotNull(TEXT("scene config component"), SceneComp);
+	if (!SceneComp)
+	{
+		return false;
+	}
+	SceneComp->CreationMethod = EComponentCreationMethod::Instance;
+	SceneComp->ConfigPath = TwoRobotSceneConfigPath;
+	// The editor fixture applies the config once during bake. At runtime we
+	// do NOT want BeginPlay to destroy + respawn the already-baked robots:
+	// PIE/world-init destruction races the manager compile. The component
+	// is still useful at runtime for admin `reset` to look up the spawn pose.
+	SceneComp->bAutoApplyOnBeginPlay = false;
+	if (!SceneComp->IsRegistered())
+	{
+		Manager->AddInstanceComponent(SceneComp);
+		SceneComp->RegisterComponent();
+	}
+
+	FString ApplyError;
+	TestTrue(TEXT("scene config applies"), SceneComp->ApplyConfig(ApplyError));
+
+	for (const FString& ActorId : {FString(TEXT("robot_rp0")), FString(TEXT("robot_rp1"))})
+	{
+		FString GeomError;
+		if (!HideImportedFieldGeoms(World, ActorId, GeomError))
+		{
+			AddError(GeomError);
+			return false;
+		}
+		FString CamError;
+		if (!EnsureRobotCameras(World, ActorId, CamError))
+		{
+			AddError(CamError);
+			return false;
+		}
+	}
+
+	int32 RobotCount = 0;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
+	{
+		if (It->ActorId == TEXT("robot_rp0") || It->ActorId == TEXT("robot_rp1"))
+		{
+			++RobotCount;
+		}
+	}
+	TestEqual(TEXT("exactly two configured robots in level"), RobotCount, 2);
+
+	// Save under a new level path so the original URS_SoccerField is untouched.
+	FString NewLevelPath = FString::Printf(TEXT("/Game/Levels/%s"), TwoRobotLevelName);
+	FString SavedLevelPath;
+	FString SaveError;
+	TestTrue(TEXT("save two-robot level"),
+		URLabLevelOps::SaveCurrentLevelSync(NewLevelPath, SaveError));
+
+	UE_LOG(LogTemp, Display, TEXT("URSoccerLab two-robot facing map ready at /Game/Levels/%s"), TwoRobotLevelName);
+	return true;
+}
+
+#endif // WITH_DEV_AUTOMATION_TESTS
