@@ -4,6 +4,14 @@
 This script runs inside Unreal Editor via ``-ExecutePythonScript``. It is
 deliberately editor-only: packaged simulator builds should load the baked
 ``/Game/Levels/URS_SoccerField`` map, not recreate it.
+
+The UE Interchange glTF importer (default ``bBakeMeshes = true``) bakes
+each glTF scene-node's full global transform (translation, rotation,
+scale, plus the 100x m-to-cm conversion) directly into the mesh
+vertices.  The imported ``UStaticMesh`` assets are therefore already in
+the correct world-space position and orientation.  We spawn every mesh
+actor at the origin with identity rotation and unit scale so we do not
+double-apply the node transform.
 """
 
 from __future__ import annotations
@@ -37,16 +45,31 @@ def read_glb_json(path: Path) -> dict:
 
 
 def glb_translation_to_ue_cm(value: list[float] | None) -> unreal.Vector:
+    """Convert a glTF translation (metres, Y-up) to UE (cm, Z-up).
+
+    Kept for reference; not used in ``spawn_field`` because the Interchange
+    importer already bakes translations into mesh vertices.
+    """
     x, y_up, z_width = value or [0.0, 0.0, 0.0]
     return unreal.Vector(x * 100.0, z_width * 100.0, y_up * 100.0)
 
 
 def glb_scale_to_ue(value: list[float] | None) -> unreal.Vector:
+    """Convert a glTF scale (Y-up) to UE (Z-up).
+
+    Kept for reference; not used in ``spawn_field`` because the Interchange
+    importer already bakes scale into mesh vertices.
+    """
     x, y_up, z_width = value or [1.0, 1.0, 1.0]
     return unreal.Vector(x, z_width, y_up)
 
 
 def glb_rotation_to_ue(rotation: list[float] | None) -> unreal.Rotator:
+    """Convert a glTF quaternion (Y-up) to UE rotator (Z-up).
+
+    Kept for reference; not used in ``spawn_field`` because the Interchange
+    importer already bakes rotation into mesh vertices.
+    """
     if not rotation:
         return unreal.Rotator(0.0, 0.0, 0.0)
 
@@ -96,6 +119,14 @@ def new_level() -> None:
 
 
 def spawn_field(meshes: dict[str, unreal.StaticMesh], nodes: list[dict]) -> None:
+    """Spawn each imported mesh at the origin with identity transform.
+
+    The Interchange importer (``bBakeMeshes = true`` by default) already
+    baked the full glTF node transform — translation, rotation, scale,
+    and the 100x m-to-cm conversion — into each mesh's vertices.  We
+    must NOT re-apply those transforms here, or every mesh would be
+    double-scaled / double-translated.
+    """
     for index, node in enumerate(nodes):
         name = node.get("name")
         if not name or "mesh" not in node:
@@ -108,9 +139,9 @@ def spawn_field(meshes: dict[str, unreal.StaticMesh], nodes: list[dict]) -> None
         if not unreal.URSSceneBakeLibrary.spawn_static_mesh_actor(
             mesh,
             f"URS_SoccerField_{index}_{name}",
-            glb_translation_to_ue_cm(node.get("translation")),
-            glb_rotation_to_ue(node.get("rotation")),
-            glb_scale_to_ue(node.get("scale")),
+            unreal.Vector(0.0, 0.0, 0.0),
+            unreal.Rotator(0.0, 0.0, 0.0),
+            unreal.Vector(1.0, 1.0, 1.0),
             "URLab.ActorId=soccer_field_visual",
         ):
             raise RuntimeError(f"failed to spawn field mesh node {name}")

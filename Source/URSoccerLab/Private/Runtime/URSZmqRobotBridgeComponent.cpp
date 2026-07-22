@@ -895,11 +895,23 @@ FString UURSZmqRobotBridgeComponent::HandleReset(FRobotRuntimeEndpoint& Endpoint
 
 	URSoccerLab::FAdminPoseRequest Req;
 	Req.Op = URSoccerLab::EAdminOp::SetPose;
-	if (bHaveInitialPose)
+
+	AMjArticulation* Articulation = Endpoint.Articulation.Get();
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (Articulation && ManagerPtr && ManagerPtr->PhysicsEngine)
 	{
-		Req.TranslationMeters = InitialTranslation;
-		Req.RotationQuatXyzw = InitialRotation;
+		mjModel* Model = ManagerPtr->PhysicsEngine->GetModel();
+		if (Model)
+		{
+			const FQposLayout Layout = DiscoverQposLayout(Articulation, Model);
+			if (bHaveInitialPose && !Layout.RootSlots.IsEmpty())
+			{
+				Req.TranslationMeters = InitialTranslation;
+				Req.RotationQuatXyzw = InitialRotation;
+			}
+		}
 	}
+
 	return HandleSetPose(Endpoint, Req);
 }
 
