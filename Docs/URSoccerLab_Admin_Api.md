@@ -119,6 +119,12 @@ request could not be parsed past the `op` field).
 
 ## Ops
 
+| Op | Direction | Summary |
+| --- | --- | --- |
+| `get_pose` | read | Read root body `xpos`/`xquat` + non-root joint qpos from MuJoCo ground truth. |
+| `set_pose` | write | Force-write root translation, root rotation, and/or non-root joint qpos under `CallbackMutex`. Absent fields default to zero. |
+| `reset` | write | Return robot to its initial spawn pose (from `UURSSceneConfigComponent`) or all-zero qpos. |
+
 ### `get_pose` — read robot pose and joint positions
 
 Read the robot's current pose from MuJoCo ground truth. The root body is
@@ -369,6 +375,66 @@ python Tools/run_admin_smoke_test.py
 The wrapper starts `/Game/Levels/URS_SoccerField` offscreen, waits for
 the `URSoccerLab admin RPC ready` log line, runs the client through the
 `py_example` venv, and fails unless every step succeeds.
+
+## C++ protocol API
+
+The JSON parsing and reply building are in `URSoccerLab::FAdminProtocol`
+(`Public/Runtime/URSAdminProtocol.h`). These are pure functions with no
+engine state — safe to unit-test without a running simulator.
+
+```cpp
+namespace URSoccerLab
+{
+enum class EAdminOp : uint8 { Unknown, SetPose, GetPose, Reset };
+
+enum class EAdminRequestParse : uint8
+{
+    Accepted, NotJson, MissingOp, UnknownOp,
+    BadTranslation, BadRotation, BadJointQpos, BadJointQposDim
+};
+
+struct FAdminPoseRequest
+{
+    EAdminOp Op = EAdminOp::Unknown;
+    TOptional<FVector> TranslationMeters;
+    TOptional<FQuat> RotationQuatXyzw;
+    TOptional<TArray<float>> JointQpos;
+};
+
+class FAdminProtocol
+{
+public:
+    // Parse a single-frame JSON request body.
+    static EAdminRequestParse ParseRequest(const FString& JsonBody, FAdminPoseRequest& Out);
+
+    // Build JSON reply strings (condensed, UTF-8).
+    static FString BuildOkReply(const FString& OpName, const FString& ActorId);
+    static FString BuildOkSetPoseReply(const FString& ActorId,
+        const FVector& AppliedTranslationMeters,
+        const FQuat& AppliedRotationXyzw,
+        const TArray<float>& AppliedJointQpos,
+        double SimTimeSec);
+    static FString BuildOkGetPoseReply(const FString& ActorId,
+        const FVector& TranslationMeters,
+        const FQuat& RotationXyzw,
+        const TArray<float>& JointQpos,
+        double SimTimeSec);
+    static FString BuildErrorReply(const FString& OpName,
+        const FString& ErrorCode, const FString& Message);
+};
+}
+```
+
+The bridge component (`UURSZmqRobotBridgeComponent`) wires the ZMQ REP
+sockets to these helpers:
+
+| Bridge method | Role |
+| --- | --- |
+| `DrainAdminSockets()` | Polls every admin REP socket on the game-thread tick; recv → parse → handle → send. |
+| `HandleAdminRequest(Endpoint, Body)` | Dispatches by `EAdminOp` to `HandleSetPose` / `HandleGetPose` / `HandleReset`. |
+| `HandleSetPose(Endpoint, Req)` | Discovers qpos layout, validates dimensions, writes under `CallbackMutex`, calls `mj_forward`. |
+| `HandleGetPose(Endpoint)` | Reads `xpos`/`xquat`/qpos under `CallbackMutex`. |
+| `HandleReset(Endpoint)` | Looks up spawn pose from `UURSSceneConfigComponent`, delegates to `HandleSetPose`. |
 
 ## Configuration reference
 
