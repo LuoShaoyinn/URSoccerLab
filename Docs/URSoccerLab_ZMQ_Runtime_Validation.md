@@ -9,6 +9,10 @@
 - Commands are drained in URLab `PreStep` callbacks and written to URLab actuator network controls before URLab applies controls.
 - State is published from URLab `PostStep` callbacks at `StatePublishRateHz`.
 - Fallback game-thread tick path remains available by setting `bUsePhysicsCallbacks=false`.
+- Per-robot admin RPC: one `ZMQ_REP` socket per active robot on `tcp://0.0.0.0:<AdminBasePort+idx>` (default base `11000`, so `robot_rp0` is on `11000`). Ops:
+  - `set_pose` — force-write root translation, root rotation (`rotation_quat_xyzw`), and non-root `joint_qpos` under `CallbackMutex` + `mj_forward`. Any field absent from the request is treated as zero (identity for rotation).
+  - `reset` — return this robot to its initial spawn pose (looked up from `UURSSceneConfigComponent` when present) or all-zero qpos as a fallback.
+- Scene config component (`UURSSceneConfigComponent`) reads `Config/URS_scene.json` on `BeginPlay` and spawns registered robot types. `pi_plus` is registered by the game module startup against `/Game/MuJoCoImports/pi_plus_stereo_camera`.
 
 ## Motor Command Payload
 
@@ -35,6 +39,75 @@ python Tools/zmq_smoke_client.py --robot robot_rp0
 The script waits for `meta/robot_rp0`, sends one zero motor vector to that robot's command endpoint, then waits for one `state/robot_rp0` packet.
 `py_example/main.py` also supports a time-varying motor command stream using
 `--motion-regex`, `--motion-duration-sec`, and related options.
+
+## Admin RPC Quick Check
+
+The admin RPC surface mirrors the per-robot command surface: one REP per
+robot on ports `11000..11013` by default. Clients use `ZMQ_REQ`. The
+metadata PUB now advertises each robot's `admin_endpoint`. The wire format
+is single-frame UTF-8 JSON, op-driven.
+
+Minimal example (`pyzmq`):
+
+```python
+import json, zmq
+ctx = zmq.Context()
+sock = ctx.socket(zmq.REQ)
+sock.connect("tcp://127.0.0.1:11000")
+sock.send_string(json.dumps({
+    "op": "set_pose",
+    "translation_m": [0.5, 0.0, 0.3762],
+    "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+}))
+print(json.loads(sock.recv()))
+```
+
+Reset back to initial pose:
+
+```python
+sock.send_string(json.dumps({"op": "reset"}))
+print(json.loads(sock.recv()))
+```
+
+End-to-end admin smoke test from the project root:
+
+```bash
+python Tools/run_admin_smoke_test.py
+```
+
+That command starts `/Game/Levels/URS_SoccerField` offscreen, waits for the
+admin RPC to come up, then runs `Tools/admin_smoke_client.py` against
+`robot_rp0`. The client exercises `set_pose` with a fresh translation,
+`reset`, and a deliberate `dim_mismatch` error to confirm the validation
+path. The wrapper fails unless every step returns `ok: true` (except the
+deliberate error).
+
+## Dynamic Scene Config
+
+`UURSSceneConfigComponent` reads `Config/URS_scene.json` on `BeginPlay` and
+spawns the listed robots via the registered robot types. Today only
+`pi_plus` is registered (against
+`/Game/MuJoCoImports/pi_plus_stereo_camera`); adding new types is a single
+line in `URSoccerLabModule::StartupModule`.
+
+```json
+{
+  "version": "urs_scene_v1",
+  "robots": [
+    {
+      "actor_id": "robot_rp0",
+      "type": "pi_plus",
+      "translation_m": [0.0, 0.0, 0.3762],
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+    }
+  ]
+}
+```
+
+Translation and rotation are optional; missing translation falls back to
+the type's `DefaultBaseHeightM`, missing rotation to identity. The
+component stashes the initial pose per `actor_id` so the admin `reset` op
+can return to spawn.
 
 ## End-to-End Vision Smoke Test
 

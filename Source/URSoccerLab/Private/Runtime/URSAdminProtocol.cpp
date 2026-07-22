@@ -188,7 +188,7 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 FString FAdminProtocol::BuildOkReply(const FString& OpName, const FString& ActorId)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetStringField(TEXT("ok"), TEXT("true"));
+	Root->SetBoolField(TEXT("ok"), true);
 	Root->SetStringField(TEXT("op"), OpName);
 	Root->SetStringField(TEXT("actor_id"), ActorId);
 
@@ -207,7 +207,7 @@ FString FAdminProtocol::BuildOkSetPoseReply(
 	double SimTimeSec)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetStringField(TEXT("ok"), TEXT("true"));
+	Root->SetBoolField(TEXT("ok"), true);
 	Root->SetStringField(TEXT("op"), TEXT("set_pose"));
 	Root->SetStringField(TEXT("actor_id"), ActorId);
 	Root->SetArrayField(TEXT("applied_translation_m"), Vec3Array(AppliedTranslationMeters));
@@ -225,7 +225,7 @@ FString FAdminProtocol::BuildOkSetPoseReply(
 FString FAdminProtocol::BuildErrorReply(const FString& OpName, const FString& ErrorCode, const FString& Message)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetStringField(TEXT("ok"), TEXT("false"));
+	Root->SetBoolField(TEXT("ok"), false);
 	Root->SetStringField(TEXT("op"), OpName);
 	Root->SetStringField(TEXT("error"), ErrorCode);
 	Root->SetStringField(TEXT("message"), Message);

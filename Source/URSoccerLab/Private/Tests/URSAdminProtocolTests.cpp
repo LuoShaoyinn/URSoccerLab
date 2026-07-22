@@ -131,7 +131,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSAdminReplyBuildTest,
 bool FURSAdminReplyBuildTest::RunTest(const FString& Parameters)
 {
 	const FString OkReset = FAdminProtocol::BuildOkReply(TEXT("reset"), TEXT("robot_rp0"));
-	TestTrue(TEXT("ok reset contains ok=true"), OkReset.Contains(TEXT("\"ok\":\"true\"")));
+	TestTrue(TEXT("ok reset contains ok=true"), OkReset.Contains(TEXT("\"ok\":true")));
 	TestTrue(TEXT("ok reset contains op"), OkReset.Contains(TEXT("\"op\":\"reset\"")));
 	TestTrue(TEXT("ok reset contains actor_id"), OkReset.Contains(TEXT("\"actor_id\":\"robot_rp0\"")));
 
@@ -141,17 +141,18 @@ bool FURSAdminReplyBuildTest::RunTest(const FString& Parameters)
 		FQuat(0, 0, 0, 1),
 		{0.1f, -0.1f},
 		1.5);
+	TestTrue(TEXT("set_pose reply contains ok=true"), OkSetPose.Contains(TEXT("\"ok\":true")));
 	TestTrue(TEXT("set_pose reply contains translation"), OkSetPose.Contains(TEXT("applied_translation_m")));
 	TestTrue(TEXT("set_pose reply contains joint_qpos"), OkSetPose.Contains(TEXT("applied_joint_qpos")));
 	TestTrue(TEXT("set_pose reply contains sim_time"), OkSetPose.Contains(TEXT("\"sim_time_sec\":1.5")));
 
 	FAdminPoseRequest RoundTrip;
 	TestEqual(TEXT("reply is parseable as JSON"),
-		FAdminProtocol::ParseRequest(OkSetPose.Replace(TEXT("\"ok\":\"true\""), TEXT("\"op\":\"set_pose\"")), RoundTrip),
+		FAdminProtocol::ParseRequest(OkSetPose.Replace(TEXT("\"ok\":true"), TEXT("\"op\":\"set_pose\"")), RoundTrip),
 		EAdminRequestParse::Accepted);
 
 	const FString Err = FAdminProtocol::BuildErrorReply(TEXT("set_pose"), TEXT("dim_mismatch"), TEXT("length 5"));
-	TestTrue(TEXT("error contains ok=false"), Err.Contains(TEXT("\"ok\":\"false\"")));
+	TestTrue(TEXT("error contains ok=false"), Err.Contains(TEXT("\"ok\":false")));
 	TestTrue(TEXT("error contains code"), Err.Contains(TEXT("\"error\":\"dim_mismatch\"")));
 	TestTrue(TEXT("error contains message"), Err.Contains(TEXT("length 5")));
 	return true;

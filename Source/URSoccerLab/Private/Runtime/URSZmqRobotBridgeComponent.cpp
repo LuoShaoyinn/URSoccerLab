@@ -750,25 +750,26 @@ FString UURSZmqRobotBridgeComponent::HandleSetPose(FRobotRuntimeEndpoint& Endpoi
 FString UURSZmqRobotBridgeComponent::HandleReset(FRobotRuntimeEndpoint& Endpoint)
 {
 	UURSSceneConfigComponent* SceneComp = SceneConfig.Get();
-	if (!SceneComp)
-	{
-		return URSoccerLab::FAdminProtocol::BuildErrorReply(
-			TEXT("reset"), TEXT("no_scene_config"), TEXT("scene config component not present; cannot resolve initial pose"));
-	}
-
 	FVector InitialTranslation = FVector::ZeroVector;
 	FQuat InitialRotation = FQuat::Identity;
-	if (!SceneComp->GetInitialPose(Endpoint.RobotName, InitialTranslation, InitialRotation))
+	bool bHaveInitialPose = false;
+	if (SceneComp)
 	{
-		return URSoccerLab::FAdminProtocol::BuildErrorReply(
-			TEXT("reset"), TEXT("no_initial_pose"),
-			FString::Printf(TEXT("no initial pose stashed for actor '%s'"), *Endpoint.RobotName));
+		bHaveInitialPose = SceneComp->GetInitialPose(Endpoint.RobotName, InitialTranslation, InitialRotation);
+	}
+	if (!bHaveInitialPose)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("URSoccerLab admin reset: no stashed initial pose for %s; defaulting to all-zero qpos."),
+			*Endpoint.RobotName);
 	}
 
 	URSoccerLab::FAdminPoseRequest Req;
 	Req.Op = URSoccerLab::EAdminOp::SetPose;
-	Req.TranslationMeters = InitialTranslation;
-	Req.RotationQuatXyzw = InitialRotation;
+	if (bHaveInitialPose)
+	{
+		Req.TranslationMeters = InitialTranslation;
+		Req.RotationQuatXyzw = InitialRotation;
+	}
 	return HandleSetPose(Endpoint, Req);
 }
 
