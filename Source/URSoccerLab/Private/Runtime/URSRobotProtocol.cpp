@@ -37,6 +37,15 @@ bool FRobotProtocol::BuildPortAssignments(const FRobotRuntimeConfig& Config, TAr
 	{
 		return false;
 	}
+	if (!IsValidAdminBasePort(Config.AdminBasePort, Config.RobotNames.Num()))
+	{
+		return false;
+	}
+	if (AdminPortsCollideWithCore(Config.AdminBasePort, Config.RobotNames.Num(),
+			Config.CommandBasePort, Config.RobotNames.Num(), Config.StatePort, Config.MetaPort))
+	{
+		return false;
+	}
 
 	OutAssignments.Reserve(Config.RobotNames.Num());
 	for (int32 Idx = 0; Idx < Config.RobotNames.Num(); ++Idx)
@@ -44,9 +53,37 @@ bool FRobotProtocol::BuildPortAssignments(const FRobotRuntimeConfig& Config, TAr
 		FRobotPortAssignment Assignment;
 		Assignment.RobotName = Config.RobotNames[Idx];
 		Assignment.CommandPort = Config.CommandBasePort + Idx;
+		Assignment.AdminPort = Config.AdminBasePort + Idx;
 		OutAssignments.Add(MoveTemp(Assignment));
 	}
 	return true;
+}
+
+bool FRobotProtocol::IsValidAdminBasePort(int32 BasePort, int32 RobotCount)
+{
+	return BasePort >= MinAdminPort && RobotCount >= 0 && BasePort + RobotCount - 1 <= 65535;
+}
+
+bool FRobotProtocol::AdminPortsCollideWithCore(int32 AdminBasePort, int32 RobotCount,
+	int32 CommandBasePort, int32 CommandRobotCount, int32 StatePort, int32 MetaPort)
+{
+	const int32 AdminLast = AdminBasePort + RobotCount - 1;
+	auto RangesOverlap = [](int32 AFirst, int32 ALast, int32 BFirst, int32 BLast) {
+		return AFirst <= BLast && BFirst <= ALast;
+	};
+	if (RangesOverlap(AdminBasePort, AdminLast, CommandBasePort, CommandBasePort + CommandRobotCount - 1))
+	{
+		return true;
+	}
+	if (StatePort >= AdminBasePort && StatePort <= AdminLast)
+	{
+		return true;
+	}
+	if (MetaPort >= AdminBasePort && MetaPort <= AdminLast)
+	{
+		return true;
+	}
+	return false;
 }
 
 FString FRobotProtocol::BuildTcpBindEndpoint(int32 Port)

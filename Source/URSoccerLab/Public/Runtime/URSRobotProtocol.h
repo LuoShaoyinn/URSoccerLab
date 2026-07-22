@@ -8,6 +8,8 @@ static constexpr int32 MinCommandPort = 10000;
 static constexpr int32 DefaultCommandBasePort = 10000;
 static constexpr int32 DefaultStatePort = 10100;
 static constexpr int32 DefaultMetaPort = 10101;
+static constexpr int32 MinAdminPort = 11000;
+static constexpr int32 DefaultAdminBasePort = 11000;
 static constexpr uint32 MotorCommandMagic = 0x4D535255u; // "URSM" in little-endian payload order.
 static constexpr uint16 MotorCommandVersion = 1;
 
@@ -26,6 +28,7 @@ struct FRobotPortAssignment
 {
 	FString RobotName;
 	int32 CommandPort = 0;
+	int32 AdminPort = 0;
 };
 
 struct FRobotRuntimeConfig
@@ -33,6 +36,7 @@ struct FRobotRuntimeConfig
 	int32 CommandBasePort = DefaultCommandBasePort;
 	int32 StatePort = DefaultStatePort;
 	int32 MetaPort = DefaultMetaPort;
+	int32 AdminBasePort = DefaultAdminBasePort;
 	double CommandTimeoutSec = 0.1;
 	TArray<FString> RobotNames;
 
@@ -60,6 +64,9 @@ public:
 	static TArray<FString> MakeDefaultRobotNames();
 	static bool IsValidCommandBasePort(int32 BasePort, int32 RobotCount);
 	static bool BuildPortAssignments(const FRobotRuntimeConfig& Config, TArray<FRobotPortAssignment>& OutAssignments);
+	static bool IsValidAdminBasePort(int32 BasePort, int32 RobotCount);
+	static bool AdminPortsCollideWithCore(int32 AdminBasePort, int32 RobotCount,
+		int32 CommandBasePort, int32 CommandRobotCount, int32 StatePort, int32 MetaPort);
 	static FString BuildTcpBindEndpoint(int32 Port);
 	static FString NormalizeImportedComponentName(const FString& Name);
 	static FString NormalizeRobotComponentName(const FString& Name, const FString& RobotName);
