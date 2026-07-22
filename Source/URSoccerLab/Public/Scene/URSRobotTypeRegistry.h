@@ -4,14 +4,14 @@
 
 namespace URSoccerLab
 {
-struct FURSRobotType
+struct URSOCCERLAB_API FURSRobotType
 {
 	FString Name;
 	FString BlueprintAssetPath;
 	double DefaultBaseHeightM = 0.0;
 };
 
-class FURSRobotTypeRegistry
+class URSOCCERLAB_API FURSRobotTypeRegistry
 {
 public:
 	static FURSRobotTypeRegistry& Get();

@@ -5,7 +5,7 @@
 
 namespace URSoccerLab
 {
-struct FURSRobotSpawn
+struct URSOCCERLAB_API FURSRobotSpawn
 {
 	FString ActorId;
 	FString Type;
@@ -13,19 +13,19 @@ struct FURSRobotSpawn
 	TOptional<FQuat> RotationQuatXyzw;
 };
 
-struct FURSSceneConfig
+struct URSOCCERLAB_API FURSSceneConfig
 {
 	FString Version = TEXT("urs_scene_v1");
 	TArray<FURSRobotSpawn> Robots;
 };
 
-struct FURSSceneConfigValidationResult
+struct URSOCCERLAB_API FURSSceneConfigValidationResult
 {
 	bool bOk = true;
 	TArray<FString> Errors;
 };
 
-class FURSSceneConfigIo
+class URSOCCERLAB_API FURSSceneConfigIo
 {
 public:
 	static bool LoadFromFile(const FString& AbsPath, FURSSceneConfig& Out, FString& OutError);
