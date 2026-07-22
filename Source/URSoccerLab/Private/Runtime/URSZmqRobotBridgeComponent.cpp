@@ -1,11 +1,14 @@
 #include "Runtime/URSZmqRobotBridgeComponent.h"
 
+#include "Runtime/URSAdminProtocol.h"
+#include "Scene/URSSceneConfigComponent.h"
 #include "MuJoCo/Components/Actuators/MjActuator.h"
 #include "MuJoCo/Components/Joints/MjJoint.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MuJoCo/Core/MjPhysicsEngine.h"
+#include "MuJoCo/Utils/MjUtils.h"
 #include "Transport/NetworkManager.h"
 #include "Dom/JsonObject.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
@@ -33,6 +36,34 @@ void ConfigureCommandSocket(void* Socket)
 	zmq_setsockopt(Socket, ZMQ_CONFLATE, &Conflate, sizeof(Conflate));
 }
 
+void ConfigureAdminSocket(void* Socket)
+{
+	ConfigureSocketBase(Socket);
+}
+
+FString RecvZmqString(void* Socket)
+{
+	zmq_msg_t Message;
+	zmq_msg_init(&Message);
+	if (zmq_msg_recv(&Message, Socket, ZMQ_DONTWAIT) < 0)
+	{
+		zmq_msg_close(&Message);
+		return FString();
+	}
+	const int32 Size = static_cast<int32>(zmq_msg_size(&Message));
+	const ANSICHAR* Data = static_cast<const ANSICHAR*>(zmq_msg_data(&Message));
+	FUTF8ToTCHAR Converter(Data, Size);
+	const FString Body(Converter.Length(), Converter.Get());
+	zmq_msg_close(&Message);
+	return Body;
+}
+
+bool SendZmqString(void* Socket, const FString& Body)
+{
+	const FTCHARToUTF8 BodyUtf8(*Body);
+	const int Rc = zmq_send(Socket, BodyUtf8.Get(), BodyUtf8.Length(), ZMQ_DONTWAIT);
+	return Rc >= 0;
+}
 } // namespace
 
 UURSZmqRobotBridgeComponent::UURSZmqRobotBridgeComponent()
@@ -68,6 +99,9 @@ void UURSZmqRobotBridgeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		}
 		return;
 	}
+
+	DrainAdminSockets();
+
 	if (bUsePhysicsCallbacks)
 	{
 		return;
@@ -94,6 +128,7 @@ URSoccerLab::FRobotRuntimeConfig UURSZmqRobotBridgeComponent::MakeRuntimeConfig(
 {
 	URSoccerLab::FRobotRuntimeConfig Config;
 	Config.CommandBasePort = CommandBasePort;
+	Config.AdminBasePort = AdminBasePort;
 	Config.StatePort = StatePort;
 	Config.MetaPort = MetaPort;
 	Config.CommandTimeoutSec = CommandTimeoutSec;
@@ -125,10 +160,20 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 		StopBridge();
 		return false;
 	}
+	if (!BindAdminSockets())
+	{
+		StopBridge();
+		return false;
+	}
 	if (!BindPublisherSockets())
 	{
 		StopBridge();
 		return false;
+	}
+
+	if (AActor* Owner = GetOwner())
+	{
+		SceneConfig = Owner->FindComponentByClass<UURSSceneConfigComponent>();
 	}
 
 	bBridgeStarted = true;
@@ -137,6 +182,10 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 	LastMetaPublishSec = FPlatformTime::Seconds();
 	LastStatePublishSec = 0.0;
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab ZMQ bridge started with %d robot command endpoints."), RuntimeEndpoints.Num());
+	UE_LOG(LogTemp, Log, TEXT("URSoccerLab admin RPC ready: %d per-robot REP socket(s) on ports %d..%d."),
+		RuntimeEndpoints.Num(),
+		AdminBasePort,
+		RuntimeEndpoints.Num() > 0 ? AdminBasePort + RuntimeEndpoints.Num() - 1 : AdminBasePort);
 	return true;
 }
 
@@ -149,12 +198,14 @@ void UURSZmqRobotBridgeComponent::StopBridge()
 			FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
 			bBridgeStarted = false;
 			CloseCommandSockets();
+			CloseAdminSockets();
 			ClosePublisherSockets();
 		}
 		else
 		{
 			bBridgeStarted = false;
 			CloseCommandSockets();
+			CloseAdminSockets();
 			ClosePublisherSockets();
 		}
 	}
@@ -162,6 +213,7 @@ void UURSZmqRobotBridgeComponent::StopBridge()
 	{
 		bBridgeStarted = false;
 		CloseCommandSockets();
+		CloseAdminSockets();
 		ClosePublisherSockets();
 	}
 	if (ZmqContext)
@@ -174,8 +226,10 @@ void UURSZmqRobotBridgeComponent::StopBridge()
 bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 {
 	CloseCommandSockets();
+	CloseAdminSockets();
 	RuntimeEndpoints.Reset();
 	EndpointInfo.Reset();
+	AdminEndpointInfo.Reset();
 
 	Manager = AAMjManager::GetManager();
 	AAMjManager* ManagerPtr = Manager.Get();
@@ -234,6 +288,7 @@ bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 		FRobotRuntimeEndpoint Endpoint;
 		Endpoint.RobotName = Assignment.RobotName;
 		Endpoint.CommandEndpoint = URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(Assignment.CommandPort);
+		Endpoint.AdminEndpoint = URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(Assignment.AdminPort);
 		Endpoint.StateTopic = FString::Printf(TEXT("state/%s"), *Assignment.RobotName);
 		Endpoint.Articulation = *ArticulationPtr;
 		Endpoint.CommandBuffer.Configure(Actuators.Num(), Config.CommandTimeoutSec);
@@ -242,6 +297,10 @@ bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 		Info.RobotName = Endpoint.RobotName;
 		Info.CommandEndpoint = Endpoint.CommandEndpoint;
 		Info.StateTopic = Endpoint.StateTopic;
+
+		FURSAdminEndpointInfo AdminInfo;
+		AdminInfo.RobotName = Endpoint.RobotName;
+		AdminInfo.AdminEndpoint = Endpoint.AdminEndpoint;
 
 		for (UMjActuator* Actuator : Actuators)
 		{
@@ -264,6 +323,7 @@ bool UURSZmqRobotBridgeComponent::RebuildEndpointCache()
 
 		RuntimeEndpoints.Add(MoveTemp(Endpoint));
 		EndpointInfo.Add(MoveTemp(Info));
+		AdminEndpointInfo.Add(MoveTemp(AdminInfo));
 	}
 
 	return RuntimeEndpoints.Num() > 0;
@@ -292,6 +352,34 @@ bool UURSZmqRobotBridgeComponent::BindCommandSockets()
 		{
 			UE_LOG(LogTemp, Error, TEXT("URSoccerLab ZMQ bridge: failed to bind %s for %s."),
 				*Endpoint.CommandEndpoint, *Endpoint.RobotName);
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UURSZmqRobotBridgeComponent::BindAdminSockets()
+{
+	if (!ZmqContext)
+	{
+		return false;
+	}
+
+	for (FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
+	{
+		Endpoint.AdminSocket = zmq_socket(ZmqContext, ZMQ_REP);
+		if (!Endpoint.AdminSocket)
+		{
+			UE_LOG(LogTemp, Error, TEXT("URSoccerLab admin RPC: failed to create REP socket for %s."), *Endpoint.RobotName);
+			return false;
+		}
+
+		ConfigureAdminSocket(Endpoint.AdminSocket);
+		const FTCHARToUTF8 EndpointUtf8(*Endpoint.AdminEndpoint);
+		if (zmq_bind(Endpoint.AdminSocket, EndpointUtf8.Get()) != 0)
+		{
+			UE_LOG(LogTemp, Error, TEXT("URSoccerLab admin RPC: failed to bind %s for %s."),
+				*Endpoint.AdminEndpoint, *Endpoint.RobotName);
 			return false;
 		}
 	}
@@ -341,6 +429,18 @@ void UURSZmqRobotBridgeComponent::CloseCommandSockets()
 		{
 			zmq_close(Endpoint.CommandSocket);
 			Endpoint.CommandSocket = nullptr;
+		}
+	}
+}
+
+void UURSZmqRobotBridgeComponent::CloseAdminSockets()
+{
+	for (FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
+	{
+		if (Endpoint.AdminSocket)
+		{
+			zmq_close(Endpoint.AdminSocket);
+			Endpoint.AdminSocket = nullptr;
 		}
 	}
 }
@@ -445,6 +545,233 @@ bool UURSZmqRobotBridgeComponent::SendJsonMessage(void* Socket, const FString& T
 	return zmq_send(Socket, JsonUtf8.Get(), JsonUtf8.Length(), ZMQ_DONTWAIT) >= 0;
 }
 
+int32 UURSZmqRobotBridgeComponent::DrainAdminSockets()
+{
+	if (!bBridgeStarted)
+	{
+		return 0;
+	}
+
+	int32 HandledCount = 0;
+	for (FRobotRuntimeEndpoint& Endpoint : RuntimeEndpoints)
+	{
+		if (!Endpoint.AdminSocket)
+		{
+			continue;
+		}
+
+		zmq_pollitem_t Item;
+		Item.socket = Endpoint.AdminSocket;
+		Item.events = ZMQ_POLLIN;
+		Item.revents = 0;
+		Item.fd = 0;
+		Item.revents = 0;
+		if (zmq_poll(&Item, 1, 0) <= 0 || (Item.revents & ZMQ_POLLIN) == 0)
+		{
+			continue;
+		}
+
+		const FString Body = RecvZmqString(Endpoint.AdminSocket);
+		if (Body.IsEmpty())
+		{
+			continue;
+		}
+
+		const FString Reply = HandleAdminRequest(Endpoint, Body);
+		SendZmqString(Endpoint.AdminSocket, Reply);
+		++HandledCount;
+	}
+	return HandledCount;
+}
+
+FString UURSZmqRobotBridgeComponent::HandleAdminRequest(FRobotRuntimeEndpoint& Endpoint, const FString& RequestBody)
+{
+	URSoccerLab::FAdminPoseRequest Req;
+	const URSoccerLab::EAdminRequestParse ParseStatus = URSoccerLab::FAdminProtocol::ParseRequest(RequestBody, Req);
+	if (ParseStatus != URSoccerLab::EAdminRequestParse::Accepted)
+	{
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(
+			TEXT("unknown"), TEXT("bad_request"), URSoccerLab::FAdminProtocol::LexToString(ParseStatus));
+	}
+
+	switch (Req.Op)
+	{
+	case URSoccerLab::EAdminOp::SetPose:
+		return HandleSetPose(Endpoint, Req);
+	case URSoccerLab::EAdminOp::Reset:
+		return HandleReset(Endpoint);
+	default:
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(TEXT("unknown"), TEXT("bad_request"), TEXT("unsupported op"));
+	}
+}
+
+FString UURSZmqRobotBridgeComponent::HandleSetPose(FRobotRuntimeEndpoint& Endpoint, const URSoccerLab::FAdminPoseRequest& Req)
+{
+	AMjArticulation* Articulation = Endpoint.Articulation.Get();
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!Articulation || !ManagerPtr || !ManagerPtr->PhysicsEngine)
+	{
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(TEXT("set_pose"), TEXT("not_ready"), TEXT("articulation or physics missing"));
+	}
+
+	mjModel* Model = ManagerPtr->PhysicsEngine->GetModel();
+	mjData* Data = ManagerPtr->PhysicsEngine->GetData();
+	if (!Model || !Data)
+	{
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(TEXT("set_pose"), TEXT("not_ready"), TEXT("mjModel/mjData missing"));
+	}
+
+	struct FQposSlot { int32 Adr; int32 Size; int32 JointType; };
+	TArray<FQposSlot> RootSlots;
+	TArray<FQposSlot> NonRootSlots;
+	int32 NonRootQposDim = 0;
+	for (UMjJoint* Joint : Articulation->GetJoints())
+	{
+		if (!Joint)
+		{
+			continue;
+		}
+		const int32 JointId = Joint->GetMjID();
+		if (JointId < 0 || JointId >= Model->njnt)
+		{
+			continue;
+		}
+		int32 Size = 1;
+		switch (Model->jnt_type[JointId])
+		{
+		case mjJNT_FREE: Size = 7; break;
+		case mjJNT_BALL: Size = 4; break;
+		case mjJNT_SLIDE:
+		case mjJNT_HINGE: Size = 1; break;
+		default: break;
+		}
+		const FQposSlot Slot{Model->jnt_qposadr[JointId], Size, Model->jnt_type[JointId]};
+		if (Slot.JointType == mjJNT_FREE)
+		{
+			RootSlots.Add(Slot);
+		}
+		else
+		{
+			NonRootSlots.Add(Slot);
+			NonRootQposDim += Size;
+		}
+	}
+
+	if (Req.JointQpos.IsSet() && Req.JointQpos.GetValue().Num() != NonRootQposDim)
+	{
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(
+			TEXT("set_pose"), TEXT("dim_mismatch"),
+			FString::Printf(TEXT("joint_qpos length %d != non-root qpos dim %d"),
+				Req.JointQpos.GetValue().Num(), NonRootQposDim));
+	}
+
+	const FVector Translation = Req.TranslationMeters.Get(FVector::ZeroVector);
+	const FQuat Rotation = Req.RotationQuatXyzw.Get(FQuat::Identity);
+	const TArray<float> JointQpos = Req.JointQpos.Get(TArray<float>());
+
+	TArray<float> AppliedQpos;
+	AppliedQpos.Reserve(RootSlots.Num() * 7 + NonRootQposDim);
+
+	{
+		FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+
+		if (!RootSlots.IsEmpty())
+		{
+			const int32 Adr = RootSlots[0].Adr;
+			Data->qpos[Adr + 0] = Translation.X;
+			Data->qpos[Adr + 1] = Translation.Y;
+			Data->qpos[Adr + 2] = Translation.Z;
+			Data->qpos[Adr + 3] = Rotation.X;
+			Data->qpos[Adr + 4] = Rotation.Y;
+			Data->qpos[Adr + 5] = Rotation.Z;
+			Data->qpos[Adr + 6] = Rotation.W;
+
+			AppliedQpos.Add(Translation.X);
+			AppliedQpos.Add(Translation.Y);
+			AppliedQpos.Add(Translation.Z);
+			AppliedQpos.Add(Rotation.X);
+			AppliedQpos.Add(Rotation.Y);
+			AppliedQpos.Add(Rotation.Z);
+			AppliedQpos.Add(Rotation.W);
+		}
+		else
+		{
+			double MjPos[3] = {Translation.X, Translation.Y, Translation.Z};
+			const FVector UELocation = MjUtils::MjToUEPosition(MjPos);
+			double MjQuatWxyz[4] = {Rotation.W, Rotation.X, Rotation.Y, Rotation.Z};
+			const FQuat UERotation = MjUtils::MjToUERotation(MjQuatWxyz);
+			Articulation->SetActorLocationAndRotation(UELocation, UERotation, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+
+		int32 JointCursor = 0;
+		for (const FQposSlot& Slot : NonRootSlots)
+		{
+			for (int32 Idx = 0; Idx < Slot.Size; ++Idx)
+			{
+				const float Value = JointQpos.IsValidIndex(JointCursor) ? JointQpos[JointCursor] : 0.0f;
+				Data->qpos[Slot.Adr + Idx] = static_cast<mjtNum>(Value);
+				AppliedQpos.Add(Value);
+				++JointCursor;
+			}
+		}
+
+		for (UMjJoint* Joint : Articulation->GetJoints())
+		{
+			if (!Joint)
+			{
+				continue;
+			}
+			const int32 JointId = Joint->GetMjID();
+			if (JointId < 0 || JointId >= Model->njnt)
+			{
+				continue;
+			}
+			const int32 DofAdr = Model->jnt_dofadr[JointId];
+			int32 DofSize = 1;
+			switch (Model->jnt_type[JointId])
+			{
+			case mjJNT_FREE: DofSize = 6; break;
+			case mjJNT_BALL: DofSize = 3; break;
+			default: break;
+			}
+			for (int32 Idx = 0; Idx < DofSize; ++Idx)
+			{
+				Data->qvel[DofAdr + Idx] = 0.0;
+			}
+		}
+
+		mj_forward(Model, Data);
+	}
+
+	return URSoccerLab::FAdminProtocol::BuildOkSetPoseReply(
+		Endpoint.RobotName, Translation, Rotation, AppliedQpos, Data->time);
+}
+
+FString UURSZmqRobotBridgeComponent::HandleReset(FRobotRuntimeEndpoint& Endpoint)
+{
+	UURSSceneConfigComponent* SceneComp = SceneConfig.Get();
+	if (!SceneComp)
+	{
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(
+			TEXT("reset"), TEXT("no_scene_config"), TEXT("scene config component not present; cannot resolve initial pose"));
+	}
+
+	FVector InitialTranslation = FVector::ZeroVector;
+	FQuat InitialRotation = FQuat::Identity;
+	if (!SceneComp->GetInitialPose(Endpoint.RobotName, InitialTranslation, InitialRotation))
+	{
+		return URSoccerLab::FAdminProtocol::BuildErrorReply(
+			TEXT("reset"), TEXT("no_initial_pose"),
+			FString::Printf(TEXT("no initial pose stashed for actor '%s'"), *Endpoint.RobotName));
+	}
+
+	URSoccerLab::FAdminPoseRequest Req;
+	Req.Op = URSoccerLab::EAdminOp::SetPose;
+	Req.TranslationMeters = InitialTranslation;
+	Req.RotationQuatXyzw = InitialRotation;
+	return HandleSetPose(Endpoint, Req);
+}
+
 void UURSZmqRobotBridgeComponent::PublishMetadata()
 {
 	if (!MetaPublisher)
@@ -458,6 +785,7 @@ void UURSZmqRobotBridgeComponent::PublishMetadata()
 		Root->SetStringField(TEXT("version"), TEXT("urs_meta_v1"));
 		Root->SetStringField(TEXT("robot"), Endpoint.RobotName);
 		Root->SetStringField(TEXT("command_endpoint"), Endpoint.CommandEndpoint);
+		Root->SetStringField(TEXT("admin_endpoint"), Endpoint.AdminEndpoint);
 		Root->SetStringField(TEXT("state_topic"), Endpoint.StateTopic);
 		Root->SetStringField(TEXT("state_endpoint"), URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(StatePort));
 		Root->SetStringField(TEXT("meta_endpoint"), URSoccerLab::FRobotProtocol::BuildTcpBindEndpoint(MetaPort));
