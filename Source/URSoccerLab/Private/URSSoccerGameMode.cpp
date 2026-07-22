@@ -1,9 +1,15 @@
 #include "URSSoccerGameMode.h"
 
 #include "EngineUtils.h"
+#include "GameFramework/SpectatorPawn.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
+
+AURSSoccerGameMode::AURSSoccerGameMode()
+{
+	DefaultPawnClass = ASpectatorPawn::StaticClass();
+}
 
 void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {

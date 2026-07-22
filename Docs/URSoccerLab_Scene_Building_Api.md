@@ -214,11 +214,20 @@ baked field level. Its `InitGame` override is the sole caller of
 ```cpp
 class AURSSoccerGameMode : public AGameModeBase
 {
+public:
+    AURSSoccerGameMode();          // sets DefaultPawnClass = ASpectatorPawn
+
     virtual void InitGame(
         const FString& MapName, const FString& Options,
         FString& ErrorMessage) override;
 };
 ```
+
+The constructor sets `DefaultPawnClass = ASpectatorPawn` to suppress
+UE's default `ADefaultPawn`, which spawns a visible Sphere mesh
+(`/Engine/BasicShapes/Sphere`) at world origin with a null material.
+In a headless simulator (`-game`) there is no human player, so the
+default pawn would appear as an unwanted object in robot camera output.
 
 ### InitGame sequence
 
@@ -253,13 +262,28 @@ in the level.
 
 ## Rebuilding the field
 
+The field geometry is baked from `Assets/Scenes/SoccerField/source/field.glb`
+into `/Game/Levels/URS_SoccerField.umap` by the bake script
+`Tools/ue_bake_soccer_field_scene.py` (executed inside UE Editor).
+
 ```bash
-# Re-bake the field-only map (imports pi_plus Blueprint, does NOT spawn robots)
+# Re-import field meshes from the GLB and rebuild the level
+python3 Tools/create_soccer_field_scene.py --nullrhi
+
+# Then re-run the vision smoke test (imports Blueprint, spawns manager, captures camera)
 UV_CACHE_DIR=/tmp/uv-cache uv run python Tools/run_vision_smoke_test.py --out py_example/out/vision_smoke
 ```
 
-The `--skip-setup` flag skips the bake step and launches directly on the
-existing map. Without it, the test re-runs `CreateVisionSmokeMap` first.
+The Interchange glTF importer (`bBakeMeshes = true` by default) bakes
+each glTF scene-node's full transform — translation, rotation, scale,
+and the 100x m-to-cm conversion — directly into mesh vertices. The bake
+script therefore spawns every mesh actor at the origin with identity
+rotation and unit scale so the node transform is not double-applied.
+
+The `--skip-setup` flag on `run_vision_smoke_test.py` skips the
+`CreateVisionSmokeMap` automation test (which re-imports the pi_plus
+Blueprint, adds the manager + bridge, and saves the level) and launches
+directly on the existing map.
 
 ## File layout
 

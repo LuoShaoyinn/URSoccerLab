@@ -243,8 +243,11 @@ attached (e.g. the level predates the component) or has no record for
 this `actor_id`, the robot is reset to all-zero qpos (origin translation,
 identity rotation, zero joints).
 
-In both cases the implementation reuses `set_pose`, so the write
-semantics, locking, and reply shape are identical.
+In both cases the implementation discovers the qpos layout before
+writing, so fixed-base robots (no free root joint) are handled
+correctly: only `joint_qpos` is written and `translation_m` /
+`rotation_quat_xyzw` are omitted. The reply, locking, and error
+semantics are identical to `set_pose`.
 
 #### Request
 
@@ -434,7 +437,7 @@ sockets to these helpers:
 | `HandleAdminRequest(Endpoint, Body)` | Dispatches by `EAdminOp` to `HandleSetPose` / `HandleGetPose` / `HandleReset`. |
 | `HandleSetPose(Endpoint, Req)` | Discovers qpos layout, validates dimensions, writes under `CallbackMutex`, calls `mj_forward`. |
 | `HandleGetPose(Endpoint)` | Reads `xpos`/`xquat`/qpos under `CallbackMutex`. |
-| `HandleReset(Endpoint)` | Looks up spawn pose from `UURSSceneConfigComponent`, delegates to `HandleSetPose`. |
+| `HandleReset(Endpoint)` | Looks up spawn pose from `UURSSceneConfigComponent`, discovers qpos layout, then delegates to `HandleSetPose` with translation/rotation only for free-base robots. |
 
 ## Configuration reference
 

@@ -10,5 +10,7 @@ class URSOCCERLAB_API AURSSoccerGameMode : public AGameModeBase
 	GENERATED_BODY()
 
 public:
+	AURSSoccerGameMode();
+
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 };

@@ -219,6 +219,7 @@ bool UURSZmqRobotBridgeComponent::StartBridge()
 	PublishMetadata();
 	LastMetaPublishSec = FPlatformTime::Seconds();
 	LastStatePublishSec = 0.0;
+
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab ZMQ bridge started with %d robot command endpoints."), RuntimeEndpoints.Num());
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab admin RPC ready: %d per-robot REP socket(s) on ports %d..%d."),
 		RuntimeEndpoints.Num(),
