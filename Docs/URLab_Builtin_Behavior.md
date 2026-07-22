@@ -47,6 +47,18 @@ MJCF camera `pos` and orientation attributes belong on the `UMjCamera` parent;
 URLab imports those through the same MuJoCo-to-Unreal position and quaternion
 conversion used for other components.
 
+For imported fixed cameras, the native runtime path is Unreal attachment
+inheritance: `UMjCamera` is attached under the imported moving body component
+such as `head_pitch_link`. URLab updates the body components from MuJoCo render
+state each frame, and Unreal propagates the body transform to child camera
+components. URSoccerLab should not manually copy `xpos`/`xquat` or render
+snapshot body poses into camera transforms for this case.
+
+In this path, the cameras may not appear as MuJoCo `mjModel->ncam` entries
+available through `cam_xpos`/`cam_xmat`; they are still valid URLab/Unreal
+rendering cameras because they exist as `UMjCamera` components attached to the
+robot hierarchy.
+
 Project code should therefore:
 
 - Put physical camera placement and optical orientation in MJCF.

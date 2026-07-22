@@ -119,7 +119,6 @@ private:
 	bool bCallbacksRegistered = false;
 	double LastStatePublishSec = 0.0;
 	double LastMetaPublishSec = 0.0;
-	TMap<TWeakObjectPtr<class UMjCamera>, FTransform> CameraLocalTransforms;
 
 	URSoccerLab::FRobotRuntimeConfig MakeRuntimeConfig() const;
 	bool BindCommandSockets();
@@ -127,7 +126,6 @@ private:
 	void CloseCommandSockets();
 	void ClosePublisherSockets();
 	void ApplyLatestCommands(double NowSec);
-	void SyncActiveCameraTransformsFromRenderSnapshot();
 	void RegisterPhysicsCallbacks();
 	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);
 	void PostStepPhysics(struct mjModel_* Model, struct mjData_* Data);
