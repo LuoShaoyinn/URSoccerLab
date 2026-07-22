@@ -145,6 +145,11 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 		Out.Op = EAdminOp::Reset;
 		return EAdminRequestParse::Accepted;
 	}
+	else if (OpStr == TEXT("get_pose"))
+	{
+		Out.Op = EAdminOp::GetPose;
+		return EAdminRequestParse::Accepted;
+	}
 	else
 	{
 		return EAdminRequestParse::UnknownOp;
@@ -213,6 +218,29 @@ FString FAdminProtocol::BuildOkSetPoseReply(
 	Root->SetArrayField(TEXT("applied_translation_m"), Vec3Array(AppliedTranslationMeters));
 	Root->SetArrayField(TEXT("applied_rotation_quat_xyzw"), QuatArray(AppliedRotationXyzw));
 	Root->SetArrayField(TEXT("applied_joint_qpos"), NumberArray(AppliedJointQpos));
+	Root->SetNumberField(TEXT("sim_time_sec"), SimTimeSec);
+
+	FString Json;
+	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
+	FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+	return Json;
+}
+
+FString FAdminProtocol::BuildOkGetPoseReply(
+	const FString& ActorId,
+	const FVector& TranslationMeters,
+	const FQuat& RotationXyzw,
+	const TArray<float>& JointQpos,
+	double SimTimeSec)
+{
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetBoolField(TEXT("ok"), true);
+	Root->SetStringField(TEXT("op"), TEXT("get_pose"));
+	Root->SetStringField(TEXT("actor_id"), ActorId);
+	Root->SetArrayField(TEXT("translation_m"), Vec3Array(TranslationMeters));
+	Root->SetArrayField(TEXT("rotation_quat_xyzw"), QuatArray(RotationXyzw));
+	Root->SetArrayField(TEXT("joint_qpos"), NumberArray(JointQpos));
 	Root->SetNumberField(TEXT("sim_time_sec"), SimTimeSec);
 
 	FString Json;

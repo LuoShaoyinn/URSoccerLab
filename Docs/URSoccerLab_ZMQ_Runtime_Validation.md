@@ -10,9 +10,10 @@
 - State is published from URLab `PostStep` callbacks at `StatePublishRateHz`.
 - Fallback game-thread tick path remains available by setting `bUsePhysicsCallbacks=false`.
 - Per-robot admin RPC: one `ZMQ_REP` socket per active robot on `tcp://0.0.0.0:<AdminBasePort+idx>` (default base `11000`, so `robot_rp0` is on `11000`). Ops:
-  - `set_pose` — force-write root translation, root rotation (`rotation_quat_xyzw`), and non-root `joint_qpos` under `CallbackMutex` + `mj_forward`. Any field absent from the request is treated as zero (identity for rotation).
+  - `set_pose` — force-write root translation, root rotation (`rotation_quat_xyzw`), and non-root `joint_qpos` under `CallbackMutex` + `mj_forward`. Any field absent from the request is treated as zero (identity for rotation). Returns `fixed_base` if `translation_m`/`rotation_quat_xyzw` is sent to a robot whose root is welded to the world.
+  - `get_pose` — read `mjData::xpos`/`xquat` of the articulation's root body plus non-root qpos. Used by the smoke client to verify that `set_pose`/`reset` actually landed in MuJoCo ground truth.
   - `reset` — return this robot to its initial spawn pose (looked up from `UURSSceneConfigComponent` when present) or all-zero qpos as a fallback.
-- Scene config component (`UURSSceneConfigComponent`) reads `Config/URS_scene.json` on `BeginPlay` and spawns registered robot types. `pi_plus` is registered by the game module startup against `/Game/MuJoCoImports/pi_plus_stereo_camera`.
+- Scene config component (`UURSSceneConfigComponent`) reads `Config/URS_scene.json` on `BeginPlay` and spawns registered robot types. `pi_plus` is registered by the game module startup against `/Game/MuJoCoImports/pi_plus_stereo_camera`. The component subscribes the bridge to its `OnSceneConfigApplied` delegate so a config reload reaps stale actor ids, reaps stale admin/motor sockets, and rebinds against the new robot list.
 
 ## Motor Command Payload
 

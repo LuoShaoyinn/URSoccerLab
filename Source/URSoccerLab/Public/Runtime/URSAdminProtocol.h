@@ -8,6 +8,7 @@ enum class EAdminOp : uint8
 {
 	Unknown,
 	SetPose,
+	GetPose,
 	Reset
 };
 
@@ -43,6 +44,12 @@ public:
 		const FVector& AppliedTranslationMeters,
 		const FQuat& AppliedRotationXyzw,
 		const TArray<float>& AppliedJointQpos,
+		double SimTimeSec);
+	static FString BuildOkGetPoseReply(
+		const FString& ActorId,
+		const FVector& TranslationMeters,
+		const FQuat& RotationXyzw,
+		const TArray<float>& JointQpos,
 		double SimTimeSec);
 	static FString BuildErrorReply(const FString& OpName, const FString& ErrorCode, const FString& Message);
 };

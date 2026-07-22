@@ -114,6 +114,9 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+	UFUNCTION()
+	void OnSceneConfigApplied();
+	void PullRobotNamesFromSceneConfig();
 	struct FRobotRuntimeEndpoint
 	{
 		FString RobotName;
@@ -164,5 +167,6 @@ private:
 	bool SendJsonMessage(void* Socket, const FString& Topic, const FString& Json) const;
 	FString HandleAdminRequest(FRobotRuntimeEndpoint& Endpoint, const FString& RequestBody);
 	FString HandleSetPose(FRobotRuntimeEndpoint& Endpoint, const URSoccerLab::FAdminPoseRequest& Req);
+	FString HandleGetPose(FRobotRuntimeEndpoint& Endpoint);
 	FString HandleReset(FRobotRuntimeEndpoint& Endpoint);
 };

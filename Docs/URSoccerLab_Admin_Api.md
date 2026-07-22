@@ -119,18 +119,62 @@ request could not be parsed past the `op` field).
 
 ## Ops
 
+### `get_pose` — read robot pose and joint positions
+
+Read the robot's current pose from MuJoCo ground truth. The root body is
+resolved via `mjModel::body_rootid` of the articulation's first joint body,
+so the read works for both free-base and fixed-base articulations.
+
+#### Request
+
+```json
+{ "op": "get_pose" }
+```
+
+No additional fields.
+
+#### Reply
+
+```json
+{
+  "ok": true,
+  "op": "get_pose",
+  "actor_id": "robot_rp0",
+  "translation_m": [0.0, 0.0, 0.3762],
+  "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+  "joint_qpos": [0.0, 0.1, -0.1, "..."],
+  "sim_time_sec": 3.276
+}
+```
+
+| Field | Source |
+| --- | --- |
+| `translation_m` | `mjData::xpos[root_body_id]` (MuJoCo frame, meters). When the articulation has no resolvable root body, falls back to the free-joint qpos slots or `[0, 0, 0]`. |
+| `rotation_quat_xyzw` | `mjData::xquat[root_body_id]` (MuJoCo stores `w x y z`; the reply repacks to the wire's `x y z w`). |
+| `joint_qpos` | Non-root qpos slots in joint-ID order. Length equals the non-root qpos dimension reported by `set_pose`'s `dim_mismatch` error. |
+
+For a fixed-base robot (e.g. `base_link` welded to the world with no
+`<freejoint/>`), `translation_m` and `rotation_quat_xyzw` reflect the
+world-fixed pose; `joint_qpos` is the meaningful field.
+
+#### Errors
+
+| `error` | When |
+| --- | --- |
+| `not_ready` | The articulation, `AAMjManager`, `UMjPhysicsEngine`, `mjModel`, or `mjData` is missing. |
+
 ### `set_pose` — force-write robot pose and joint positions
 
-Force-move the robot to an explicit pose. Writes happen under
-`AAMjManager::PhysicsEngine->CallbackMutex`, the same lock URLab's
-`set_qpos` / `reset` RPCs take, so the write is atomic with respect to
-the physics step.
+Force-write the robot's root pose and/or joint positions. Writes happen
+under `AAMjManager::PhysicsEngine->CallbackMutex`, the same lock URLab's
+`set_qpos` / `reset` RPCs take, so the write is atomic with respect to the
+physics step. The robot's qvel is zeroed in any case — force-move means
+"no carried velocity".
 
 #### Request
 
 All fields except `op` are optional. Absent fields are treated as zero
-(identity quaternion for rotation). The robot's qvel is zeroed in any
-case — force-move means "no carried velocity".
+(identity quaternion for rotation).
 
 ```json
 {
@@ -144,19 +188,19 @@ case — force-move means "no carried velocity".
 | Field | Type | Required | Default if absent |
 | --- | --- | :---: | --- |
 | `translation_m` | array[3] of number (meters, MuJoCo frame) | no | `[0.0, 0.0, 0.0]` |
-| `rotation_quat_xyzw` | array[4] of number (unit quaternion, `x y z w`) | no | `[0.0, 0.0, 0.0, 1.0]` (identity) |
+| `rotation_quat_xyzw` | array[4] of number (`x y z w`, unit quaternion) | no | `[0.0, 0.0, 0.0, 1.0]` (identity) |
 | `joint_qpos` | array[N] of number (radians for hinge, meters for slide) | no | `[0.0, 0.0, ..., 0.0]` (length N) |
 
-`N` is the articulation's non-root qpos dimension. For a robot whose
-root joint is `mjJNT_FREE`, the root contributes 7 qpos slots
-(`[x, y, z, qx, qy, qz, qw]`) which are written from `translation_m` and
-`rotation_quat_xyzw`; `joint_qpos` then covers every remaining joint in
-joint-ID order.
+For a robot whose root joint is `mjJNT_FREE`, the free-joint qpos is laid
+out as MuJoCo's documented order `[x, y, z, qw, qx, qy, qz]` — note the
+quaternion's `w` component comes first inside MuJoCo, even though the
+wire convention is `x y z w`. The handler performs the repack. `joint_qpos`
+covers every remaining non-root joint in joint-ID order.
 
-If the articulation has no free root, `translation_m` and
-`rotation_quat_xyzw` are applied through
-`AActor::SetActorLocationAndRotation(..., ETeleportType::TeleportPhysics)`
-instead of being written to `qpos`.
+For a robot whose `base_link` is welded to the world (no `<freejoint/>`),
+`translation_m` and `rotation_quat_xyzw` cannot be applied — the handler
+returns `fixed_base` if either is present. Send `joint_qpos` only for
+fixed-base robots.
 
 #### Reply
 
@@ -172,16 +216,17 @@ instead of being written to `qpos`.
 }
 ```
 
-`applied_joint_qpos` always reflects what was written to MuJoCo, including
-the default zeros for any absent field, so the client can confirm exactly
-what state the simulator is now in.
+`applied_joint_qpos` mirrors the request's `joint_qpos` field (non-root
+only), expanded with zeros if the field was absent. Use `get_pose` to
+verify what MuJoCo actually settled to after the next physics step.
 
 #### Errors
 
 | `error` | When |
 | --- | --- |
-| `bad_request` | Request body is not valid JSON, `op` is missing or empty, `op` is not `set_pose` or `reset`, `translation_m` does not have exactly 3 finite numbers, `rotation_quat_xyzw` does not have exactly 4 finite numbers, or any `joint_qpos` element is non-finite. The `message` field contains the specific parse failure (`NotJson`, `MissingOp`, `UnknownOp`, `BadTranslation`, `BadRotation`, `BadJointQpos`). |
+| `bad_request` | Request body is not valid JSON, `op` is missing or empty, `op` is not a known op, `translation_m` does not have exactly 3 finite numbers, `rotation_quat_xyzw` does not have exactly 4 finite numbers, or any `joint_qpos` element is non-finite. The `message` field contains the specific parse failure (`NotJson`, `MissingOp`, `UnknownOp`, `BadTranslation`, `BadRotation`, `BadJointQpos`). |
 | `dim_mismatch` | `joint_qpos` is present but its length does not equal the articulation's non-root qpos dimension. The `message` reports both lengths. |
+| `fixed_base` | `translation_m` or `rotation_quat_xyzw` is present but the articulation has no free root joint. Send `joint_qpos` only. |
 | `not_ready` | The articulation, `AAMjManager`, `UMjPhysicsEngine`, `mjModel`, or `mjData` is missing. Usually means the request arrived before `StartBridge` completed or after `StopBridge`. |
 
 ### `reset` — return robot to its initial state
@@ -225,7 +270,9 @@ spawn pose or the zero fallback was used.
 
 Same `bad_request` and `not_ready` categories as `set_pose`. There is no
 "no initial pose" error in this release — the handler falls back to zero
-qpos and returns `ok: true`.
+qpos and returns `ok: true`. Fixed-base robots will still return `ok: true`
+for `reset` because the fallback omits `translation_m`/`rotation_quat_xyzw`
+and only writes `joint_qpos`.
 
 ## Concurrency
 
@@ -273,16 +320,20 @@ sock = ctx.socket(zmq.REQ)
 sock.setsockopt(zmq.LINGER, 0)
 sock.connect(admin_endpoint)
 
-# 3. Force-move the robot.
+# 3. Read current pose.
+sock.send_string(json.dumps({"op": "get_pose"}))
+print(json.loads(sock.recv()))
+
+# 4. Move joint 0 by 0.1 rad (this robot is fixed-base, so we can only
+#    address joint_qpos; a translation_m field would return fixed_base).
 sock.send_string(json.dumps({
     "op": "set_pose",
-    "translation_m": [0.5, 0.0, 0.3762],
-    "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+    "joint_qpos": [0.1] + [0.0] * 21,
 }))
 reply = json.loads(sock.recv())
 assert reply["ok"], reply
 
-# 4. Return to spawn.
+# 5. Return to spawn (zeros joints for this fixed-base robot).
 sock.send_string(json.dumps({"op": "reset"}))
 reply = json.loads(sock.recv())
 assert reply["ok"], reply
@@ -296,10 +347,16 @@ ctx.term()
 `Tools/admin_smoke_client.py` is a complete runnable client that:
 
 1. Subscribes to `meta/<robot>` and parses `admin_endpoint`.
-2. Calls `set_pose` with a fresh translation and asserts the reply's
-   `applied_translation_m` matches.
-3. Calls `reset` and asserts `ok: true`.
-4. Sends an intentionally malformed `set_pose` (`joint_qpos` of length 1)
+2. Calls `get_pose` to read the spawn pose and joint qpos dimension.
+3. Calls `set_pose` with a `joint_qpos` vector that perturbs joint 0,
+   then calls `get_pose` again and asserts MuJoCo ground-truth qpos
+   moved accordingly.
+4. Calls `set_pose` with `translation_m`. If the articulation has a free
+   root joint, asserts the move landed in `xpos`; otherwise asserts the
+   reply is `error: fixed_base`.
+5. Calls `reset`, then `get_pose` and asserts every joint qpos is back
+   near zero (within 0.05 rad of physics-step drift).
+6. Sends an intentionally malformed `set_pose` (`joint_qpos` of length 1)
    and asserts the reply's `error` is `dim_mismatch`.
 
 `Tools/run_admin_smoke_test.py` wraps that client with a simulator
@@ -332,8 +389,12 @@ The current shape leaves these as small, localised additions:
 - New op: add an `EAdminOp` enum value, a branch in
   `UURSZmqRobotBridgeComponent::HandleAdminRequest`, and a parser case
   in `FAdminProtocol::ParseRequest`. No socket or drain-loop changes.
-- New request field: add a `TOptional<...>` on `FAdminPoseRequest` and a
-  reader in `ParseRequest`. Old clients that omit the field keep working.
+- New request field on `set_pose`: add a `TOptional<...>` on
+  `FAdminPoseRequest` and a reader in `ParseRequest`. Old clients that
+  omit the field keep working.
+- Free-base robots: when the asset gets a `<freejoint/>`,
+  `set_pose` with `translation_m`/`rotation_quat_xyzw` becomes
+  accepted; the smoke test already verifies the resulting `xpos` change.
 - Scene-wide ops (e.g. a global reset, config reload): add a second REP
   socket in the same drain loop, mirroring the per-robot pattern.
 - Auth: add an optional `AdminAuthToken` UPROPERTY on the bridge and

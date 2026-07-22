@@ -81,6 +81,16 @@ def drain_process_log(
     return ready, thread
 
 
+def run_checked(cmd: list[str], cwd: Path, log_path: Path) -> None:
+    print("+", " ".join(cmd), flush=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as log:
+        proc = subprocess.run(cmd, cwd=cwd, text=True, stdout=log, stderr=subprocess.STDOUT)
+    if proc.returncode != 0:
+        suffix = f" See {log_path}"
+        raise RuntimeError(f"command failed with exit code {proc.returncode}.{suffix}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ue", type=Path, default=DEFAULT_UE)
@@ -93,6 +103,23 @@ def main() -> int:
 
     if not args.ue.exists():
         raise FileNotFoundError(args.ue)
+
+    # Re-bake the smoke fixture so the latest MJCF (e.g. freejoint additions)
+    # is re-imported into the blueprint and the saved map.
+    run_checked(
+        [
+            str(args.ue),
+            str(PROJECT),
+            "-NullRHI",
+            "-DDC-ForceMemoryCache",
+            "-unattended",
+            "-nop4",
+            "-nosplash",
+            '-ExecCmds=Automation RunTests URSoccerLab.E2E.CreateVisionSmokeMap; Quit',
+        ],
+        ROOT,
+        ROOT / "Saved" / "Logs" / "URS_AdminSmokeSetup.log",
+    )
 
     sim = start_simulator(args.ue, args.sim_extra_arg)
     sim_log_path = ROOT / "Saved" / "Logs" / "URS_AdminSmokeRuntime.log"

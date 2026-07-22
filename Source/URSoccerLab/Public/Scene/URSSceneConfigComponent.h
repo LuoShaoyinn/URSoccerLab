@@ -56,12 +56,19 @@ public:
 	const TMap<FString, FURSSpawnedRobotInfo>& GetSpawnedRobots() const { return SpawnedRobots; }
 	const URSoccerLab::FURSSceneConfig& GetActiveConfig() const { return ActiveConfig; }
 
+	/** Returns the actor_ids this component has spawned at some point and
+	 *  still knows about (used to detect ids that were removed from the
+	 *  config on reload so the caller can destroy the stale actors). */
+	const TSet<FString>& GetKnownActorIds() const { return KnownActorIds; }
+
 	virtual void BeginPlay() override;
 
 private:
 	URSoccerLab::FURSSceneConfig ActiveConfig;
 	TMap<FString, FURSSpawnedRobotInfo> SpawnedRobots;
+	TSet<FString> KnownActorIds;
 
 	void DestroyConfiguredRobots();
+	void DestroyActorsWithIds(const TSet<FString>& ActorIds);
 	bool SpawnOneRobot(AAMjManager* Manager, const URSoccerLab::FURSRobotSpawn& Spawn, FString& OutError);
 };

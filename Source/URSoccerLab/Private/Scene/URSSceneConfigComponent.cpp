@@ -59,7 +59,29 @@ bool UURSSceneConfigComponent::ApplyConfig(FString& OutError)
 	}
 
 	DestroyConfiguredRobots();
-	SpawnedRobots.Reset();
+
+	TSet<FString> NewActorIds;
+	NewActorIds.Reserve(ActiveConfig.Robots.Num());
+	for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
+	{
+		NewActorIds.Add(Spawn.ActorId);
+	}
+
+	// Destroy any actor we previously spawned whose id was removed from the
+	// current config. This is what makes ApplyConfig idempotent across
+	// reloads even when ids disappear from the file.
+	{
+		TSet<FString> Stale = KnownActorIds.Difference(NewActorIds);
+		if (Stale.Num() > 0)
+		{
+			DestroyActorsWithIds(Stale);
+			for (const FString& Id : Stale)
+			{
+				KnownActorIds.Remove(Id);
+				SpawnedRobots.Remove(Id);
+			}
+		}
+	}
 
 	for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
 	{
@@ -67,6 +89,7 @@ bool UURSSceneConfigComponent::ApplyConfig(FString& OutError)
 		{
 			return false;
 		}
+		KnownActorIds.Add(Spawn.ActorId);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s)."), SpawnedRobots.Num());
@@ -75,6 +98,20 @@ bool UURSSceneConfigComponent::ApplyConfig(FString& OutError)
 }
 
 void UURSSceneConfigComponent::DestroyConfiguredRobots()
+{
+	TSet<FString> IdsToDestroy;
+	for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
+	{
+		IdsToDestroy.Add(Spawn.ActorId);
+	}
+	if (IdsToDestroy.Num() == 0)
+	{
+		return;
+	}
+	DestroyActorsWithIds(IdsToDestroy);
+}
+
+void UURSSceneConfigComponent::DestroyActorsWithIds(const TSet<FString>& ActorIds)
 {
 	AActor* Owner = GetOwner();
 	UWorld* World = Owner ? Owner->GetWorld() : nullptr;
@@ -86,17 +123,9 @@ void UURSSceneConfigComponent::DestroyConfiguredRobots()
 	TArray<AMjArticulation*> ToDestroy;
 	for (AMjArticulation* Articulation : TActorRange<AMjArticulation>(World))
 	{
-		if (!Articulation)
+		if (Articulation && ActorIds.Contains(Articulation->ActorId))
 		{
-			continue;
-		}
-		for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
-		{
-			if (Articulation->ActorId == Spawn.ActorId)
-			{
-				ToDestroy.Add(Articulation);
-				break;
-			}
+			ToDestroy.Add(Articulation);
 		}
 	}
 
