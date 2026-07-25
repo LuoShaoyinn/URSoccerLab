@@ -29,7 +29,7 @@ class FrameConn:
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock.settimeout(timeout)
         self.sock.connect((host, port))
-        self.sock.settimeout(0.05)
+        self.sock.settimeout(0)  # non-blocking after connect
         self._buf = bytearray()
         self._alive = True
 

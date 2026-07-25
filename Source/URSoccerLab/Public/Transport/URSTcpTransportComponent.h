@@ -37,7 +37,7 @@ public:
 	int32 AdminPort = URSProtocol::DefaultAdminPort;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1.0", ClampMax = "1000.0"))
-	double StateRateHz = 30.0;
+	double StateRateHz = 60.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1.0", ClampMax = "120.0"))
 	double CameraRateHz = 15.0;

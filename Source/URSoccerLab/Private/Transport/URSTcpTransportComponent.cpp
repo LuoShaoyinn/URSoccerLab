@@ -477,8 +477,6 @@ void UURSTcpTransportComponent::TickStatePublish()
 	}
 }
 
-static int32 GStateSendLogCounter = 0;
-
 void UURSTcpTransportComponent::SendToClients(FRobotListener& Listener, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize)
 {
 	for (int32 Idx = Listener.Clients.Num() - 1; Idx >= 0; --Idx)
@@ -489,19 +487,11 @@ void UURSTcpTransportComponent::SendToClients(FRobotListener& Listener, uint8 Fr
 			Listener.Clients.RemoveAt(Idx);
 			continue;
 		}
-		bool bOk = SendFrame(Sock, FrameType, PayloadData, PayloadSize);
-		if (!bOk)
+		if (!SendFrame(Sock, FrameType, PayloadData, PayloadSize))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[URS TCP] Send failed for '%s' client %d — disconnecting"), *Listener.ActorId, Idx);
 			CloseSocket(Sock);
 			Listener.Clients.RemoveAt(Idx);
 		}
-	}
-	if ((++GStateSendLogCounter % 120) == 0)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[URS TCP] Tick: rp0_clients=%d rp1_clients=%d"),
-			RobotListeners.Num() > 0 ? RobotListeners[0].Clients.Num() : 0,
-			RobotListeners.Num() > 1 ? RobotListeners[1].Clients.Num() : 0);
 	}
 }
 

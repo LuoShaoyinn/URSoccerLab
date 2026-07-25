@@ -16,10 +16,9 @@ Run from the repository root:
 from __future__ import annotations
 
 import argparse
-import math
 import sys
+import threading
 import time
-from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +40,7 @@ from walk_pi_plus import (  # noqa: E402
     load_policy,
     quat_apply_inverse,
 )
-from urs_tcp import RobotClient, AdminClient, parse_camera  # noqa: E402
+from urs_tcp import RobotClient, AdminClient, FrameConn, TYPE_CAMERA, TYPE_JSON  # noqa: E402
 
 
 def quat_to_rot_wb(quat_wxyz: np.ndarray) -> np.ndarray:
@@ -53,11 +52,53 @@ def quat_to_rot_wb(quat_wxyz: np.ndarray) -> np.ndarray:
     ], dtype=np.float32)
 
 
+class CameraThread(threading.Thread):
+    def __init__(self, host: str, port: int, fps: int = 15):
+        super().__init__(daemon=True)
+        self.conn = FrameConn(host, port)
+        self.fps = fps
+        self.frames: list[np.ndarray] = []
+        self.stop_event = threading.Event()
+
+    def run(self):
+        from PIL import Image
+        import io as _io
+        import struct as _struct
+        interval = 1.0 / self.fps
+        next_frame = time.monotonic()
+        try:
+            while not self.stop_event.is_set():
+                self.conn._try_read()
+                buf = self.conn._buf
+                if len(buf) < 5:
+                    time.sleep(0.001)
+                    continue
+                while len(buf) >= 5:
+                    flen = _struct.unpack(">I", bytes(buf[:4]))[0]
+                    if len(buf) < 4 + flen:
+                        break
+                    ftype = buf[4]
+                    if ftype == TYPE_CAMERA:
+                        payload = bytes(buf[5:4+flen])
+                        now = time.monotonic()
+                        if now >= next_frame:
+                            img = Image.open(_io.BytesIO(payload[6:]))
+                            self.frames.append(np.array(img.convert("RGB")))
+                            next_frame = now + interval
+                    del buf[:4+flen]
+        except Exception:
+            pass
+
+    def close(self):
+        self.stop_event.set()
+        self.join(timeout=3.0)
+        self.conn.close()
+
+
 class TCPWalkingClient:
     def __init__(self, host: str, robot_port: int, admin_port: int,
                  policy_path: Path, device: str = "cpu"):
         self.admin = AdminClient(host, admin_port)
-        self.robot = RobotClient(host, robot_port)
         self.policy, obs_dim, act_dim = load_policy(policy_path, torch.device(device))
         assert obs_dim == OBS_STEP_DIM * OBS_HISTORY_LENGTH
         assert act_dim == 20
@@ -67,7 +108,19 @@ class TCPWalkingClient:
         self.obs_history = np.zeros(obs_dim, dtype=np.float32)
         self.cmd = np.zeros(3, dtype=np.float32)
         self.latest_state: dict | None = None
-        self.camera_frames: list[np.ndarray] = []
+        self.conn: FrameConn | None = None
+        self.cam: CameraThread | None = None
+
+    def connect(self, host: str, robot_port: int):
+        self.conn = FrameConn(host, robot_port)
+
+    def start_camera(self, host: str, robot_port: int, fps: int = 15):
+        self.cam = CameraThread(host, robot_port, fps)
+        self.cam.start()
+
+    @property
+    def camera_frames(self) -> list[np.ndarray]:
+        return self.cam.frames if self.cam else []
 
     def set_command(self, vx: float, vy: float, vtheta: float):
         vx_lim, vy_lim, w_lim = CMD_CLIP
@@ -76,15 +129,24 @@ class TCPWalkingClient:
                        np.clip(vtheta, -w_lim, w_lim)]
 
     def _pump(self):
-        for kind, data in self.robot.recv():
-            if kind == "state":
-                self.latest_state = data
-            elif kind == "camera":
-                from PIL import Image
-                import io as _io
-                img = Image.open(_io.BytesIO(data["data"]))
-                arr = np.array(img.convert("RGB"))
-                self.camera_frames.append(arr)
+        import json as _json
+        import struct as _struct
+        conn = self.conn
+        if not conn:
+            return
+        conn._try_read()
+        buf = conn._buf
+        processed = 0
+        while len(buf) >= 5 and processed < 4:
+            flen = _struct.unpack(">I", bytes(buf[:4]))[0]
+            if len(buf) < 4 + flen:
+                break
+            ftype = buf[4]
+            payload = bytes(buf[5:4 + flen])
+            del buf[:4 + flen]
+            processed += 1
+            if ftype == TYPE_JSON:
+                self.latest_state = _json.loads(payload.decode("utf-8"))
 
     def _build_obs(self, state: dict) -> np.ndarray:
         b = state["base"]
@@ -137,19 +199,27 @@ class TCPWalkingClient:
 
     def _send_command(self, targets: np.ndarray):
         cmd = {n: float(v) for n, v in zip(PI_PLUS_JOINTS_MUJOCO_ORDER, targets)}
-        self.robot.send_command(cmd)
+        if self.conn:
+            self.conn.send_json(cmd)
 
     def run(self, duration: float, policy_hz: float, actor_id: str = "robot_rp0") -> dict:
-        self.admin.reset(actor_id)
-        time.sleep(0.5)
+        # Reset to standing pose with correct joint angles
+        self.admin.set_pose(actor_id,
+                            translation_m=[-1.0, 0.0, 0.39],
+                            rotation_quat_xyzw=[0, 0, 0, 1],
+                            joint_qpos=self.default_dof.tolist())
 
-        # Wait for first state
+        # Flush stale state from the buffer, then wait for fresh state
+        # while continuously sending warm-up commands (no gap allowed).
+        self.latest_state = None
+        self.conn._buf.clear()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             self._pump()
+            self._send_command(self.default_dof)
             if self.latest_state:
                 break
-            time.sleep(0.01)
+            time.sleep(0.005)
         if not self.latest_state:
             raise RuntimeError("no state received — is the simulator running?")
 
@@ -200,7 +270,10 @@ class TCPWalkingClient:
         }
 
     def close(self):
-        self.robot.close()
+        if self.cam:
+            self.cam.close()
+        if self.conn:
+            self.conn.close()
         self.admin.close()
 
 
@@ -227,13 +300,16 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=8.0)
     ap.add_argument("--vx", type=float, default=0.5)
     ap.add_argument("--policy-hz", type=float, default=50.0)
-    ap.add_argument("--video-fps", type=int, default=30)
+    ap.add_argument("--video-fps", type=int, default=15)
     ap.add_argument("--video", type=Path, default=None)
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     args = ap.parse_args()
 
     client = TCPWalkingClient(args.host, args.robot_port, args.admin_port,
                               args.policy, args.device)
+    client.connect(args.host, args.robot_port)
+    if args.video:
+        client.start_camera(args.host, args.robot_port, args.video_fps)
     client.set_command(args.vx, 0.0, 0.0)
     print(f"[walk-tcp] walking {args.vx:.2f} m/s for {args.duration:.1f}s @ {args.policy_hz:.0f}Hz")
     try:

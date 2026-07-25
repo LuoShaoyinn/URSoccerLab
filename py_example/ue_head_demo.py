@@ -39,10 +39,8 @@ RP1_QUAT = [0.0, 0.0, 1.0, 0.0]
 
 
 def yaw_pitch_quat_xyzw(yaw: float, pitch: float, base_xyzw=None) -> list[float]:
-    if base_xyzw is None:
-        bw, bx, by, bz = 1.0, 0.0, 0.0, 0.0
-    else:
-        bx, by, bz, bw = base_xyzw
+    """Compose base quaternion with yaw (Z) + pitch (Y).  All tuples are xyzw."""
+    base = tuple(base_xyzw) if base_xyzw else (0.0, 0.0, 0.0, 1.0)
     cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
     cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
     def qmul(a, b):
@@ -52,7 +50,9 @@ def yaw_pitch_quat_xyzw(yaw: float, pitch: float, base_xyzw=None) -> list[float]
                 aw*by_-ax*bz_+ay*bw_+az*bx_,
                 aw*bz_+ax*by_-ay*bx_+az*bw_,
                 aw*bw_-ax*bx_-ay*by_-az*bz_]
-    q = qmul(qmul((bw, bx, by, bz), (0.0, 0.0, sy, cy)), (0.0, sp, 0.0, cp))
+    qz = (0.0, 0.0, sy, cy)   # yaw around Z in xyzw
+    qy = (0.0, sp, 0.0, cp)   # pitch around Y in xyzw
+    q = qmul(qmul(base, qz), qy)
     return [q[0], q[1], q[2], q[3]]
 
 
