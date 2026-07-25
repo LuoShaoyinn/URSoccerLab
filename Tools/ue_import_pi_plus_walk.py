@@ -28,13 +28,17 @@ def main() -> int:
 
     asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 
+    # Destroy existing Blueprint so the factory doesn't refuse to overwrite.
+    existing_path = f"{DEST_PATH}/{DEST_NAME}.{DEST_NAME}"
+    if unreal.EditorAssetLibrary.does_asset_exist(existing_path):
+        unreal.log(f"Destroying existing Blueprint: {existing_path}")
+        unreal.EditorAssetLibrary.delete_asset(existing_path)
+
     import_data = unreal.AutomatedAssetImportData()
     import_data.set_editor_property("filenames", [XML_PATH])
     import_data.set_editor_property("destination_path", DEST_PATH)
     import_data.set_editor_property("replace_existing", True)
     import_data.set_editor_property("factory_name", "MujocoImportFactory")
-
-    unreal.log(f"Importing {XML_PATH} -> {DEST_PATH}/{DEST_NAME}")
     imported = asset_tools.import_assets_automated(import_data)
 
     if not imported:
