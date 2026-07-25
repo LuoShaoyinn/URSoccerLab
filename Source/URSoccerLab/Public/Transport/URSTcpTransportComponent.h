@@ -93,7 +93,6 @@ private:
 	void TickCameraPublish();
 
 	FString BuildStateJson(const FString& ActorId);
-	TArray<uint8> EncodeCameraFrame(const TArray<FColor>& Pixels, int32 Width, int32 Height);
 
 	void CloseSocket(FSocket* Sock);
 	void CloseListener(FRobotListener& Listener);

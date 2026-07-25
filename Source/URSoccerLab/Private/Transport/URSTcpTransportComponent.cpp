@@ -553,14 +553,50 @@ void UURSTcpTransportComponent::TickCameraPublish()
 		FURSRobotState State;
 		if (!Core->GetRobotState(L.ActorId, State)) continue;
 
+		// Pack ALL camera frames into one message (synchronized snapshot)
+		TArray<uint8> Packed;
+		const uint8 Codec = (CameraCompress == TEXT("jpeg")) ? URSProtocol::CameraCodec_JPEG : URSProtocol::CameraCodec_Raw;
+		Packed.Add(Codec);
+		Packed.Add(static_cast<uint8>(State.Cameras.Num()));
+
 		for (const FURSCameraInfo& CamInfo : State.Cameras)
 		{
 			TArray<FColor> Pixels;
-			if (!Core->ConsumeCameraFrame(L.ActorId, CamInfo.Name, Pixels) || Pixels.Num() == 0) continue;
+			bool bHasFrame = Core->ConsumeCameraFrame(L.ActorId, CamInfo.Name, Pixels) && Pixels.Num() > 0;
 
-			TArray<uint8> Encoded = EncodeCameraFrame(Pixels, CamInfo.Width, CamInfo.Height);
-			SendToClients(L, URSProtocol::Type_Camera, Encoded.GetData(), Encoded.Num());
+			TArray<uint8> Encoded;
+			if (bHasFrame && Codec == URSProtocol::CameraCodec_JPEG)
+			{
+				IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+				TSharedPtr<IImageWrapper> Wrapper(Module.CreateImageWrapper(EImageFormat::JPEG));
+				const uint8* RawBGRA = reinterpret_cast<const uint8*>(Pixels.GetData());
+				if (Wrapper->SetRaw(RawBGRA, CamInfo.Width * CamInfo.Height * 4, CamInfo.Width, CamInfo.Height, ERGBFormat::BGRA, 8))
+				{
+					Encoded = Wrapper->GetCompressed(JpegQuality);
+				}
+			}
+			else if (bHasFrame)
+			{
+				Encoded.Append(reinterpret_cast<const uint8*>(Pixels.GetData()), Pixels.Num() * 4);
+			}
+
+			// Width LE
+			Packed.Add(static_cast<uint8>(CamInfo.Width & 0xFF));
+			Packed.Add(static_cast<uint8>((CamInfo.Width >> 8) & 0xFF));
+			// Height LE
+			Packed.Add(static_cast<uint8>(CamInfo.Height & 0xFF));
+			Packed.Add(static_cast<uint8>((CamInfo.Height >> 8) & 0xFF));
+			// Data length LE (uint32)
+			int32 Len = Encoded.Num();
+			Packed.Add(static_cast<uint8>(Len & 0xFF));
+			Packed.Add(static_cast<uint8>((Len >> 8) & 0xFF));
+			Packed.Add(static_cast<uint8>((Len >> 16) & 0xFF));
+			Packed.Add(static_cast<uint8>((Len >> 24) & 0xFF));
+			// Pixel data
+			Packed.Append(Encoded);
 		}
+
+		SendToClients(L, URSProtocol::Type_Camera, Packed.GetData(), Packed.Num());
 	}
 }
 
@@ -633,40 +669,6 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
 	FJsonSerializer::Serialize(Root.ToSharedRef(), W);
 	return Json;
-}
-
-TArray<uint8> UURSTcpTransportComponent::EncodeCameraFrame(const TArray<FColor>& Pixels, int32 Width, int32 Height)
-{
-	TArray<uint8> Out;
-
-	const uint8 Codec = (CameraCompress == TEXT("jpeg")) ? URSProtocol::CameraCodec_JPEG : URSProtocol::CameraCodec_Raw;
-	const uint8 Flags = 0x01;
-
-	Out.Add(Codec);
-	Out.Add(Flags);
-	Out.Add(static_cast<uint8>(Width & 0xFF));
-	Out.Add(static_cast<uint8>((Width >> 8) & 0xFF));
-	Out.Add(static_cast<uint8>(Height & 0xFF));
-	Out.Add(static_cast<uint8>((Height >> 8) & 0xFF));
-
-	if (Codec == URSProtocol::CameraCodec_JPEG && Pixels.Num() > 0)
-	{
-		IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-		TSharedPtr<IImageWrapper> Wrapper(Module.CreateImageWrapper(EImageFormat::JPEG));
-		const uint8* RawBGRA = reinterpret_cast<const uint8*>(Pixels.GetData());
-		if (Wrapper->SetRaw(RawBGRA, Width * Height * 4, Width, Height, ERGBFormat::BGRA, 8))
-		{
-			const auto& Compressed = Wrapper->GetCompressed(JpegQuality);
-			Out.Append(Compressed);
-		}
-	}
-	else if (Pixels.Num() > 0)
-	{
-		const int32 RawSize = Pixels.Num() * 4;
-		Out.Append(reinterpret_cast<const uint8*>(Pixels.GetData()), RawSize);
-	}
-
-	return Out;
 }
 
 bool UURSTcpTransportComponent::SendFrame(FSocket* Sock, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize)

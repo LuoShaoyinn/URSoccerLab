@@ -82,9 +82,12 @@ class CameraThread(threading.Thread):
                         payload = bytes(buf[5:4+flen])
                         now = time.monotonic()
                         if now >= next_frame:
-                            img = Image.open(_io.BytesIO(payload[6:]))
-                            self.frames.append(np.array(img.convert("RGB")))
-                            next_frame = now + interval
+                            from urs_tcp import parse_camera
+                            cams = parse_camera(payload)
+                            if cams and cams[0]["data"]:
+                                img = Image.open(_io.BytesIO(cams[0]["data"]))
+                                self.frames.append(np.array(img.convert("RGB")))
+                                next_frame = now + interval
                     del buf[:4+flen]
         except Exception:
             pass

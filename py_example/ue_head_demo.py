@@ -66,9 +66,17 @@ class RobotConnection:
                 q = b.get("quat", [1, 0, 0, 0])
                 self.latest_up = 1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2)
             elif ftype == TYPE_CAMERA:
+                from urs_tcp import parse_camera
+                cams = parse_camera(payload)
+                if not cams:
+                    continue
+                # Left eye is camera index 0
+                cam0 = cams[0]
+                if not cam0["data"]:
+                    continue
                 from PIL import Image
                 import io as _io
-                img = Image.open(_io.BytesIO(payload[6:]))
+                img = Image.open(_io.BytesIO(cam0["data"]))
                 self.frames.append(np.array(img.convert("RGB")))
 
     def close(self):

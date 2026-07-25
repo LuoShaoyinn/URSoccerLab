@@ -80,18 +80,30 @@ class FrameConn:
         return self._alive
 
 
-def parse_camera(payload: bytes) -> dict:
-    codec = payload[0]
-    flags = payload[1]
-    width = payload[2] | (payload[3] << 8)
-    height = payload[4] | (payload[5] << 8)
-    return {
-        "codec": "jpeg" if codec == CODEC_JPEG else "raw",
-        "keyframe": bool(flags & 1),
-        "width": width,
-        "height": height,
-        "data": payload[6:],
-    }
+def parse_camera(payload: bytes) -> list[dict]:
+    """Parse packed multi-camera frame. Returns list of camera dicts.
+
+    Format: [codec][num_cameras] per-cam: [width LE16][height LE16][data_len LE32][data]
+    All cameras in one message are from the same physics step (synchronized).
+    """
+    codec = "jpeg" if payload[0] == CODEC_JPEG else "raw"
+    num_cams = payload[1]
+    offset = 2
+    cameras = []
+    for i in range(num_cams):
+        width = payload[offset] | (payload[offset + 1] << 8)
+        height = payload[offset + 2] | (payload[offset + 3] << 8)
+        data_len = struct.unpack("<I", payload[offset + 4:offset + 8])[0]
+        data = payload[offset + 8:offset + 8 + data_len]
+        cameras.append({
+            "cam_index": i,
+            "codec": codec,
+            "width": width,
+            "height": height,
+            "data": data,
+        })
+        offset += 8 + data_len
+    return cameras
 
 
 class RobotClient:
