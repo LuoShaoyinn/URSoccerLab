@@ -234,7 +234,8 @@ void UURSTcpTransportComponent::ReadFromClients(FRobotListener& Listener)
 
 			if (FrameType == URSProtocol::Type_JSON && PayloadSize > 0)
 			{
-				FString JsonStr(UTF8_TO_TCHAR(reinterpret_cast<const char*>(PayloadData)));
+				FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(PayloadData), PayloadSize);
+				FString JsonStr(Converter.Length(), Converter.Get());
 				if (Listener.ActorId == TEXT("admin"))
 				{
 					ProcessAdminRequest(Sock, JsonStr);

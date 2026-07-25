@@ -659,7 +659,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 
 	FQposLayout Layout = DiscoverQposLayout(Articulation, Model);
 
-	if (JointQpos && JointQpos->Num() != Layout.NonRootQposDim)
+	if (JointQpos && JointQpos->Num() > Layout.NonRootQposDim)
 	{
 		Result.Error = TEXT("dim_mismatch");
 		Result.Message = FString::Printf(TEXT("joint_qpos length %d != non-root qpos dim %d"),
