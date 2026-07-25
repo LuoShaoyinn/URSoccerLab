@@ -3,8 +3,8 @@
 
 Connects to the URSoccerLab UE simulator (running the soccer-field map with
 a floating-base ``pi_plus_walk`` robot), runs the mos-brain locomotion policy
-loop, sends motor torques, and captures the robot's onboard camera view as a
-video.
+loop, sends joint position targets, and captures the robot's onboard camera
+view as a video.
 
 The simulator must already be running (e.g. launched by
 ``Tools/run_vision_smoke_test.py`` infrastructure or directly with
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import struct
 import sys
 import threading
@@ -33,21 +32,18 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 import zmq
-from PIL import Image
 
 # Reuse the policy + constants from the standalone example.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from walk_pi_plus import (  # noqa: E402
     PI_PLUS_DEFAULT_DOF_POS_MUJOCO,
     PI_PLUS_ISAAC_TO_MUJOCO_IDX,
-    PI_PLUS_KP,
-    PI_PLUS_KD,
     PI_PLUS_MUJOCO_TO_ISAAC_IDX,
     ACTION_CLIP,
     ACTION_SCALE,
     CMD_CLIP,
-    EFFORT_LIMIT,
     OBS_CLIP,
     OBS_HISTORY_LENGTH,
     OBS_STEP_DIM,
@@ -122,6 +118,7 @@ class CameraCapture(threading.Thread):
     def __init__(self, ctx: zmq.Context, endpoint: str, host: str, topic: str,
                  width: int, height: int, fps: int):
         super().__init__(name="ue-camera", daemon=True)
+        self.ctx = ctx
         self.endpoint = client_endpoint(endpoint, host)
         self.topic = topic
         self.width = width
@@ -131,8 +128,7 @@ class CameraCapture(threading.Thread):
         self.stop_event = threading.Event()
 
     def run(self) -> None:
-        sub = zmq.Socket.__new__(zmq.Socket)  # placeholder for type checker
-        sub = zmq.Context().socket(zmq.SUB)
+        sub = self.ctx.socket(zmq.SUB)
         sub.setsockopt_string(zmq.SUBSCRIBE, self.topic)
         sub.connect(self.endpoint)
         next_frame = time.monotonic()
@@ -159,7 +155,7 @@ class UEWalkingClient:
         self.host = host
         self.robot = robot
         self.ctx = zmq.Context()
-        self.policy, obs_dim, act_dim = load_policy(policy_path, __import__("torch").device(device))
+        self.policy, obs_dim, act_dim = load_policy(policy_path, torch.device(device))
         assert obs_dim == OBS_STEP_DIM * OBS_HISTORY_LENGTH, f"policy obs {obs_dim} != {OBS_STEP_DIM * OBS_HISTORY_LENGTH}"
         assert act_dim == 20, f"policy act {act_dim} != 20"
 
@@ -269,7 +265,6 @@ class UEWalkingClient:
         self.obs_history[-OBS_STEP_DIM:] = obs_step
         obs_clipped = np.clip(self.obs_history, -OBS_CLIP, OBS_CLIP)
 
-        import torch
         with torch.inference_mode():
             t = torch.from_numpy(obs_clipped).unsqueeze(0)
             action = self.policy(t).detach().numpy().squeeze().astype(np.float32)
@@ -380,11 +375,9 @@ def main() -> int:
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     args = parser.parse_args()
 
-    if args.device == "cuda":
-        import torch
-        if not torch.cuda.is_available():
-            print("[ue-walk] CUDA unavailable, using CPU", file=sys.stderr)
-            args.device = "cpu"
+    if args.device == "cuda" and not torch.cuda.is_available():
+        print("[ue-walk] CUDA unavailable, using CPU", file=sys.stderr)
+        args.device = "cpu"
 
     client = UEWalkingClient(args.host, args.robot, args.policy, device=args.device)
     client.wait_for_meta(10_000)
