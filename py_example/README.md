@@ -95,3 +95,82 @@ That command creates `/Game/Levels/URS_SoccerField` as a saved UE scene asset.
 GLB field visuals, converts Blender/glTF Y-up node transforms into the UE level
 frame, and adds a default UE skylight. Runtime simulator code should load this
 map and only add dynamic robots/cameras/control.
+
+## Pure-Python Bipedal Walking Example (`walk_pi_plus.py`)
+
+The simulator ships no gait or locomotion model. This standalone example drives
+the mos-brain `pi_plus_model_40000.pt` locomotion policy against the Pi Plus
+MuJoCo model using a self-contained Python pipeline (observation assembly, MLP
+policy inference, PD position control). Use it as a reference for writing your
+own decider or motion client.
+
+It needs a separate environment from `main.py` (mujoco + torch + imageio):
+
+```bash
+uv venv /tmp/walk-venv --python 3.12 --clear
+source /tmp/walk-venv/bin/activate
+uv pip install "mujoco" "torch" "numpy<2.3" "imageio" "imageio-ffmpeg" "pillow"
+```
+
+Walk forward for 6 seconds and save an offscreen video plus a trajectory dump:
+
+```bash
+python py_example/walk_pi_plus.py \
+  --duration 6.0 --vx 0.5 \
+  --video py_example/out/walk_forward.mp4 \
+  --trajectory py_example/out/walk_forward.npz
+```
+
+Other useful invocations:
+
+```bash
+# turn in place (forward + yaw rate)
+python py_example/walk_pi_plus.py --vx 0.3 --vtheta 0.6 --video out/walk_turn.mp4
+
+# balance in place (zero command)
+python py_example/walk_pi_plus.py --vx 0.0 --duration 10.0 --video out/walk_balance.mp4
+```
+
+The script prints forward displacement, average speed, minimum upright value,
+and whether the robot stayed upright (`min upright > 0.5`). The trajectory npz
+contains `t, x, y, z, upright, qpos` for downstream plotting/analysis.
+
+### Validating against the mos-brain origin pipeline
+
+`compare_with_mos_brain.py` drives the **actual** `MultiRobotMujocoSim` from
+`refs/mos-brain` for a single Pi Plus and compares its walking trajectory
+against `walk_pi_plus.py`:
+
+```bash
+python py_example/compare_with_mos_brain.py --duration 5.0 --vx 0.5
+```
+
+Both runs use the same velocity command. The reference robot stands on the
+mos-brain soccer pitch while the example uses the standalone `pi_plus.xml`
+floor, so absolute positions differ slightly, but the macro walking behaviour
+(forward speed, stability, gait) should match within a few percent. A typical
+result for `--vx 0.5` over 5 s:
+
+```
+mos-brain reference : +2.31 m forward, 0.46 m/s, min upright 0.98
+pure-python example : +2.42 m forward, 0.48 m/s, min upright 0.98
+=> MATCH (within tolerance)
+```
+
+### How the pipeline mirrors mos-brain
+
+All constants (joint order, PD gains, action scale, default pose, observation
+history length, command clip) are copied from
+`refs/mos-brain/.../app/multi_robot_sim.py` and `app/runtime_config.py`. The
+per-control-step loop is:
+
+1. **Observation** (69 dims): IMU angular velocity, projected gravity, clipped
+   `[vx, vy, vtheta]` command, joint positions (relative to default, reordered
+   MuJoCo→policy), joint velocities, and last action.
+2. **History**: the 69-dim vector is appended to a rolling buffer of length 5
+   (345-dim), clipped to `[-100, 100]`, and fed to the JIT/MLP policy.
+3. **Action**: the 20-dim policy output is scaled by `0.25`, reordered
+   policy→MuJoCo, and added to the default pose to form PD targets.
+4. **Control**: every physics step applies `tau = kp*(target - q) - kd*qd`,
+   clipped to `[-20, 20]` N·m, then `mj_step` runs at `dt = 0.002` s. The policy
+   runs every 10 steps (50 Hz).
