@@ -101,7 +101,7 @@ def main() -> int:
     ap.add_argument("--robot0-port", type=int, default=10000)
     ap.add_argument("--robot1-port", type=int, default=10001)
     ap.add_argument("--duration", type=float, default=10.0)
-    ap.add_argument("--cmd-hz", type=float, default=30.0)
+    ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=15)
     ap.add_argument("--video0", type=Path, default=Path("py_example/out/head_demo_rp0.mp4"))
     ap.add_argument("--video1", type=Path, default=Path("py_example/out/head_demo_rp1.mp4"))
