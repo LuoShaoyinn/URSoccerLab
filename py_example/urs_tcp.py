@@ -147,5 +147,15 @@ class AdminClient:
     def reset(self, actor_id: str) -> dict:
         return self._request("reset", {"actor_id": actor_id})
 
+    def lock_pose(self, actor_id: str, translation_m=None, rotation_quat_xyzw=None, joint_qpos=None):
+        args: dict = {"actor_id": actor_id}
+        if translation_m is not None: args["translation_m"] = list(translation_m)
+        if rotation_quat_xyzw is not None: args["rotation_quat_xyzw"] = list(rotation_quat_xyzw)
+        if joint_qpos is not None: args["joint_qpos"] = list(joint_qpos)
+        return self._request("lock_pose", args)
+
+    def unlock_pose(self, actor_id: str) -> dict:
+        return self._request("unlock_pose", {"actor_id": actor_id})
+
     def close(self):
         self.conn.close()

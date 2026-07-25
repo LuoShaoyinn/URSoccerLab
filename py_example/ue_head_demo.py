@@ -32,6 +32,17 @@ from urs_tcp import AdminClient, FrameConn, TYPE_CAMERA  # noqa: E402
 
 DEFAULT_JOINT_QPOS = PI_PLUS_DEFAULT_DOF_POS_MUJOCO.tolist()
 
+# Motor command dict (actuator name → target angle) sent via robot TCP port
+# to keep PD controllers fed with the SAME targets as the set_pose joint_qpos.
+DEFAULT_CMD = {n: float(v) for n, v in zip([
+    "l_hip_pitch_joint", "l_hip_roll_joint", "l_thigh_joint", "l_calf_joint",
+    "l_ankle_pitch_joint", "l_ankle_roll_joint",
+    "l_shoulder_pitch_joint", "l_shoulder_roll_joint", "l_upper_arm_joint", "l_elbow_joint",
+    "r_hip_pitch_joint", "r_hip_roll_joint", "r_thigh_joint", "r_calf_joint",
+    "r_ankle_pitch_joint", "r_ankle_roll_joint",
+    "r_shoulder_pitch_joint", "r_shoulder_roll_joint", "r_upper_arm_joint", "r_elbow_joint",
+], DEFAULT_JOINT_QPOS)}
+
 RP0_POS = [-1.5, 0.0, 0.39]
 RP1_POS = [1.5, 0.0, 0.39]
 RP0_QUAT = [0.0, 0.0, 0.0, 1.0]
@@ -63,11 +74,14 @@ class ThreadedCameraCapture(threading.Thread):
         self.fps = fps
         self.frames: list[np.ndarray] = []
         self.stop_event = threading.Event()
+        self.latest_z: float = 0.0
+        self.latest_up: float = 0.0
 
     def run(self):
         from PIL import Image
         import io as _io
         import struct as _struct
+        import json as _json
         interval = 1.0 / self.fps
         next_frame = time.monotonic()
         try:
@@ -79,14 +93,23 @@ class ThreadedCameraCapture(threading.Thread):
                     if len(buf) < 4 + flen:
                         break
                     ftype = buf[4]
+                    payload = bytes(buf[5:4+flen])
+                    del buf[:4+flen]
                     if ftype == TYPE_CAMERA:
-                        payload = bytes(buf[5:4+flen])
                         now = time.monotonic()
                         if now >= next_frame:
                             img = Image.open(_io.BytesIO(payload[6:]))
                             self.frames.append(np.array(img.convert("RGB")))
                             next_frame = now + interval
-                    del buf[:4+flen]
+                    elif ftype == 0x00:
+                        try:
+                            st = _json.loads(payload.decode("utf-8"))
+                            b = st.get("base", {})
+                            self.latest_z = b.get("pos", [0,0,0])[2]
+                            q = b.get("quat", [1,0,0,0])
+                            self.latest_up = 1.0 - 2.0*(q[1]**2 + q[2]**2)
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -124,10 +147,15 @@ def main() -> int:
     args = ap.parse_args()
 
     admin = AdminClient(args.host, args.admin_port)
-    print("[demo] setting initial poses ...", flush=True)
-    admin.set_pose("robot_rp0", RP0_POS, RP0_QUAT, DEFAULT_JOINT_QPOS)
-    admin.set_pose("robot_rp1", RP1_POS, RP1_QUAT, DEFAULT_JOINT_QPOS)
-    time.sleep(0.5)
+    cmd0 = FrameConn(args.host, args.robot0_port)
+    cmd1 = FrameConn(args.host, args.robot1_port)
+    print("[demo] locking poses + setting initial ...", flush=True)
+    cmd0.send_json(DEFAULT_CMD)
+    cmd1.send_json(DEFAULT_CMD)
+    # Lock both robots at standing pose — prevents physics from launching them
+    admin.lock_pose("robot_rp0", RP0_POS, RP0_QUAT, DEFAULT_JOINT_QPOS)
+    admin.lock_pose("robot_rp1", RP1_POS, RP1_QUAT, DEFAULT_JOINT_QPOS)
+    time.sleep(1.0)
 
     cam0 = ThreadedCameraCapture(args.host, args.robot0_port, args.video_fps)
     cam1 = ThreadedCameraCapture(args.host, args.robot1_port, args.video_fps)
@@ -135,7 +163,7 @@ def main() -> int:
     cam1.start()
     time.sleep(1.0)
 
-    print(f"[demo] sweeping for {args.duration:.0f}s ...", flush=True)
+    print(f"[demo] sweeping for {args.duration:.0f}s (pose-locked) ...", flush=True)
     interval = 1.0 / args.pose_hz
     deadline = time.monotonic() + args.duration
     next_pose = time.monotonic()
@@ -148,12 +176,18 @@ def main() -> int:
             yaw = 0.8 * math.sin(2.0 * math.pi * t)
             pitch = 0.4 * math.sin(4.0 * math.pi * t)
             quat = yaw_pitch_quat_xyzw(yaw, pitch, RP0_QUAT)
-            admin.set_pose("robot_rp0", RP0_POS, quat, DEFAULT_JOINT_QPOS)
-            admin.set_pose("robot_rp1", RP1_POS, RP1_QUAT, DEFAULT_JOINT_QPOS)
+            # Update rp0's lock with the new orientation; rp1 stays locked at fixed pose
+            cmd0._try_read(); cmd0._buf.clear()
+            cmd1._try_read(); cmd1._buf.clear()
+            cmd0.send_json(DEFAULT_CMD)
+            cmd1.send_json(DEFAULT_CMD)
+            admin.lock_pose("robot_rp0", RP0_POS, quat, DEFAULT_JOINT_QPOS)
             step += 1
             if step % 20 == 0:
                 print(f"  t={t:.1f} yaw={math.degrees(yaw):+.0f}° "
                       f"pitch={math.degrees(pitch):+.0f}° "
+                      f"rp0(z={cam0.latest_z:.2f} up={cam0.latest_up:.2f}) "
+                      f"rp1(z={cam1.latest_z:.2f} up={cam1.latest_up:.2f}) "
                       f"frames: rp0={len(cam0.frames)} rp1={len(cam1.frames)}", flush=True)
             next_pose = now + interval
         else:
@@ -162,6 +196,10 @@ def main() -> int:
     print("[demo] stopping cameras ...", flush=True)
     cam0.close()
     cam1.close()
+    admin.unlock_pose("robot_rp0")
+    admin.unlock_pose("robot_rp1")
+    cmd0.close()
+    cmd1.close()
     admin.close()
 
     print(f"[demo] saving videos ...", flush=True)

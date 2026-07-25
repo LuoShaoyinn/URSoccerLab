@@ -271,9 +271,98 @@ void UURSRobotCoreComponent::RegisterPhysicsCallbacks()
 	bCallbacksRegistered = true;
 }
 
-void UURSRobotCoreComponent::PreStepPhysics(mjModel* /*Model*/, mjData* /*Data*/)
+void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 {
+	ApplyPoseLocks(Model, Data);
 	ApplyCommands(FPlatformTime::Seconds());
+}
+
+void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
+{
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine) return;
+
+	for (FRobotEndpoint& Ep : Endpoints)
+	{
+		if (!Ep.PoseLock.bActive) continue;
+		AMjArticulation* Articulation = Ep.Articulation.Get();
+		if (!Articulation) continue;
+
+		FQposLayout Layout = DiscoverQposLayout(Articulation, Model);
+
+		FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+
+		if (!Layout.RootSlots.IsEmpty())
+		{
+			int32 Adr = Layout.RootSlots[0].Adr;
+			Data->qpos[Adr+0] = Ep.PoseLock.Translation.X;
+			Data->qpos[Adr+1] = Ep.PoseLock.Translation.Y;
+			Data->qpos[Adr+2] = Ep.PoseLock.Translation.Z;
+			Data->qpos[Adr+3] = Ep.PoseLock.Rotation.W;
+			Data->qpos[Adr+4] = Ep.PoseLock.Rotation.X;
+			Data->qpos[Adr+5] = Ep.PoseLock.Rotation.Y;
+			Data->qpos[Adr+6] = Ep.PoseLock.Rotation.Z;
+		}
+
+		int32 Cursor = 0;
+		for (const FQposLayout::FSlot& Slot : Layout.NonRootSlots)
+		{
+			for (int32 Idx = 0; Idx < Slot.Size; ++Idx)
+			{
+				float V = Ep.PoseLock.JointQpos.IsValidIndex(Cursor) ? Ep.PoseLock.JointQpos[Cursor] : 0.0f;
+				Data->qpos[Slot.Adr + Idx] = V;
+				++Cursor;
+			}
+		}
+
+		for (UMjJoint* Joint : Articulation->GetJoints())
+		{
+			if (!Joint) continue;
+			int32 JId = Joint->GetMjID();
+			if (JId < 0 || JId >= Model->njnt) continue;
+			int32 DofAdr = Model->jnt_dofadr[JId];
+			int32 DofSize = (Model->jnt_type[JId] == mjJNT_FREE) ? 6 :
+			                (Model->jnt_type[JId] == mjJNT_BALL) ? 3 : 1;
+			for (int32 i = 0; i < DofSize; ++i)
+				Data->qvel[DofAdr + i] = 0.0;
+		}
+
+		// Sync actuator targets so PD controllers don't fight
+		for (int32 Ai = 0; Ai < Ep.Actuators.Num(); ++Ai)
+		{
+			int32 Am = Ep.Actuators[Ai].MjId;
+			if (Am < 0 || Am >= Model->nu) continue;
+			int32 Jm = Model->actuator_trnid[Am * 2];
+			if (Jm < 0 || Jm >= Model->njnt) continue;
+			int32 Qa = Model->jnt_qposadr[Jm];
+			Data->ctrl[Am] = Data->qpos[Qa];
+			Ep.LatestCommand[Ai] = static_cast<float>(Data->qpos[Qa]);
+			if (UMjActuator* Act = Ep.Actuators[Ai].Actuator.Get())
+				Act->SetNetworkControl(static_cast<float>(Data->qpos[Qa]));
+		}
+		Ep.LastCommandTimeSec = FPlatformTime::Seconds();
+		Ep.bHasCommand = true;
+
+		mj_forward(Model, Data);
+	}
+}
+
+void UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool bLock,
+	const FVector* Trans, const FQuat* Rot, const TArray<float>* JointQpos)
+{
+	FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep) return;
+	if (bLock)
+	{
+		Ep->PoseLock.bActive = true;
+		if (Trans) Ep->PoseLock.Translation = *Trans;
+		if (Rot) Ep->PoseLock.Rotation = *Rot;
+		if (JointQpos) Ep->PoseLock.JointQpos = *JointQpos;
+	}
+	else
+	{
+		Ep->PoseLock.bActive = false;
+	}
 }
 
 void UURSRobotCoreComponent::ApplyCommands(double NowSec)
@@ -635,6 +724,30 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 			{
 				Data->qvel[DofAdr + Idx] = 0.0;
 			}
+		}
+
+		// Sync actuator controls to match joint angles so PD controllers
+		// don't fight the new pose.  Must be inside the lock AND before
+		// mj_forward so that derived quantities are consistent.
+		if (JointQpos)
+		{
+			for (int32 ActIdx = 0; ActIdx < Ep->Actuators.Num(); ++ActIdx)
+			{
+				int32 ActMjId = Ep->Actuators[ActIdx].MjId;
+				if (ActMjId < 0 || ActMjId >= Model->nu) continue;
+				int32 JointMjId = Model->actuator_trnid[ActMjId * 2];
+				if (JointMjId < 0 || JointMjId >= Model->njnt) continue;
+				int32 QposAdr = Model->jnt_qposadr[JointMjId];
+				float Target = static_cast<float>(Data->qpos[QposAdr]);
+				Data->ctrl[ActMjId] = Target;
+				Ep->LatestCommand[ActIdx] = Target;
+				if (UMjActuator* Act = Ep->Actuators[ActIdx].Actuator.Get())
+				{
+					Act->SetNetworkControl(Target);
+				}
+			}
+			Ep->LastCommandTimeSec = FPlatformTime::Seconds();
+			Ep->bHasCommand = true;
 		}
 
 		mj_forward(Model, Data);

@@ -129,6 +129,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "URSoccerLab")
 	FURSPoseResult ResetRobot(const FString& ActorId);
 
+	// Pose-lock: when enabled, the last SetPose is re-applied every physics
+	// step so the robot is frozen at the target pose regardless of physics
+	// forces.  Used by the head demo for base-orientation sweeps.
+	struct FPoseLock
+	{
+		bool bActive = false;
+		FVector Translation = FVector::ZeroVector;
+		FQuat Rotation = FQuat::Identity;
+		TArray<float> JointQpos;
+	};
+
+	void SetPoseLock(const FString& ActorId, bool bLock,
+		const FVector* Trans = nullptr, const FQuat* Rot = nullptr,
+		const TArray<float>* JointQpos = nullptr);
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -171,6 +186,8 @@ private:
 		TMap<FString, float> LastNamedValues;
 		double LastCommandTimeSec = 0.0;
 		bool bHasCommand = false;
+
+		FPoseLock PoseLock;
 	};
 
 	TArray<FRobotEndpoint> Endpoints;
@@ -187,6 +204,7 @@ private:
 	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);
 
 	void ApplyCommands(double NowSec);
+	void ApplyPoseLocks(struct mjModel_* Model, struct mjData_* Data);
 
 	FRobotEndpoint* FindEndpoint(const FString& ActorId);
 	const FRobotEndpoint* FindEndpoint(const FString& ActorId) const;

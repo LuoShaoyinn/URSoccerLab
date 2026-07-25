@@ -450,6 +450,41 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 		}
 		SendReply(Reply);
 	}
+	else if (Command == TEXT("lock_pose"))
+	{
+		TOptional<FVector> Trans;
+		TOptional<FQuat> Rot;
+		TOptional<TArray<float>> JointQpos;
+		const TArray<TSharedPtr<FJsonValue>>* TArr;
+		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr && TArr->Num() == 3)
+			Trans = FVector((*TArr)[0]->AsNumber(), (*TArr)[1]->AsNumber(), (*TArr)[2]->AsNumber());
+		const TArray<TSharedPtr<FJsonValue>>* RArr;
+		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr && RArr->Num() == 4)
+			Rot = FQuat((*RArr)[0]->AsNumber(), (*RArr)[1]->AsNumber(), (*RArr)[2]->AsNumber(), (*RArr)[3]->AsNumber());
+		const TArray<TSharedPtr<FJsonValue>>* JArr;
+		if (Args->TryGetArrayField(TEXT("joint_qpos"), JArr) && JArr)
+		{
+			TArray<float> Qpos;
+			for (const auto& V : *JArr) Qpos.Add(static_cast<float>(V->AsNumber()));
+			JointQpos = MoveTemp(Qpos);
+		}
+		Core->SetPoseLock(ActorId, true,
+			Trans.IsSet() ? &Trans.GetValue() : nullptr,
+			Rot.IsSet() ? &Rot.GetValue() : nullptr,
+			JointQpos.IsSet() ? &JointQpos.GetValue() : nullptr);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), true);
+		Reply->SetStringField(TEXT("command"), TEXT("lock_pose"));
+		SendReply(Reply);
+	}
+	else if (Command == TEXT("unlock_pose"))
+	{
+		Core->SetPoseLock(ActorId, false);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), true);
+		Reply->SetStringField(TEXT("command"), TEXT("unlock_pose"));
+		SendReply(Reply);
+	}
 	else
 	{
 		auto Err = MakeShared<FJsonObject>();
