@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Two-robot face-to-face demo with head yaw/pitch sweep.
 
-The pi_plus_walk MJCF has articulated head_yaw_joint and head_pitch_joint.
-This demo sweeps those joints (NOT the base), so the robot body stays
-upright while the camera looks around.
-
-Both robots are pose-locked at a standing pose.  Robot rp0's head joints
-sweep through yaw/pitch sinuosoids.  Robot rp1 observes.
+Uses the fixed-base pi_plus_stereo_camera_ue model (22 actuators including
+head_yaw_joint_servo and head_pitch_joint_servo).  Pure motor-command
+control via the per-robot TCP port — no admin API, no lock_pose, no
+physics override.  Just like driving a real robot.
 
 The sim must be running with Config/URS_scene.json configured for
-two robots.
+two pi_plus robots.
 
     source /tmp/opencode/walk-venv/bin/activate
     python py_example/ue_head_demo.py \
@@ -20,7 +18,9 @@ two robots.
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import struct
 import sys
 import threading
 import time
@@ -29,79 +29,56 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from walk_pi_plus import PI_PLUS_DEFAULT_DOF_POS_MUJOCO  # noqa: E402
-from urs_tcp import AdminClient, FrameConn, TYPE_CAMERA  # noqa: E402
-
-# 20 leg/arm joints + 2 head joints (yaw, pitch) = 22 total
-DEFAULT_JOINT_QPOS = PI_PLUS_DEFAULT_DOF_POS_MUJOCO.tolist() + [0.0, 0.0]
-
-# Motor command for the 20 actuated joints (head joints have no actuators)
-JOINT_NAMES = [
-    "l_hip_pitch_joint", "l_hip_roll_joint", "l_thigh_joint", "l_calf_joint",
-    "l_ankle_pitch_joint", "l_ankle_roll_joint",
-    "l_shoulder_pitch_joint", "l_shoulder_roll_joint", "l_upper_arm_joint", "l_elbow_joint",
-    "r_hip_pitch_joint", "r_hip_roll_joint", "r_thigh_joint", "r_calf_joint",
-    "r_ankle_pitch_joint", "r_ankle_roll_joint",
-    "r_shoulder_pitch_joint", "r_shoulder_roll_joint", "r_upper_arm_joint", "r_elbow_joint",
-]
-DEFAULT_CMD = {n: float(v) for n, v in zip(JOINT_NAMES, PI_PLUS_DEFAULT_DOF_POS_MUJOCO.tolist())}
-
-RP0_POS = [-1.5, 0.0, 0.39]
-RP1_POS = [1.5, 0.0, 0.39]
-RP0_QUAT = [0.0, 0.0, 0.0, 1.0]
-RP1_QUAT = [0.0, 0.0, 1.0, 0.0]
+from urs_tcp import FrameConn, TYPE_CAMERA, TYPE_JSON  # noqa: E402
 
 
-class ThreadedCameraCapture(threading.Thread):
-    def __init__(self, host: str, port: int, fps: int = 15):
-        super().__init__(daemon=True)
+class RobotConnection:
+    """Per-robot TCP connection: motor commands out, state + camera in."""
+
+    def __init__(self, host: str, port: int):
         self.conn = FrameConn(host, port)
-        self.fps = fps
+        self.actuator_names: list[str] = []
         self.frames: list[np.ndarray] = []
-        self.stop_event = threading.Event()
         self.latest_z: float = 0.0
         self.latest_up: float = 0.0
+        self._stop = threading.Event()
 
-    def run(self):
-        from PIL import Image
-        import io as _io
-        import struct as _struct
-        import json as _json
-        interval = 1.0 / self.fps
-        next_frame = time.monotonic()
-        try:
-            while not self.stop_event.is_set():
-                self.conn._try_read()
-                buf = self.conn._buf
-                while len(buf) >= 5:
-                    flen = _struct.unpack(">I", bytes(buf[:4]))[0]
-                    if len(buf) < 4 + flen:
-                        break
-                    ftype = buf[4]
-                    payload = bytes(buf[5:4+flen])
-                    del buf[:4+flen]
-                    if ftype == TYPE_CAMERA:
-                        now = time.monotonic()
-                        if now >= next_frame:
-                            img = Image.open(_io.BytesIO(payload[6:]))
-                            self.frames.append(np.array(img.convert("RGB")))
-                            next_frame = now + interval
-                    elif ftype == 0x00:
-                        try:
-                            st = _json.loads(payload.decode("utf-8"))
-                            b = st.get("base", {})
-                            self.latest_z = b.get("pos", [0,0,0])[2]
-                            q = b.get("quat", [1,0,0,0])
-                            self.latest_up = 1.0 - 2.0*(q[1]**2 + q[2]**2)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+    def send_command(self, cmd: dict[str, float]):
+        self.conn.send_json(cmd)
+
+    def pump(self):
+        """Read available frames.  Learns actuator names from first state."""
+        self.conn._try_read()
+        buf = self.conn._buf
+        while len(buf) >= 5:
+            flen = struct.unpack(">I", bytes(buf[:4]))[0]
+            if len(buf) < 4 + flen:
+                break
+            ftype = buf[4]
+            payload = bytes(buf[5:4 + flen])
+            del buf[:4 + flen]
+            if ftype == TYPE_JSON:
+                st = json.loads(payload.decode("utf-8"))
+                if not self.actuator_names:
+                    self.actuator_names = list(st.get("actuators", {}).keys())
+                b = st.get("base", {})
+                self.latest_z = b.get("pos", [0, 0, 0])[2]
+                q = b.get("quat", [1, 0, 0, 0])
+                self.latest_up = 1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2)
+            elif ftype == TYPE_CAMERA:
+                from PIL import Image
+                import io as _io
+                img = Image.open(_io.BytesIO(payload[6:]))
+                self.frames.append(np.array(img.convert("RGB")))
 
     def close(self):
-        self.stop_event.set()
-        self.join(timeout=3.0)
+        self._stop.set()
         self.conn.close()
+
+
+def default_command(actuator_names: list[str]) -> dict[str, float]:
+    """All actuators at 0 — neutral pose for fixed-base model."""
+    return {n: 0.0 for n in actuator_names}
 
 
 def save_video(frames: list[np.ndarray], path: Path, fps: int):
@@ -121,78 +98,94 @@ def save_video(frames: list[np.ndarray], path: Path, fps: int):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--admin-port", type=int, default=11000)
     ap.add_argument("--robot0-port", type=int, default=10000)
     ap.add_argument("--robot1-port", type=int, default=10001)
     ap.add_argument("--duration", type=float, default=10.0)
-    ap.add_argument("--pose-hz", type=float, default=20.0)
+    ap.add_argument("--cmd-hz", type=float, default=30.0)
     ap.add_argument("--video-fps", type=int, default=15)
     ap.add_argument("--video0", type=Path, default=Path("py_example/out/head_demo_rp0.mp4"))
     ap.add_argument("--video1", type=Path, default=Path("py_example/out/head_demo_rp1.mp4"))
     args = ap.parse_args()
 
-    admin = AdminClient(args.host, args.admin_port)
-    cmd0 = FrameConn(args.host, args.robot0_port)
-    cmd1 = FrameConn(args.host, args.robot1_port)
+    rp0 = RobotConnection(args.host, args.robot0_port)
+    rp1 = RobotConnection(args.host, args.robot1_port)
 
-    print("[demo] locking both robots at standing pose ...", flush=True)
-    cmd0.send_json(DEFAULT_CMD)
-    cmd1.send_json(DEFAULT_CMD)
-    # Lock body upright (identity rotation), all joints at default
-    admin.lock_pose("robot_rp0", RP0_POS, RP0_QUAT, DEFAULT_JOINT_QPOS)
-    admin.lock_pose("robot_rp1", RP1_POS, RP1_QUAT, DEFAULT_JOINT_QPOS)
-    time.sleep(1.0)
+    # Wait for first state to learn actuator names
+    print("[demo] waiting for state ...", flush=True)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        rp0.pump()
+        rp1.pump()
+        if rp0.actuator_names and rp1.actuator_names:
+            break
+        time.sleep(0.01)
 
-    cam0 = ThreadedCameraCapture(args.host, args.robot0_port, args.video_fps)
-    cam1 = ThreadedCameraCapture(args.host, args.robot1_port, args.video_fps)
-    cam0.start()
-    cam1.start()
-    time.sleep(1.0)
+    if not rp0.actuator_names:
+        print("[demo] ERROR: no state received", flush=True)
+        return 1
 
-    print(f"[demo] sweeping HEAD yaw/pitch for {args.duration:.0f}s ...", flush=True)
-    interval = 1.0 / args.pose_hz
-    deadline = time.monotonic() + args.duration
-    next_pose = time.monotonic()
+    print(f"[demo] {len(rp0.actuator_names)} actuators: {rp0.actuator_names[-4:]}", flush=True)
+
+    # Identify head actuators
+    head_yaw_name = next((n for n in rp0.actuator_names if "head_yaw" in n), None)
+    head_pitch_name = next((n for n in rp0.actuator_names if "head_pitch" in n), None)
+    if not head_yaw_name or not head_pitch_name:
+        print(f"[demo] ERROR: head actuators not found in {rp0.actuator_names}", flush=True)
+        return 1
+    print(f"[demo] head: {head_yaw_name}, {head_pitch_name}", flush=True)
+
+    # Build default commands
+    cmd0_default = default_command(rp0.actuator_names)
+    cmd1_default = default_command(rp1.actuator_names)
+
+    # Warm up: hold neutral pose for 1s
+    print("[demo] warm-up ...", flush=True)
+    warmup_end = time.monotonic() + 1.0
+    while time.monotonic() < warmup_end:
+        rp0.pump(); rp1.pump()
+        rp0.send_command(cmd0_default)
+        rp1.send_command(cmd1_default)
+        time.sleep(0.02)
+
+    # Sweep head yaw/pitch on rp0; rp1 holds still
+    print(f"[demo] sweeping head for {args.duration:.0f}s ...", flush=True)
+    interval = 1.0 / args.cmd_hz
+    t0 = time.monotonic()
+    next_cmd = t0
     step = 0
 
-    while time.monotonic() < deadline:
+    while time.monotonic() - t0 < args.duration:
         now = time.monotonic()
-        if now >= next_pose:
-            t = 1.0 - (deadline - now) / args.duration
+        if now >= next_cmd:
+            rp0.pump(); rp1.pump()
+
+            t = (now - t0) / args.duration
             head_yaw = 0.8 * math.sin(2.0 * math.pi * t)
             head_pitch = 0.4 * math.sin(4.0 * math.pi * t)
 
-            # Update rp0's lock: same body pose, different head joint angles
-            jq = PI_PLUS_DEFAULT_DOF_POS_MUJOCO.tolist() + [head_yaw, head_pitch]
-            cmd0._try_read(); cmd0._buf.clear()
-            cmd1._try_read(); cmd1._buf.clear()
-            cmd0.send_json(DEFAULT_CMD)
-            cmd1.send_json(DEFAULT_CMD)
-            admin.lock_pose("robot_rp0", RP0_POS, RP0_QUAT, jq)
+            cmd = dict(cmd0_default)
+            cmd[head_yaw_name] = head_yaw
+            cmd[head_pitch_name] = head_pitch
+            rp0.send_command(cmd)
+            rp1.send_command(cmd1_default)
 
             step += 1
-            if step % 20 == 0:
-                print(f"  t={t:.1f} head_yaw={math.degrees(head_yaw):+.0f}° "
-                      f"head_pitch={math.degrees(head_pitch):+.0f}° "
-                      f"rp0(z={cam0.latest_z:.2f} up={cam0.latest_up:.2f}) "
-                      f"rp1(z={cam1.latest_z:.2f} up={cam1.latest_up:.2f}) "
-                      f"frames: rp0={len(cam0.frames)} rp1={len(cam1.frames)}", flush=True)
-            next_pose = now + interval
+            if step % 30 == 0:
+                print(f"  t={t:.1f} yaw={math.degrees(head_yaw):+.0f}° "
+                      f"pitch={math.degrees(head_pitch):+.0f}° "
+                      f"rp0(z={rp0.latest_z:.2f} up={rp0.latest_up:.2f}) "
+                      f"rp1(z={rp1.latest_z:.2f} up={rp1.latest_up:.2f}) "
+                      f"frames: {len(rp0.frames)} {len(rp1.frames)}", flush=True)
+            next_cmd = now + interval
         else:
-            time.sleep(min(0.005, max(0, next_pose - now)))
+            # Keep pumping for camera frames between commands
+            rp0.pump(); rp1.pump()
+            time.sleep(0.001)
 
-    print("[demo] stopping ...", flush=True)
-    cam0.close()
-    cam1.close()
-    admin.unlock_pose("robot_rp0")
-    admin.unlock_pose("robot_rp1")
-    cmd0.close()
-    cmd1.close()
-    admin.close()
-
-    print("[demo] saving videos ...", flush=True)
-    save_video(cam0.frames, args.video0, args.video_fps)
-    save_video(cam1.frames, args.video1, args.video_fps)
+    print("[demo] done, saving videos ...", flush=True)
+    rp0.close(); rp1.close()
+    save_video(rp0.frames, args.video0, args.video_fps)
+    save_video(rp1.frames, args.video1, args.video_fps)
     return 0
 
 
