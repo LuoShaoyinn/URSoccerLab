@@ -30,6 +30,12 @@ void FURSRobotTypeRegistry::RegisterDefaultTypes()
 	PiPlus.BlueprintAssetPath = TEXT("/Game/MuJoCoImports/pi_plus_stereo_camera.pi_plus_stereo_camera");
 	PiPlus.DefaultBaseHeightM = 0.3762;
 	Register(PiPlus);
+
+	FURSRobotType PiPlusWalk;
+	PiPlusWalk.Name = TEXT("pi_plus_walk");
+	PiPlusWalk.BlueprintAssetPath = TEXT("/Game/MuJoCoImports/pi_plus_walk.pi_plus_walk");
+	PiPlusWalk.DefaultBaseHeightM = 0.39;
+	Register(PiPlusWalk);
 }
 
 const FURSRobotType* FURSRobotTypeRegistry::Find(const FString& Name) const
