@@ -1,11 +1,11 @@
 {
-	"version": "urs_scene_v1",
-	"robots": [
-		{
-			"actor_id": "robot_rp0",
-			"type": "pi_plus_walk",
-			"translation_m": [-1.0, 0.0, 0.39],
-			"rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
-		}
-	]
+  "version": "urs_scene_v1",
+  "robots": [
+    {
+      "actor_id": "robot_rp0",
+      "type": "pi_plus_walk",
+      "translation_m": [-1.0, 0.0, 0.39],
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+    }
+  ]
 }
