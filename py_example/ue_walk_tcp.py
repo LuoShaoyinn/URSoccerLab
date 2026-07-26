@@ -206,14 +206,7 @@ class TCPWalkingClient:
             self.conn.send_json(cmd)
 
     def run(self, duration: float, policy_hz: float, actor_id: str = "robot_rp0") -> dict:
-        # Reset to standing pose with correct joint angles
-        self.admin.set_pose(actor_id,
-                            translation_m=[-1.0, 0.0, 0.39],
-                            rotation_quat_xyzw=[0, 0, 0, 1],
-                            joint_qpos=self.default_dof.tolist())
-
-        # Flush stale state from the buffer, then wait for fresh state
-        # while continuously sending warm-up commands (no gap allowed).
+        # Wait for first state while sending warm-up commands
         self.latest_state = None
         self.conn._buf.clear()
         deadline = time.monotonic() + 5.0
