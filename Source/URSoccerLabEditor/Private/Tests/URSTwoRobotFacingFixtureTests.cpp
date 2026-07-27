@@ -12,7 +12,6 @@
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MjLevelOps.h"
-#include "Runtime/URSZmqRobotBridgeComponent.h"
 #include "Scene/URSSceneConfig.h"
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
@@ -73,24 +72,12 @@ bool EnsureRobotCameras(UWorld* World, const FString& ActorId, FString& OutError
 
 	TArray<UMjCamera*> Cameras;
 	Robot->GetComponents<UMjCamera>(Cameras);
-	int32 CameraIndex = 0;
 	for (UMjCamera* Camera : Cameras)
 	{
 		if (!Camera)
 		{
 			continue;
 		}
-		Camera->bEnableZmqBroadcast = true;
-		Camera->bEnableShmBroadcast = false;
-		// Stable per-actor port: 5558 + offset based on robot index + camera index.
-		// robot_rp0 uses 5558/5559, robot_rp1 uses 5560/5561.
-		int32 PortOffset = 0;
-		if (ActorId.EndsWith(TEXT("rp1")))
-		{
-			PortOffset = 2;
-		}
-		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + PortOffset + CameraIndex);
-		++CameraIndex;
 		if (Camera->CaptureComponent)
 		{
 			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
@@ -219,31 +206,6 @@ bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
 	if (Manager->NetworkManager)
 	{
 		Manager->NetworkManager->bEnableAllCameras = true;
-	}
-
-	// Fresh bridge with the default one-robot RobotNames; the scene config
-	// delegate will pull in the two-robot list when ApplyConfig fires.
-	UURSZmqRobotBridgeComponent* Bridge = FindObject<UURSZmqRobotBridgeComponent>(Manager, TEXT("URSZmqRobotBridge"));
-	if (!Bridge)
-	{
-		Bridge = NewObject<UURSZmqRobotBridgeComponent>(
-			Manager, UURSZmqRobotBridgeComponent::StaticClass(), TEXT("URSZmqRobotBridge"));
-	}
-	TestNotNull(TEXT("bridge component"), Bridge);
-	if (!Bridge)
-	{
-		return false;
-	}
-	Bridge->CreationMethod = EComponentCreationMethod::Instance;
-	Bridge->CommandBasePort = 10000;
-	Bridge->AdminBasePort = 11000;
-	Bridge->StatePort = 10100;
-	Bridge->MetaPort = 10101;
-	Bridge->StatePublishRateHz = 30.0;
-	if (!Bridge->IsRegistered())
-	{
-		Manager->AddInstanceComponent(Bridge);
-		Bridge->RegisterComponent();
 	}
 
 	// Attach the scene config component pointed at the two-robot file.

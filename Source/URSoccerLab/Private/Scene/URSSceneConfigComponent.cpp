@@ -248,29 +248,6 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		return;
 	}
 
-	// Stable per-actor port assignment: robot_rp0 gets 5558/5559,
-	// robot_rp1 gets 5560/5561, etc. Extract trailing digits from actor_id.
-	int32 RobotIndex = 0;
-	if (ActorId.Len() > 0)
-	{
-		int32 LastDigit = -1;
-		for (int32 i = ActorId.Len() - 1; i >= 0; --i)
-		{
-			if (FChar::IsDigit(ActorId[i]))
-			{
-				LastDigit = i;
-			}
-			else
-			{
-				break;
-			}
-		}
-		if (LastDigit >= 0)
-		{
-			RobotIndex = FCString::Atoi(*ActorId.RightChop(LastDigit));
-		}
-	}
-
 	TArray<UMjCamera*> Cameras;
 	Articulation->GetComponents<UMjCamera>(Cameras);
 	for (int32 CamIdx = 0; CamIdx < Cameras.Num(); ++CamIdx)
@@ -280,9 +257,6 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		{
 			continue;
 		}
-		Camera->bEnableZmqBroadcast = true;
-		Camera->bEnableShmBroadcast = false;
-		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + RobotIndex * 2 + CamIdx);
 		if (Camera->CaptureComponent)
 		{
 			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;

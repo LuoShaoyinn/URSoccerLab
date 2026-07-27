@@ -3,7 +3,6 @@
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
 #include "Runtime/URSRobotProtocol.h"
-#include "Runtime/URSZmqRobotBridgeComponent.h"
 #include "MuJoCo/Components/Actuators/MjActuator.h"
 #include "MuJoCo/Components/Joints/MjJoint.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
@@ -102,13 +101,6 @@ bool UURSRobotCoreComponent::Initialize()
 	if (Owner)
 	{
 		SceneConfigComp = Owner->FindComponentByClass<UURSSceneConfigComponent>();
-	}
-
-	if (UURSZmqRobotBridgeComponent* ZmqBridge = ManagerPtr->FindComponentByClass<UURSZmqRobotBridgeComponent>())
-	{
-		UE_LOG(LogTemp, Log, TEXT("[URS Core] Disabling legacy ZMQ bridge."));
-		ZmqBridge->StopBridge();
-		ZmqBridge->bAutoStart = false;
 	}
 
 	RebuildEndpointCache();
@@ -210,8 +202,6 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 
 		for (UMjCamera* Cam : Cameras)
 		{
-			Cam->bEnableZmqBroadcast = false;
-			Cam->bEnableShmBroadcast = false;
 			if (!Cam->IsStreamingActive())
 			{
 				Cam->SetStreamingEnabled(true);

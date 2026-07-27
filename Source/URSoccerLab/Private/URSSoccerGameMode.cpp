@@ -7,7 +7,6 @@
 #include "Scene/URSRobotTypeRegistry.h"
 #include "Core/URSRobotCoreComponent.h"
 #include "Transport/URSTcpTransportComponent.h"
-#include "Runtime/URSZmqRobotBridgeComponent.h"
 
 AURSSoccerGameMode::AURSSoccerGameMode()
 {
@@ -57,12 +56,6 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	{
 		UE_LOG(LogTemp, Log, TEXT("URSoccerGameMode: spawned %d robot(s) from scene config before BeginPlay."),
 			SceneComp->GetSpawnedRobots().Num());
-	}
-
-	if (UURSZmqRobotBridgeComponent* ZmqBridge = Manager->FindComponentByClass<UURSZmqRobotBridgeComponent>())
-	{
-		ZmqBridge->bAutoStart = false;
-		UE_LOG(LogTemp, Log, TEXT("URSoccerGameMode: disabled legacy ZMQ bridge."));
 	}
 
 	if (!Manager->FindComponentByClass<UURSRobotCoreComponent>())

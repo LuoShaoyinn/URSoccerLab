@@ -24,13 +24,13 @@ At simulator startup:
 4. `ApplyConfig` reads `Config/URS_scene.json`, resolves robot types via
    `FURSRobotTypeRegistry`, and spawns `AMjArticulation` actors via
    `World->SpawnActor` + `LoadClass`.
-5. Each spawned robot configures its own cameras (ZMQ endpoints,
-   resolution, FOV) and hides imported field geoms.
+5. Each spawned robot configures its own cameras (resolution, FOV,
+   ray tracing) and hides imported field geoms.
 6. `World->BeginPlay` fires. `AAMjManager::BeginPlay` compiles the MuJoCo
    model — the dynamically-spawned robots are discovered via
    `TActorIterator<AMjArticulation>` and enter `mjModel`.
-7. `UURSZmqRobotBridgeComponent::BeginPlay` starts the bridge: binds
-   per-robot motor PULL + admin REP sockets, state PUB, metadata PUB.
+7. `UURSTcpTransportComponent` (auto-created by `AURSSoccerGameMode`)
+   starts TCP listeners for robot commands, state, camera, and admin RPC.
 
 The key ordering guarantee: **robots exist in the world before
 `AAMjManager::BeginPlay` compiles**, because `InitGame` runs before
@@ -182,8 +182,8 @@ const TSet<FString>& GetKnownActorIds() const;
 ### Delegate
 
 ```cpp
-// Fires after ApplyConfig completes successfully. The ZMQ bridge listens
-// to this to pull RobotNames and rebind motor + admin sockets.
+// Fires after ApplyConfig completes successfully. The TCP transport
+// listens to this to rebuild robot listeners for the new robot list.
 FOnSceneConfigApplied OnSceneConfigApplied;
 ```
 
@@ -200,7 +200,7 @@ FOnSceneConfigApplied OnSceneConfigApplied;
    - `LoadClass<AActor>(BlueprintAssetPath + "_C")`.
    - `World->SpawnActor<AMjArticulation>` with MJ→UE converted transform.
    - Set `ActorId`, rename actor, set label.
-   - `ConfigureRobotCameras` — ZMQ endpoints, resolution, FOV, ray tracing.
+   - `ConfigureRobotCameras` — resolution, FOV, ray tracing.
    - `HideImportedFieldGeoms` — hide `floor`/`vision_floor`/`vision_marker` geoms.
    - Stash initial pose for admin `reset`.
 4. Broadcast `OnSceneConfigApplied`.

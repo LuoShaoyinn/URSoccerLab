@@ -14,7 +14,6 @@
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MjLevelOps.h"
-#include "Runtime/URSZmqRobotBridgeComponent.h"
 #include "Scene/URSSceneConfigComponent.h"
 #include "Transport/NetworkManager.h"
 #include "UObject/SavePackage.h"
@@ -70,7 +69,7 @@ bool SaveImportedBlueprint(const FString& BlueprintShortName, FString& OutError)
 	return SavePackageForObject(Blueprint, OutError);
 }
 
-bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
+bool SpawnManagerWithSceneConfig(UWorld* World, FString& OutError)
 {
 	if (!World)
 	{
@@ -106,32 +105,6 @@ bool SpawnManagerWithBridge(UWorld* World, FString& OutError)
 		Manager->NetworkManager->bEnableAllCameras = true;
 	}
 
-	UURSZmqRobotBridgeComponent* Bridge = FindObject<UURSZmqRobotBridgeComponent>(Manager, TEXT("URSZmqRobotBridge"));
-	if (!Bridge)
-	{
-		Bridge = NewObject<UURSZmqRobotBridgeComponent>(
-			Manager, UURSZmqRobotBridgeComponent::StaticClass(), TEXT("URSZmqRobotBridge"));
-	}
-	if (!Bridge)
-	{
-		OutError = TEXT("failed to create UURSZmqRobotBridgeComponent");
-		return false;
-	}
-
-	Bridge->CreationMethod = EComponentCreationMethod::Instance;
-	Bridge->RobotNames = {VisionSmokeRobotId};
-	Bridge->CommandBasePort = 10000;
-	Bridge->StatePort = 10100;
-	Bridge->MetaPort = 10101;
-	Bridge->StatePublishRateHz = 30.0;
-	if (!Bridge->IsRegistered())
-	{
-		Manager->AddInstanceComponent(Bridge);
-		Bridge->RegisterComponent();
-	}
-
-	// Attach the scene config component so AURSSoccerGameMode::InitGame can
-	// call ApplyConfig and spawn robots before URLab compiles.
 	UURSSceneConfigComponent* SceneComp = FindObject<UURSSceneConfigComponent>(Manager, TEXT("URSSceneConfig"));
 	if (!SceneComp)
 	{
@@ -173,70 +146,6 @@ void DestroyExistingVisionSmokeRobot(UWorld* World)
 		Actor->Rename(*StaleName.ToString(), Actor->GetOuter(), REN_DontCreateRedirectors | REN_NonTransactional);
 		World->DestroyActor(Actor);
 	}
-}
-
-bool ConfigureRobotCameras(UWorld* World, FString& OutError)
-{
-	if (!World)
-	{
-		OutError = TEXT("editor world unavailable");
-		return false;
-	}
-
-	AMjArticulation* Robot = nullptr;
-	for (TActorIterator<AMjArticulation> It(World); It; ++It)
-	{
-		if (It->ActorId == VisionSmokeRobotId)
-		{
-			Robot = *It;
-			break;
-		}
-	}
-
-	if (!Robot)
-	{
-		OutError = TEXT("spawned robot_rp0 articulation not found");
-		return false;
-	}
-
-	TArray<UMjCamera*> Cameras;
-	Robot->GetComponents<UMjCamera>(Cameras);
-	if (Cameras.IsEmpty())
-	{
-		OutError = TEXT("spawned robot_rp0 has no UMjCamera components");
-		return false;
-	}
-
-	for (int32 Index = 0; Index < Cameras.Num(); ++Index)
-	{
-		UMjCamera* Camera = Cameras[Index];
-		if (!Camera)
-		{
-			continue;
-		}
-
-		Camera->bEnableZmqBroadcast = true;
-		Camera->bEnableShmBroadcast = false;
-		Camera->ZmqEndpoint = FString::Printf(TEXT("tcp://0.0.0.0:%d"), 5558 + Index);
-		if (Camera->CaptureComponent)
-		{
-			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
-		}
-		if (Camera->resolution.Num() < 2)
-		{
-			Camera->bOverride_resolution = true;
-			Camera->resolution = {640, 480};
-		}
-		if (Camera->fovy <= 0.0f)
-		{
-			Camera->bOverride_fovy = true;
-			Camera->fovy = 90.0f;
-		}
-		Camera->Modify();
-	}
-
-	Robot->MarkPackageDirty();
-	return true;
 }
 
 bool EnsureRobotActorName(UWorld* World, FString& OutError)
@@ -372,7 +281,7 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 	DestroyExistingVisionSmokeRobot(World);
 
 	FString SetupError;
-	if (!SpawnManagerWithBridge(World, SetupError))
+	if (!SpawnManagerWithSceneConfig(World, SetupError))
 	{
 		AddError(SetupError);
 		return false;

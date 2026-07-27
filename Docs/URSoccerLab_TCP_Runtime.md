@@ -2,7 +2,7 @@
 
 ## Implemented
 
-- **Modular TCP transport**: `UURSTcpTransportComponent` (auto-created by `AURSSoccerGameMode`) owns per-robot listeners and one global admin listener. The legacy `UURSZmqRobotBridgeComponent` is disabled at startup.
+- **Modular TCP transport**: `UURSTcpTransportComponent` (auto-created by `AURSSoccerGameMode`) owns per-robot listeners and one global admin listener.
 - **Per-robot command sockets**: one TCP listener per active robot. Default ports: `robot_rp0` = 10000, `robot_rp1` = 10001, etc.
 - **Admin RPC socket**: one TCP listener on port 11000 (global, shared by all robots).
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
