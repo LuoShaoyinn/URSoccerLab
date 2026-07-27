@@ -48,6 +48,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1", ClampMax = "100"))
 	int32 JpegQuality = 85;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "65536", ClampMax = "67108864"))
+	int32 MaxSendQueueBytes = 4 * 1024 * 1024;
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -57,6 +60,7 @@ private:
 	{
 		FSocket* Socket = nullptr;
 		TArray<uint8> ReadBuffer;
+		TArray<uint8> WriteBuffer;
 	};
 
 	struct FRobotListener
@@ -81,10 +85,11 @@ private:
 
 	void AcceptNewConnections(FRobotListener& Listener);
 	void ReadFromClients(FRobotListener& Listener);
-	void ProcessReadBuffer(FRobotListener& Listener, int32 ClientIdx);
+	void FlushAllWrites();
 
 	void SendToClients(FRobotListener& Listener, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize);
-	bool SendFrame(FSocket* Sock, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize);
+	void EnqueueFrame(FTcpClient& Client, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize);
+	bool FlushClientWrites(FTcpClient& Client);
 
 	void ProcessCommand(const FString& ActorId, const FString& JsonStr);
 	void ProcessAdminRequest(FSocket* Sock, const FString& JsonStr);

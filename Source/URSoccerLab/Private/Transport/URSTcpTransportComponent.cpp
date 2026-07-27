@@ -162,6 +162,7 @@ void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 	TickStatePublish();
 	TickCameraPublish();
+	FlushAllWrites();
 }
 
 void UURSTcpTransportComponent::AcceptNewConnections(FRobotListener& Listener)
@@ -281,7 +282,7 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 	TSharedPtr<FJsonObject> Root;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
 
-	auto SendReply = [Sock, this](TSharedPtr<FJsonObject> ReplyObj)
+	auto SendReply = [Sock](TSharedPtr<FJsonObject> ReplyObj)
 	{
 		FString ReplyStr;
 		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
@@ -350,18 +351,67 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 		const TArray<TSharedPtr<FJsonValue>>* TArr;
 		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr && TArr->Num() == 3)
 		{
-			Trans = FVector((*TArr)[0]->AsNumber(), (*TArr)[1]->AsNumber(), (*TArr)[2]->AsNumber());
+			double Tx = (*TArr)[0]->AsNumber();
+			double Ty = (*TArr)[1]->AsNumber();
+			double Tz = (*TArr)[2]->AsNumber();
+			if (!FMath::IsFinite(Tx) || !FMath::IsFinite(Ty) || !FMath::IsFinite(Tz))
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
+				Err->SetStringField(TEXT("message"), TEXT("translation_m contains NaN or infinity"));
+				SendReply(Err);
+				return;
+			}
+			Trans = FVector(Tx, Ty, Tz);
 		}
 		const TArray<TSharedPtr<FJsonValue>>* RArr;
 		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr && RArr->Num() == 4)
 		{
-			Rot = FQuat((*RArr)[0]->AsNumber(), (*RArr)[1]->AsNumber(), (*RArr)[2]->AsNumber(), (*RArr)[3]->AsNumber());
+			double Rx = (*RArr)[0]->AsNumber();
+			double Ry = (*RArr)[1]->AsNumber();
+			double Rz = (*RArr)[2]->AsNumber();
+			double Rw = (*RArr)[3]->AsNumber();
+			if (!FMath::IsFinite(Rx) || !FMath::IsFinite(Ry) || !FMath::IsFinite(Rz) || !FMath::IsFinite(Rw))
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
+				Err->SetStringField(TEXT("message"), TEXT("rotation_quat_xyzw contains NaN or infinity"));
+				SendReply(Err);
+				return;
+			}
+			const double QuatLenSq = Rx * Rx + Ry * Ry + Rz * Rz + Rw * Rw;
+			if (QuatLenSq < KINDA_SMALL_NUMBER)
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
+				Err->SetStringField(TEXT("message"), TEXT("rotation_quat_xyzw is zero-length"));
+				SendReply(Err);
+				return;
+			}
+			const double InvLen = 1.0 / FMath::Sqrt(QuatLenSq);
+			Rot = FQuat(Rx * InvLen, Ry * InvLen, Rz * InvLen, Rw * InvLen);
 		}
 		const TArray<TSharedPtr<FJsonValue>>* JArr;
 		if (Args->TryGetArrayField(TEXT("joint_qpos"), JArr) && JArr)
 		{
 			TArray<float> Qpos;
-			for (const auto& V : *JArr) Qpos.Add(static_cast<float>(V->AsNumber()));
+			for (const auto& V : *JArr)
+			{
+				double Val = V->AsNumber();
+				if (!FMath::IsFinite(Val))
+				{
+					auto Err = MakeShared<FJsonObject>();
+					Err->SetBoolField(TEXT("ok"), false);
+					Err->SetStringField(TEXT("error"), TEXT("invalid_joint_qpos"));
+					Err->SetStringField(TEXT("message"), TEXT("joint_qpos contains NaN or infinity"));
+					SendReply(Err);
+					return;
+				}
+				Qpos.Add(static_cast<float>(Val));
+			}
 			JointQpos = MoveTemp(Qpos);
 		}
 
@@ -458,15 +508,59 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 		TOptional<TArray<float>> JointQpos;
 		const TArray<TSharedPtr<FJsonValue>>* TArr;
 		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr && TArr->Num() == 3)
-			Trans = FVector((*TArr)[0]->AsNumber(), (*TArr)[1]->AsNumber(), (*TArr)[2]->AsNumber());
+		{
+			double Tx = (*TArr)[0]->AsNumber(), Ty = (*TArr)[1]->AsNumber(), Tz = (*TArr)[2]->AsNumber();
+			if (!FMath::IsFinite(Tx) || !FMath::IsFinite(Ty) || !FMath::IsFinite(Tz))
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
+				SendReply(Err);
+				return;
+			}
+			Trans = FVector(Tx, Ty, Tz);
+		}
 		const TArray<TSharedPtr<FJsonValue>>* RArr;
 		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr && RArr->Num() == 4)
-			Rot = FQuat((*RArr)[0]->AsNumber(), (*RArr)[1]->AsNumber(), (*RArr)[2]->AsNumber(), (*RArr)[3]->AsNumber());
+		{
+			double Rx = (*RArr)[0]->AsNumber(), Ry = (*RArr)[1]->AsNumber(), Rz = (*RArr)[2]->AsNumber(), Rw = (*RArr)[3]->AsNumber();
+			if (!FMath::IsFinite(Rx) || !FMath::IsFinite(Ry) || !FMath::IsFinite(Rz) || !FMath::IsFinite(Rw))
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
+				SendReply(Err);
+				return;
+			}
+			const double LenSq = Rx * Rx + Ry * Ry + Rz * Rz + Rw * Rw;
+			if (LenSq < KINDA_SMALL_NUMBER)
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
+				SendReply(Err);
+				return;
+			}
+			const double InvLen = 1.0 / FMath::Sqrt(LenSq);
+			Rot = FQuat(Rx * InvLen, Ry * InvLen, Rz * InvLen, Rw * InvLen);
+		}
 		const TArray<TSharedPtr<FJsonValue>>* JArr;
 		if (Args->TryGetArrayField(TEXT("joint_qpos"), JArr) && JArr)
 		{
 			TArray<float> Qpos;
-			for (const auto& V : *JArr) Qpos.Add(static_cast<float>(V->AsNumber()));
+			for (const auto& V : *JArr)
+			{
+				double Val = V->AsNumber();
+				if (!FMath::IsFinite(Val))
+				{
+					auto Err = MakeShared<FJsonObject>();
+					Err->SetBoolField(TEXT("ok"), false);
+					Err->SetStringField(TEXT("error"), TEXT("invalid_joint_qpos"));
+					SendReply(Err);
+					return;
+				}
+				Qpos.Add(static_cast<float>(Val));
+			}
 			JointQpos = MoveTemp(Qpos);
 		}
 		Core->SetPoseLock(ActorId, true,
@@ -517,16 +611,91 @@ void UURSTcpTransportComponent::SendToClients(FRobotListener& Listener, uint8 Fr
 {
 	for (int32 Idx = Listener.Clients.Num() - 1; Idx >= 0; --Idx)
 	{
-		FSocket* Sock = Listener.Clients[Idx].Socket;
-		if (!Sock)
+		FTcpClient& Client = Listener.Clients[Idx];
+		if (!Client.Socket)
 		{
 			Listener.Clients.RemoveAt(Idx);
 			continue;
 		}
-		if (!SendFrame(Sock, FrameType, PayloadData, PayloadSize))
+		EnqueueFrame(Client, FrameType, PayloadData, PayloadSize);
+		if (Client.WriteBuffer.Num() > MaxSendQueueBytes)
 		{
-			CloseSocket(Sock);
+			CloseSocket(Client.Socket);
 			Listener.Clients.RemoveAt(Idx);
+		}
+	}
+}
+
+void UURSTcpTransportComponent::EnqueueFrame(FTcpClient& Client, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize)
+{
+	const uint32 FrameLen = 1 + PayloadSize;
+	const int32 OldNum = Client.WriteBuffer.Num();
+	Client.WriteBuffer.AddUninitialized(5 + PayloadSize);
+	uint8* Dest = Client.WriteBuffer.GetData() + OldNum;
+	Dest[0] = (FrameLen >> 24) & 0xFF;
+	Dest[1] = (FrameLen >> 16) & 0xFF;
+	Dest[2] = (FrameLen >> 8) & 0xFF;
+	Dest[3] = FrameLen & 0xFF;
+	Dest[4] = FrameType;
+	if (PayloadSize > 0)
+	{
+		FMemory::Memcpy(Dest + 5, PayloadData, PayloadSize);
+	}
+}
+
+bool UURSTcpTransportComponent::FlushClientWrites(FTcpClient& Client)
+{
+	if (!Client.Socket || Client.WriteBuffer.Num() == 0) return true;
+
+	int32 TotalSent = 0;
+	while (TotalSent < Client.WriteBuffer.Num())
+	{
+		int32 BytesSent = 0;
+		const int32 Remaining = Client.WriteBuffer.Num() - TotalSent;
+		const bool bOk = Client.Socket->Send(
+			Client.WriteBuffer.GetData() + TotalSent, Remaining, BytesSent);
+
+		if (!bOk || BytesSent <= 0)
+		{
+			const ESocketConnectionState State = Client.Socket->GetConnectionState();
+			if (State == SCS_ConnectionError)
+			{
+				return false;
+			}
+			break;
+		}
+		TotalSent += BytesSent;
+	}
+
+	if (TotalSent > 0)
+	{
+		Client.WriteBuffer.RemoveAt(0, TotalSent);
+	}
+	return true;
+}
+
+void UURSTcpTransportComponent::FlushAllWrites()
+{
+	for (FRobotListener& L : RobotListeners)
+	{
+		for (int32 Idx = L.Clients.Num() - 1; Idx >= 0; --Idx)
+		{
+			FTcpClient& Client = L.Clients[Idx];
+			if (!FlushClientWrites(Client))
+			{
+				CloseSocket(Client.Socket);
+				L.Clients.RemoveAt(Idx);
+			}
+		}
+	}
+
+	for (int32 Idx = AdminListener.Clients.Num() - 1; Idx >= 0; --Idx)
+	{
+		FTcpClient& Client = AdminListener.Clients[Idx];
+		if (!FlushClientWrites(Client))
+		{
+			CloseSocket(Client.Socket);
+			AdminListener.Clients.RemoveAt(Idx);
 		}
 	}
 }
@@ -553,16 +722,18 @@ void UURSTcpTransportComponent::TickCameraPublish()
 		FURSRobotState State;
 		if (!Core->GetRobotState(L.ActorId, State)) continue;
 
-		// Pack ALL camera frames into one message (synchronized snapshot)
 		TArray<uint8> Packed;
 		const uint8 Codec = (CameraCompress == TEXT("jpeg")) ? URSProtocol::CameraCodec_JPEG : URSProtocol::CameraCodec_Raw;
 		Packed.Add(Codec);
 		Packed.Add(static_cast<uint8>(State.Cameras.Num()));
 
+		bool bAnyNewFrame = false;
+
 		for (const FURSCameraInfo& CamInfo : State.Cameras)
 		{
 			TArray<FColor> Pixels;
 			bool bHasFrame = Core->ConsumeCameraFrame(L.ActorId, CamInfo.Name, Pixels) && Pixels.Num() > 0;
+			if (bHasFrame) bAnyNewFrame = true;
 
 			TArray<uint8> Encoded;
 			if (bHasFrame && Codec == URSProtocol::CameraCodec_JPEG)
@@ -580,23 +751,22 @@ void UURSTcpTransportComponent::TickCameraPublish()
 				Encoded.Append(reinterpret_cast<const uint8*>(Pixels.GetData()), Pixels.Num() * 4);
 			}
 
-			// Width LE
 			Packed.Add(static_cast<uint8>(CamInfo.Width & 0xFF));
 			Packed.Add(static_cast<uint8>((CamInfo.Width >> 8) & 0xFF));
-			// Height LE
 			Packed.Add(static_cast<uint8>(CamInfo.Height & 0xFF));
 			Packed.Add(static_cast<uint8>((CamInfo.Height >> 8) & 0xFF));
-			// Data length LE (uint32)
 			int32 Len = Encoded.Num();
 			Packed.Add(static_cast<uint8>(Len & 0xFF));
 			Packed.Add(static_cast<uint8>((Len >> 8) & 0xFF));
 			Packed.Add(static_cast<uint8>((Len >> 16) & 0xFF));
 			Packed.Add(static_cast<uint8>((Len >> 24) & 0xFF));
-			// Pixel data
 			Packed.Append(Encoded);
 		}
 
-		SendToClients(L, URSProtocol::Type_Camera, Packed.GetData(), Packed.Num());
+		if (bAnyNewFrame)
+		{
+			SendToClients(L, URSProtocol::Type_Camera, Packed.GetData(), Packed.Num());
+		}
 	}
 }
 
@@ -669,33 +839,5 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
 	FJsonSerializer::Serialize(Root.ToSharedRef(), W);
 	return Json;
-}
-
-bool UURSTcpTransportComponent::SendFrame(FSocket* Sock, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize)
-{
-	if (!Sock) return false;
-
-	const uint32 FrameLen = 1 + PayloadSize;
-	uint8 Header[5];
-	Header[0] = (FrameLen >> 24) & 0xFF;
-	Header[1] = (FrameLen >> 16) & 0xFF;
-	Header[2] = (FrameLen >> 8) & 0xFF;
-	Header[3] = FrameLen & 0xFF;
-	Header[4] = FrameType;
-
-	TArray<uint8> Frame;
-	Frame.Append(Header, 5);
-	if (PayloadSize > 0)
-	{
-		Frame.Append(PayloadData, PayloadSize);
-	}
-
-	int32 BytesSent = 0;
-	const bool bOk = Sock->Send(Frame.GetData(), Frame.Num(), BytesSent);
-	if (!bOk || BytesSent < Frame.Num())
-	{
-		return false;
-	}
-	return true;
 }
 

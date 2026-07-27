@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal URSoccerLab ZMQ smoke client.
+"""DEPRECATED: Minimal URSoccerLab ZMQ smoke client.
 
+The runtime now uses TCP (see Docs/URSoccerLab_TCP_Runtime.md and
+py_example/urs_tcp.py). This script is retained for historical reference
+but will not work against the current simulator build.
+
+Original description:
 Run the simulator with UURSZmqRobotBridgeComponent active, then:
 
     python Tools/zmq_smoke_client.py --robot robot_rp0

@@ -127,7 +127,7 @@ def main() -> int:
     sim_ready, log_thread = drain_process_log(
         sim,
         sim_log_path,
-        ("URSoccerLab admin RPC ready",),
+        ("[URS TCP] Admin listening",),
     )
 
     try:

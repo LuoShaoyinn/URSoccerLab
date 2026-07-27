@@ -44,6 +44,12 @@ bool UURSSceneConfigComponent::ApplyConfig(FString& OutError)
 	{
 		return false;
 	}
+	return ApplyConfig(ActiveConfig, OutError);
+}
+
+bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& Config, FString& OutError)
+{
+	ActiveConfig = Config;
 
 	AActor* Owner = GetOwner();
 	UWorld* World = Owner ? Owner->GetWorld() : nullptr;

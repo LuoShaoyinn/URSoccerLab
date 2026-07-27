@@ -50,6 +50,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "URSoccerLab|Scene")
 	bool ApplyConfig(FString& OutError);
 
+	bool ApplyConfig(const URSoccerLab::FURSSceneConfig& Config, FString& OutError);
+
 	UFUNCTION(BlueprintPure, Category = "URSoccerLab|Scene")
 	bool GetInitialPose(const FString& ActorId, FVector& OutTranslationMeters, FQuat& OutRotationXyzw) const;
 

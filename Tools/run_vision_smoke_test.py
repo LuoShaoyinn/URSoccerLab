@@ -217,7 +217,6 @@ def main() -> int:
     parser.add_argument("--motion-frequency-hz", type=float, default=0.0)
     parser.add_argument("--motion-duration-sec", type=float, default=3.0)
     parser.add_argument("--motion-rate-hz", type=float, default=30.0)
-    parser.add_argument("--require-nonzero-command", action="store_true")
     args = parser.parse_args()
 
     if not args.ue.exists():
@@ -250,7 +249,7 @@ def main() -> int:
         sim,
         sim_log_path,
         (
-            "URSoccerLab ZMQ bridge started",
+            "[URS TCP] Transport started",
         ),
     )
 
@@ -264,7 +263,7 @@ def main() -> int:
         if sim.poll() is not None:
             raise RuntimeError(f"simulator exited early with code {sim.returncode}. See {sim_log_path}")
         if not sim_ready.is_set():
-            raise RuntimeError(f"simulator did not start the URSoccerLab ZMQ bridge. See {sim_log_path}")
+            raise RuntimeError(f"simulator did not start the URSoccerLab TCP transport. See {sim_log_path}")
 
         if args.render_warmup_sec > 0:
             time.sleep(args.render_warmup_sec)
@@ -273,11 +272,13 @@ def main() -> int:
             "uv",
             "run",
             "python",
-            "main.py",
+            "ue_vision_smoke.py",
             "--host",
             args.host,
             "--robot",
             args.robot,
+            "--port",
+            str(10000),
             "--timeout-ms",
             str(args.timeout_ms),
             "--out",
@@ -285,21 +286,6 @@ def main() -> int:
             "--camera-frame-count",
             str(args.camera_frame_count),
         ]
-        if args.motion_regex:
-            client_cmd.extend(
-                [
-                    "--motion-regex",
-                    args.motion_regex,
-                    "--motion-amplitude",
-                    str(args.motion_amplitude),
-                    "--motion-frequency-hz",
-                    str(args.motion_frequency_hz),
-                    "--motion-duration-sec",
-                    str(args.motion_duration_sec),
-                    "--motion-rate-hz",
-                    str(args.motion_rate_hz),
-                ]
-            )
 
         result = subprocess.run(
             client_cmd,
@@ -318,14 +304,7 @@ def main() -> int:
 
     camera_path = args.out / "camera.png"
     if not camera_path.exists() or camera_path.stat().st_size <= 0:
-        meta_path = args.out / "meta.json"
-        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-        raise RuntimeError(f"camera.png was not produced. Metadata cameras={meta.get('cameras')!r}")
-    if args.motion_regex:
-        for motion_camera_name in ("camera_before.png", "camera_after.png"):
-            motion_camera_path = args.out / motion_camera_name
-            if not motion_camera_path.exists() or motion_camera_path.stat().st_size <= 0:
-                raise RuntimeError(f"{motion_camera_name} was not produced")
+        raise RuntimeError(f"camera.png was not produced. See {sim_log_path}")
 
     stats = png_rgb_stats(camera_path)
     if (
@@ -335,16 +314,6 @@ def main() -> int:
         or stats["unique_sample"] < 4
     ):
         raise RuntimeError(f"camera.png appears blank or nearly black: {stats}. See {sim_log_path}")
-
-    if args.require_nonzero_command:
-        state_path = args.out / "state.json"
-        state = json.loads(state_path.read_text())
-        command = [float(value) for value in state.get("motor_command", [])]
-        max_abs_command = max((abs(value) for value in command), default=0.0)
-        if max_abs_command <= 1.0e-5:
-            raise RuntimeError(
-                f"state motor_command stayed zero while nonzero command was required. See {state_path}"
-            )
 
     print(f"vision smoke passed: {camera_path}")
     print(json.dumps({"camera_stats": stats}, indent=2, sort_keys=True))

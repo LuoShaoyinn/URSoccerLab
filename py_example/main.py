@@ -1,3 +1,8 @@
+"""DEPRECATED: ZMQ-based robot client.
+
+The runtime now uses TCP (see Docs/URSoccerLab_TCP_Runtime.md and
+urs_tcp.py). This module is retained for historical reference.
+"""
 from __future__ import annotations
 
 import argparse

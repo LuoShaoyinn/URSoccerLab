@@ -80,7 +80,7 @@ bool FURSSceneConfigApplyTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("default config validates"), Validation.bOk);
 
 	FString ApplyError;
-	const bool bApplied = SceneComp->ApplyConfig(ApplyError);
+	const bool bApplied = SceneComp->ApplyConfig(DefaultConfig, ApplyError);
 	TestTrue(TEXT("ApplyConfig succeeded"), bApplied);
 	if (!bApplied)
 	{

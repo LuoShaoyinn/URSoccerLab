@@ -244,8 +244,11 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 
 	if (Endpoints.Num() == 0)
 	{
+		TSet<AMjArticulation*> Seen;
 		for (auto& Pair : ArticulationsByName)
 		{
+			if (!Pair.Value || Seen.Contains(Pair.Value)) continue;
+			Seen.Add(Pair.Value);
 			BuildEndpoint(Pair.Value, Pair.Value->ActorId.IsEmpty() ? Pair.Value->GetName() : Pair.Value->ActorId);
 		}
 	}
@@ -515,6 +518,8 @@ void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FS
 	if (!Ep) return;
 
 	Ep->LastNamedValues = NamedValues;
+
+	bool bChangedAny = false;
 	for (const auto& Pair : NamedValues)
 	{
 		if (const int32* Idx = Ep->ActuatorNameToIndex.Find(Pair.Key))
@@ -522,12 +527,16 @@ void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FS
 			if (FMath::IsFinite(Pair.Value))
 			{
 				Ep->LatestCommand[*Idx] = Pair.Value;
+				bChangedAny = true;
 			}
 		}
 	}
 
-	Ep->LastCommandTimeSec = FPlatformTime::Seconds();
-	Ep->bHasCommand = true;
+	if (bChangedAny)
+	{
+		Ep->LastCommandTimeSec = FPlatformTime::Seconds();
+		Ep->bHasCommand = true;
+	}
 }
 
 bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
@@ -676,8 +685,40 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 
 	FVector AppliedTrans = Translation ? *Translation : FVector::ZeroVector;
 	FQuat AppliedRot = Rotation ? *Rotation : FQuat::Identity;
+
+	if (!FMath::IsFinite(AppliedTrans.X) || !FMath::IsFinite(AppliedTrans.Y) || !FMath::IsFinite(AppliedTrans.Z))
+	{
+		Result.Error = TEXT("invalid_translation");
+		Result.Message = TEXT("translation contains NaN or infinity");
+		return Result;
+	}
+
+	const double QuatLenSq = AppliedRot.X * AppliedRot.X + AppliedRot.Y * AppliedRot.Y
+		+ AppliedRot.Z * AppliedRot.Z + AppliedRot.W * AppliedRot.W;
+	if (QuatLenSq < KINDA_SMALL_NUMBER)
+	{
+		AppliedRot = FQuat::Identity;
+	}
+	else if (FMath::Abs(QuatLenSq - 1.0) > KINDA_SMALL_NUMBER)
+	{
+		AppliedRot.Normalize();
+	}
+
 	TArray<float> AppliedJoint;
 	AppliedJoint.Reserve(Layout.NonRootQposDim);
+
+	if (JointQpos)
+	{
+		for (int32 i = 0; i < JointQpos->Num(); ++i)
+		{
+			if (!FMath::IsFinite((*JointQpos)[i]))
+			{
+				Result.Error = TEXT("invalid_joint_qpos");
+				Result.Message = FString::Printf(TEXT("joint_qpos[%d] is NaN or infinity"), i);
+				return Result;
+			}
+		}
+	}
 
 	{
 		FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
