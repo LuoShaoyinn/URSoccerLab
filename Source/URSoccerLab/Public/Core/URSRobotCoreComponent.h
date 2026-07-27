@@ -140,7 +140,7 @@ public:
 		TArray<float> JointQpos;
 	};
 
-	void SetPoseLock(const FString& ActorId, bool bLock,
+	FURSPoseResult SetPoseLock(const FString& ActorId, bool bLock,
 		const FVector* Trans = nullptr, const FQuat* Rot = nullptr,
 		const TArray<float>* JointQpos = nullptr);
 

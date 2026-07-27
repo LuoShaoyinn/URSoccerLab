@@ -92,7 +92,7 @@ private:
 	bool FlushClientWrites(FTcpClient& Client);
 
 	void ProcessCommand(const FString& ActorId, const FString& JsonStr);
-	void ProcessAdminRequest(FSocket* Sock, const FString& JsonStr);
+	void ProcessAdminRequest(FTcpClient& Client, const FString& JsonStr);
 
 	void TickStatePublish();
 	void TickCameraPublish();

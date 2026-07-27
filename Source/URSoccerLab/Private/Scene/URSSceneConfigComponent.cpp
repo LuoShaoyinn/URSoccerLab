@@ -49,6 +49,13 @@ bool UURSSceneConfigComponent::ApplyConfig(FString& OutError)
 
 bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& Config, FString& OutError)
 {
+	const URSoccerLab::FURSSceneConfigValidationResult Validation = URSoccerLab::FURSSceneConfigIo::Validate(Config);
+	if (!Validation.bOk)
+	{
+		OutError = Validation.Errors.Num() > 0 ? Validation.Errors[0] : TEXT("scene config invalid");
+		return false;
+	}
+
 	ActiveConfig = Config;
 
 	AActor* Owner = GetOwner();
@@ -85,13 +92,25 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		}
 	}
 
+	TArray<FString> SpawnedInThisCall;
 	for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
 	{
 		if (!SpawnOneRobot(Manager, Spawn, OutError))
 		{
+			// Rollback: destroy everything we spawned in this call so the
+			// scene is not left in a partial state.
+			UE_LOG(LogTemp, Error, TEXT("URSoccerLab scene config: spawn failed for '%s', rolling back %d robot(s)."),
+				*Spawn.ActorId, SpawnedInThisCall.Num());
+			DestroyActorsWithIds(TSet<FString>(SpawnedInThisCall));
+			for (const FString& Id : SpawnedInThisCall)
+			{
+				KnownActorIds.Remove(Id);
+				SpawnedRobots.Remove(Id);
+			}
 			return false;
 		}
 		KnownActorIds.Add(Spawn.ActorId);
+		SpawnedInThisCall.Add(Spawn.ActorId);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s)."), SpawnedRobots.Num());

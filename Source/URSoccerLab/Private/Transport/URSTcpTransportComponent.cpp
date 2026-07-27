@@ -239,7 +239,7 @@ void UURSTcpTransportComponent::ReadFromClients(FRobotListener& Listener)
 				FString JsonStr(Converter.Length(), Converter.Get());
 				if (Listener.ActorId == TEXT("admin"))
 				{
-					ProcessAdminRequest(Sock, JsonStr);
+					ProcessAdminRequest(Client, JsonStr);
 				}
 				else
 				{
@@ -277,12 +277,12 @@ void UURSTcpTransportComponent::ProcessCommand(const FString& ActorId, const FSt
 	Core->SubmitCommand(ActorId, NamedValues);
 }
 
-void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString& JsonStr)
+void UURSTcpTransportComponent::ProcessAdminRequest(FTcpClient& Client, const FString& JsonStr)
 {
 	TSharedPtr<FJsonObject> Root;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
 
-	auto SendReply = [Sock](TSharedPtr<FJsonObject> ReplyObj)
+	auto SendReply = [&Client, this](TSharedPtr<FJsonObject> ReplyObj)
 	{
 		FString ReplyStr;
 		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
@@ -290,18 +290,8 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 		FJsonSerializer::Serialize(ReplyObj.ToSharedRef(), W);
 
 		FTCHARToUTF8 Utf8(*ReplyStr);
-		TArray<uint8> Frame;
-		const uint32 TotalLen = 1 + Utf8.Length();
-		Frame.SetNumUninitialized(4 + TotalLen);
-		Frame[0] = (TotalLen >> 24) & 0xFF;
-		Frame[1] = (TotalLen >> 16) & 0xFF;
-		Frame[2] = (TotalLen >> 8) & 0xFF;
-		Frame[3] = TotalLen & 0xFF;
-		Frame[4] = URSProtocol::Type_JSON;
-		FMemory::Memcpy(Frame.GetData() + 5, (const uint8*)Utf8.Get(), Utf8.Length());
-
-		int32 BytesSent = 0;
-		Sock->Send(Frame.GetData(), Frame.Num(), BytesSent);
+		EnqueueFrame(Client, URSProtocol::Type_JSON,
+			reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 	};
 
 	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
@@ -349,8 +339,17 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 		TOptional<TArray<float>> JointQpos;
 
 		const TArray<TSharedPtr<FJsonValue>>* TArr;
-		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr && TArr->Num() == 3)
+		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr)
 		{
+			if (TArr->Num() != 3)
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
+				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("translation_m must have 3 elements, got %d"), TArr->Num()));
+				SendReply(Err);
+				return;
+			}
 			double Tx = (*TArr)[0]->AsNumber();
 			double Ty = (*TArr)[1]->AsNumber();
 			double Tz = (*TArr)[2]->AsNumber();
@@ -366,8 +365,17 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 			Trans = FVector(Tx, Ty, Tz);
 		}
 		const TArray<TSharedPtr<FJsonValue>>* RArr;
-		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr && RArr->Num() == 4)
+		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr)
 		{
+			if (RArr->Num() != 4)
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
+				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("rotation_quat_xyzw must have 4 elements, got %d"), RArr->Num()));
+				SendReply(Err);
+				return;
+			}
 			double Rx = (*RArr)[0]->AsNumber();
 			double Ry = (*RArr)[1]->AsNumber();
 			double Rz = (*RArr)[2]->AsNumber();
@@ -507,8 +515,17 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 		TOptional<FQuat> Rot;
 		TOptional<TArray<float>> JointQpos;
 		const TArray<TSharedPtr<FJsonValue>>* TArr;
-		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr && TArr->Num() == 3)
+		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr)
 		{
+			if (TArr->Num() != 3)
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
+				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("translation_m must have 3 elements, got %d"), TArr->Num()));
+				SendReply(Err);
+				return;
+			}
 			double Tx = (*TArr)[0]->AsNumber(), Ty = (*TArr)[1]->AsNumber(), Tz = (*TArr)[2]->AsNumber();
 			if (!FMath::IsFinite(Tx) || !FMath::IsFinite(Ty) || !FMath::IsFinite(Tz))
 			{
@@ -521,8 +538,17 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 			Trans = FVector(Tx, Ty, Tz);
 		}
 		const TArray<TSharedPtr<FJsonValue>>* RArr;
-		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr && RArr->Num() == 4)
+		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr)
 		{
+			if (RArr->Num() != 4)
+			{
+				auto Err = MakeShared<FJsonObject>();
+				Err->SetBoolField(TEXT("ok"), false);
+				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
+				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("rotation_quat_xyzw must have 4 elements, got %d"), RArr->Num()));
+				SendReply(Err);
+				return;
+			}
 			double Rx = (*RArr)[0]->AsNumber(), Ry = (*RArr)[1]->AsNumber(), Rz = (*RArr)[2]->AsNumber(), Rw = (*RArr)[3]->AsNumber();
 			if (!FMath::IsFinite(Rx) || !FMath::IsFinite(Ry) || !FMath::IsFinite(Rz) || !FMath::IsFinite(Rw))
 			{
@@ -563,21 +589,31 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FSocket* Sock, const FString
 			}
 			JointQpos = MoveTemp(Qpos);
 		}
-		Core->SetPoseLock(ActorId, true,
+		FURSPoseResult LockResult = Core->SetPoseLock(ActorId, true,
 			Trans.IsSet() ? &Trans.GetValue() : nullptr,
 			Rot.IsSet() ? &Rot.GetValue() : nullptr,
 			JointQpos.IsSet() ? &JointQpos.GetValue() : nullptr);
 		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), true);
+		Reply->SetBoolField(TEXT("ok"), LockResult.bOk);
 		Reply->SetStringField(TEXT("command"), TEXT("lock_pose"));
+		if (!LockResult.bOk)
+		{
+			Reply->SetStringField(TEXT("error"), LockResult.Error);
+			Reply->SetStringField(TEXT("message"), LockResult.Message);
+		}
 		SendReply(Reply);
 	}
 	else if (Command == TEXT("unlock_pose"))
 	{
-		Core->SetPoseLock(ActorId, false);
+		FURSPoseResult UnlockResult = Core->SetPoseLock(ActorId, false);
 		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), true);
+		Reply->SetBoolField(TEXT("ok"), UnlockResult.bOk);
 		Reply->SetStringField(TEXT("command"), TEXT("unlock_pose"));
+		if (!UnlockResult.bOk)
+		{
+			Reply->SetStringField(TEXT("error"), UnlockResult.Error);
+			Reply->SetStringField(TEXT("message"), UnlockResult.Message);
+		}
 		SendReply(Reply);
 	}
 	else
@@ -726,6 +762,11 @@ void UURSTcpTransportComponent::TickCameraPublish()
 		const uint8 Codec = (CameraCompress == TEXT("jpeg")) ? URSProtocol::CameraCodec_JPEG : URSProtocol::CameraCodec_Raw;
 		Packed.Add(Codec);
 		Packed.Add(static_cast<uint8>(State.Cameras.Num()));
+
+		// Simulation timestamp (8-byte LE double) for correlating with state
+		uint8 SimTimeBytes[8];
+		FMemory::Memcpy(SimTimeBytes, &State.SimTime, 8);
+		Packed.Append(SimTimeBytes, 8);
 
 		bool bAnyNewFrame = false;
 

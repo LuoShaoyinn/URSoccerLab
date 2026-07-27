@@ -350,11 +350,17 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 	}
 }
 
-void UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool bLock,
+FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool bLock,
 	const FVector* Trans, const FQuat* Rot, const TArray<float>* JointQpos)
 {
+	FURSPoseResult Result;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
-	if (!Ep) return;
+	if (!Ep)
+	{
+		Result.Error = TEXT("not_found");
+		Result.Message = FString::Printf(TEXT("Robot '%s' not found"), *ActorId);
+		return Result;
+	}
 	if (bLock)
 	{
 		Ep->PoseLock.bActive = true;
@@ -366,6 +372,8 @@ void UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool bLock,
 	{
 		Ep->PoseLock.bActive = false;
 	}
+	Result.bOk = true;
+	return Result;
 }
 
 void UURSRobotCoreComponent::ApplyCommands(double NowSec)
@@ -693,13 +701,23 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 		return Result;
 	}
 
+	if (!FMath::IsFinite(AppliedRot.X) || !FMath::IsFinite(AppliedRot.Y)
+		|| !FMath::IsFinite(AppliedRot.Z) || !FMath::IsFinite(AppliedRot.W))
+	{
+		Result.Error = TEXT("invalid_rotation");
+		Result.Message = TEXT("rotation quaternion contains NaN or infinity");
+		return Result;
+	}
+
 	const double QuatLenSq = AppliedRot.X * AppliedRot.X + AppliedRot.Y * AppliedRot.Y
 		+ AppliedRot.Z * AppliedRot.Z + AppliedRot.W * AppliedRot.W;
 	if (QuatLenSq < KINDA_SMALL_NUMBER)
 	{
-		AppliedRot = FQuat::Identity;
+		Result.Error = TEXT("invalid_rotation");
+		Result.Message = TEXT("rotation quaternion is zero-length");
+		return Result;
 	}
-	else if (FMath::Abs(QuatLenSq - 1.0) > KINDA_SMALL_NUMBER)
+	if (FMath::Abs(QuatLenSq - 1.0) > KINDA_SMALL_NUMBER)
 	{
 		AppliedRot.Normalize();
 	}

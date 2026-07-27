@@ -86,11 +86,11 @@ def main() -> int:
                     sock.sendall(header + payload_bytes)
 
             elif ftype == TYPE_CAMERA:
-                if len(payload) < 2:
+                if len(payload) < 10:
                     continue
                 codec = payload[0]
                 num_cams = payload[1]
-                offset = 2
+                offset = 10  # skip codec + num_cams + 8-byte sim_time
                 for i in range(num_cams):
                     if offset + 8 > len(payload):
                         break

@@ -83,12 +83,13 @@ class FrameConn:
 def parse_camera(payload: bytes) -> list[dict]:
     """Parse packed multi-camera frame. Returns list of camera dicts.
 
-    Format: [codec][num_cameras] per-cam: [width LE16][height LE16][data_len LE32][data]
+    Format: [codec][num_cameras][sim_time LE float64] per-cam: [width LE16][height LE16][data_len LE32][data]
     All cameras in one message are from the same physics step (synchronized).
     """
     codec = "jpeg" if payload[0] == CODEC_JPEG else "raw"
     num_cams = payload[1]
-    offset = 2
+    sim_time = struct.unpack("<d", payload[2:10])[0]
+    offset = 10
     cameras = []
     for i in range(num_cams):
         width = payload[offset] | (payload[offset + 1] << 8)
@@ -98,6 +99,7 @@ def parse_camera(payload: bytes) -> list[dict]:
         cameras.append({
             "cam_index": i,
             "codec": codec,
+            "sim_time": sim_time,
             "width": width,
             "height": height,
             "data": data,
