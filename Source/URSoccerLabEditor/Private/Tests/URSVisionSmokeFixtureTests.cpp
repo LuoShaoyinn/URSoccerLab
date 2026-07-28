@@ -21,53 +21,7 @@
 
 namespace
 {
-constexpr const TCHAR* VisionSmokeRobotId = TEXT("robot_rp0");
 constexpr const TCHAR* SoccerFieldLevelName = TEXT("URS_SoccerField");
-constexpr float PiPlusStandingBaseHeightMeters = 0.3762f;
-
-bool SavePackageForObject(UObject* Object, FString& OutError)
-{
-	if (!Object)
-	{
-		OutError = TEXT("cannot save null object");
-		return false;
-	}
-
-	UPackage* Package = Object->GetOutermost();
-	if (!Package)
-	{
-		OutError = FString::Printf(TEXT("object %s has no outer package"), *Object->GetName());
-		return false;
-	}
-
-	const FString PackageFileName = FPackageName::LongPackageNameToFilename(
-		Package->GetName(), FPackageName::GetAssetPackageExtension());
-
-	FSavePackageArgs SaveArgs;
-	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-	SaveArgs.SaveFlags = SAVE_NoError;
-	if (!UPackage::SavePackage(Package, Object, *PackageFileName, SaveArgs))
-	{
-		OutError = FString::Printf(TEXT("failed to save package %s"), *Package->GetName());
-		return false;
-	}
-
-	return true;
-}
-
-bool SaveImportedBlueprint(const FString& BlueprintShortName, FString& OutError)
-{
-	const FString BlueprintObjectPath = FString::Printf(
-		TEXT("/Game/MuJoCoImports/%s.%s"), *BlueprintShortName, *BlueprintShortName);
-	UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintObjectPath);
-	if (!Blueprint)
-	{
-		OutError = FString::Printf(TEXT("failed to load imported blueprint %s"), *BlueprintObjectPath);
-		return false;
-	}
-
-	return SavePackageForObject(Blueprint, OutError);
-}
 
 bool SpawnManagerWithSceneConfig(UWorld* World, FString& OutError)
 {
@@ -125,116 +79,6 @@ bool SpawnManagerWithSceneConfig(UWorld* World, FString& OutError)
 	return true;
 }
 
-void DestroyExistingVisionSmokeRobot(UWorld* World)
-{
-	if (!World)
-		return;
-
-	TArray<AActor*> ActorsToDestroy;
-	for (TActorIterator<AMjArticulation> It(World); It; ++It)
-	{
-		AMjArticulation* Robot = *It;
-		if (Robot && Robot->ActorId == VisionSmokeRobotId)
-		{
-			ActorsToDestroy.Add(Robot);
-		}
-	}
-
-	for (AActor* Actor : ActorsToDestroy)
-	{
-		const FName StaleName = MakeUniqueObjectName(Actor->GetOuter(), Actor->GetClass(), FName(TEXT("stale_robot_rp0")));
-		Actor->Rename(*StaleName.ToString(), Actor->GetOuter(), REN_DontCreateRedirectors | REN_NonTransactional);
-		World->DestroyActor(Actor);
-	}
-}
-
-bool EnsureRobotActorName(UWorld* World, FString& OutError)
-{
-	if (!World)
-	{
-		OutError = TEXT("editor world unavailable");
-		return false;
-	}
-
-	AMjArticulation* Robot = nullptr;
-	for (TActorIterator<AMjArticulation> It(World); It; ++It)
-	{
-		if (It->ActorId == VisionSmokeRobotId)
-		{
-			Robot = *It;
-			break;
-		}
-	}
-
-	if (!Robot)
-	{
-		OutError = TEXT("spawned robot_rp0 articulation not found");
-		return false;
-	}
-
-	if (Robot->GetName() != VisionSmokeRobotId)
-	{
-		if (UObject* Existing = StaticFindObjectFast(AActor::StaticClass(), Robot->GetOuter(), FName(VisionSmokeRobotId)))
-		{
-			if (Existing != Robot)
-			{
-				OutError = FString::Printf(TEXT("cannot rename robot actor to %s; object already exists"), VisionSmokeRobotId);
-				return false;
-			}
-		}
-		if (!Robot->Rename(VisionSmokeRobotId, nullptr, REN_DontCreateRedirectors | REN_NonTransactional))
-		{
-			OutError = FString::Printf(TEXT("failed to rename robot actor to %s"), VisionSmokeRobotId);
-			return false;
-		}
-	}
-	Robot->SetActorLabel(VisionSmokeRobotId);
-	Robot->MarkPackageDirty();
-	return true;
-}
-
-bool HideImportedFieldGeoms(UWorld* World, FString& OutError)
-{
-	if (!World)
-	{
-		OutError = TEXT("editor world unavailable");
-		return false;
-	}
-
-	AMjArticulation* Robot = nullptr;
-	for (TActorIterator<AMjArticulation> It(World); It; ++It)
-	{
-		if (It->ActorId == VisionSmokeRobotId)
-		{
-			Robot = *It;
-			break;
-		}
-	}
-
-	if (!Robot)
-	{
-		OutError = TEXT("spawned robot_rp0 articulation not found");
-		return false;
-	}
-
-	TArray<UMjGeom*> Geoms;
-	Robot->GetComponents<UMjGeom>(Geoms);
-	for (UMjGeom* Geom : Geoms)
-	{
-		if (!Geom)
-			continue;
-
-		const FString MjName = Geom->MjName.IsEmpty() ? Geom->GetName() : Geom->MjName;
-		if (MjName == TEXT("floor") || MjName == TEXT("vision_floor") || MjName == TEXT("vision_marker"))
-		{
-			Geom->SetGeomVisibility(false);
-		}
-	}
-
-	Robot->MarkPackageDirty();
-	return true;
-}
-
 } // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSVisionSmokeCreateMap,
@@ -243,56 +87,30 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSVisionSmokeCreateMap,
 
 bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 {
-	const FString XmlPath = FPaths::ConvertRelativePathToFull(
-		FPaths::Combine(FPaths::ProjectDir(),
-			TEXT("Assets/MosBrainCameraTest/pi_plus/pi_plus_stereo_camera.xml")));
-
-	if (!FPaths::FileExists(XmlPath))
+	// Non-destructive: validate that the baked pi_plus Blueprint exists at
+	// the tracked path. Do NOT re-import from XML.
+	const FString BlueprintObjectPath = TEXT("/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus");
+	UBlueprint* RobotBP = LoadObject<UBlueprint>(nullptr, *BlueprintObjectPath);
+	TestNotNull(TEXT("baked pi_plus Blueprint exists"), RobotBP);
+	if (!RobotBP)
 	{
-		AddError(FString::Printf(TEXT("vision smoke XML is missing: %s"), *XmlPath));
-		return false;
-	}
-
-	FString BlueprintClassPath;
-	FString BlueprintShortName;
-	FString ImportError;
-	bool bImportedNow = false;
-	if (!URLabLevelOps::ImportXmlSync(
-			XmlPath, true, BlueprintClassPath, BlueprintShortName, bImportedNow, ImportError))
-	{
-		AddError(FString::Printf(TEXT("ImportXmlSync failed: %s"), *ImportError));
-		return false;
-	}
-	if (!SaveImportedBlueprint(BlueprintShortName, ImportError))
-	{
-		AddError(FString::Printf(TEXT("SaveImportedBlueprint failed: %s"), *ImportError));
+		AddError(FString::Printf(TEXT("Baked Blueprint not found at %s. Run URSoccerLab.Maintenance.MigrateRobotAssets first."), *BlueprintObjectPath));
 		return false;
 	}
 
 	FString LevelPath;
 	FString LevelError;
-	if (!URLabLevelOps::LoadLevelSync(SoccerFieldLevelName, LevelPath, LevelError))
-	{
-		AddError(FString::Printf(TEXT("LoadLevelSync failed: %s"), *LevelError));
-		return false;
-	}
+	TestTrue(TEXT("load soccer field level"),
+		URLabLevelOps::LoadLevelSync(SoccerFieldLevelName, LevelPath, LevelError));
 
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-	DestroyExistingVisionSmokeRobot(World);
+	TestNotNull(TEXT("editor world"), World);
+	if (!World) return false;
 
 	FString SetupError;
-	if (!SpawnManagerWithSceneConfig(World, SetupError))
-	{
-		AddError(SetupError);
-		return false;
-	}
+	TestTrue(TEXT("spawn manager with scene config"),
+		SpawnManagerWithSceneConfig(World, SetupError));
 
-	// Field-only map: no baked robot. Robots are spawned at runtime by
-	// AURSSoccerGameMode::InitGame from Config/URS_scene.json before URLab
-	// compiles. The blueprint import above guarantees the pi_plus Blueprint
-	// is available for LoadClass at runtime.
-
-	// Ensure the level uses our GameMode so the bootstrap runs.
 	if (AWorldSettings* WS = World->GetWorldSettings(true))
 	{
 		WS->DefaultGameMode = AURSSoccerGameMode::StaticClass();
@@ -300,11 +118,8 @@ bool FURSVisionSmokeCreateMap::RunTest(const FString& Parameters)
 
 	FString SavedLevelPath;
 	FString SaveError;
-	if (!URLabLevelOps::SaveCurrentLevelSync(SavedLevelPath, SaveError))
-	{
-		AddError(FString::Printf(TEXT("SaveCurrentLevelSync failed: %s"), *SaveError));
-		return false;
-	}
+	TestTrue(TEXT("save level"),
+		URLabLevelOps::SaveCurrentLevelSync(SavedLevelPath, SaveError));
 
 	TestEqual(TEXT("saved level path"), SavedLevelPath, FString(TEXT("/Game/Levels/URS_SoccerField")));
 	UE_LOG(LogTemp, Display, TEXT("URSoccerLab field-only map ready at %s"), *SavedLevelPath);

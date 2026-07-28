@@ -24,18 +24,11 @@ bool FURSSceneConfigApplyTest::RunTest(const FString& Parameters)
 {
 	URSoccerLab::FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
 
-	const FString XmlPath = FPaths::ConvertRelativePathToFull(
-		FPaths::Combine(FPaths::ProjectDir(),
-			TEXT("Assets/MosBrainCameraTest/pi_plus/pi_plus_stereo_camera.xml")));
-	TestTrue(TEXT("pi_plus source XML present"), FPaths::FileExists(XmlPath));
-
-	FString BlueprintClassPath;
-	FString BlueprintShortName;
-	FString ImportError;
-	bool bImportedNow = false;
-	TestTrue(TEXT("import pi_plus blueprint"),
-		URLabLevelOps::ImportXmlSync(
-			XmlPath, true, BlueprintClassPath, BlueprintShortName, bImportedNow, ImportError));
+	// Non-destructive: verify the baked Blueprint is loadable from the
+	// tracked path instead of importing from XML.
+	const FString BlueprintObjectPath = TEXT("/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus");
+	TestTrue(TEXT("baked pi_plus Blueprint loadable"),
+		LoadObject<UBlueprint>(nullptr, *BlueprintObjectPath) != nullptr);
 
 	FString LevelPath;
 	FString LevelError;
@@ -59,10 +52,7 @@ bool FURSSceneConfigApplyTest::RunTest(const FString& Parameters)
 			AAMjManager::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	}
 	TestNotNull(TEXT("AAMjManager present"), Manager);
-	if (!Manager)
-	{
-		return false;
-	}
+	if (!Manager) return false;
 	Manager->bAutoCreateSimulateWidget = false;
 	Manager->SetPaused(true);
 

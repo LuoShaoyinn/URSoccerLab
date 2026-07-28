@@ -9,16 +9,15 @@ bootstrap that spawns robots before URLab compiles the MuJoCo model.
 ```
 /Game/Levels/URS_SoccerField.umap        (baked: field + sky + manager + components)
 Config/URS_scene.json                    (runtime: robot list, types, poses)
-Assets/MosBrainCameraTest/pi_plus/...xml (source MJCF for each robot type)
-/Game/MuJoCoImports/pi_plus_stereo_camera (cooked Blueprint per robot type)
+Assets/Robots/pi_plus/pi_plus.xml         (source MJCF for each robot type)
+/Game/URSoccerLab/Robots/pi_plus/pi_plus  (baked Blueprint, tracked with Git LFS)
 ```
 
 At simulator startup:
 
 1. Engine loads `URS_SoccerField.umap`. Level actors (field meshes,
-   skylight, `AAMjManager` with `UURSZmqRobotBridgeComponent` +
-   `UURSSceneConfigComponent`) go through `PreInitializeComponents` →
-   `InitializeComponent` → `PostInitializeComponents`.
+   skylight, `AAMjManager` with `UURSSceneConfigComponent`) go through
+   `PreInitializeComponents` → `InitializeComponent` → `PostInitializeComponents`.
 2. `AURSSoccerGameMode::InitGame` runs (before any `BeginPlay`).
 3. It finds `UURSSceneConfigComponent`, calls `ApplyConfig`.
 4. `ApplyConfig` reads `Config/URS_scene.json`, resolves robot types via
@@ -100,7 +99,7 @@ Blueprint asset paths. Adding a new robot type is one line in
 
 | Name | Blueprint | Default base height |
 | --- | --- | ---: |
-| `pi_plus` | `/Game/MuJoCoImports/pi_plus_stereo_camera.pi_plus_stereo_camera` | 0.3762 m |
+| `pi_plus` | `/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus` | 0.3762 m |
 
 ### C++ API
 
@@ -110,7 +109,7 @@ namespace URSoccerLab
 struct FURSRobotType
 {
     FString Name;               // "pi_plus"
-    FString BlueprintAssetPath; // "/Game/MuJoCoImports/..."
+    FString BlueprintAssetPath; // "/Game/URSoccerLab/Robots/..."
     double DefaultBaseHeightM = 0.0;
 };
 
@@ -138,7 +137,7 @@ void FURSoccerLabModule::StartupModule()
     // Add a new type:
     URSoccerLab::FURSRobotType K1;
     K1.Name = TEXT("k1");
-    K1.BlueprintAssetPath = TEXT("/Game/MuJoCoImports/k1_camera.k1_camera");
+    Example.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/example/example.example");
     K1.DefaultBaseHeightM = 0.35;
     URSoccerLab::FURSRobotTypeRegistry::Get().Register(K1);
 }
@@ -294,7 +293,7 @@ Config/
   DefaultEngine.ini              GlobalDefaultGameMode = AURSSoccerGameMode
 
 Assets/
-  MosBrainCameraTest/
+  Robots/
     pi_plus/
       pi_plus_stereo_camera.xml  source MJCF (fixed-base, no freejoint)
   Scenes/

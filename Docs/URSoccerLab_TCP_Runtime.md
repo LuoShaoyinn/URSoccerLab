@@ -77,9 +77,9 @@ for kind, data in client.recv():
 ## Dynamic Scene Config
 
 `UURSSceneConfigComponent` reads `Config/URS_scene.json` on `BeginPlay` and
-spawns the listed robots via the registered robot types. Registered types
-include `pi_plus` (fixed base, Z=0.3762) and `pi_plus_walk` (free base,
-Z=0.39).
+spawns the listed robots via the registered robot types. The registered type
+is `pi_plus` (fixed base, Z=0.3762) against
+`/Game/URSoccerLab/Robots/pi_plus/pi_plus`.
 
 ```json
 {

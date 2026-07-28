@@ -137,7 +137,7 @@ URLab owns:
 URSoccerLab owns:
 
 - Project scene assets and saved field level.
-- Project robot fixtures under `Assets/MosBrainCameraTest`.
+- Project robot fixtures under `Assets/Robots`.
 - The external robot command/state protocol.
 - Per-robot port assignment and metadata.
 - Editor smoke fixtures that assemble a test map from URLab imports.

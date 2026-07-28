@@ -23,33 +23,35 @@ namespace
 constexpr const TCHAR* TwoRobotLevelName = TEXT("URS_TwoRobotFacing");
 constexpr const TCHAR* TwoRobotSceneConfigPath = TEXT("Config/URS_two_robot_scene.json");
 
-bool SaveImportedBlueprint(const FString& BlueprintShortName, FString& OutError)
+bool HideImportedFieldGeoms(UWorld* World, const FString& ActorId, FString& OutError)
 {
-	const FString BlueprintObjectPath = FString::Printf(
-		TEXT("/Game/MuJoCoImports/%s.%s"), *BlueprintShortName, *BlueprintShortName);
-	UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintObjectPath);
-	if (!Blueprint)
+	AMjArticulation* Robot = nullptr;
+	for (TActorIterator<AMjArticulation> It(World); It; ++It)
 	{
-		OutError = FString::Printf(TEXT("failed to load imported blueprint %s"), *BlueprintObjectPath);
+		if (It->ActorId == ActorId)
+		{
+			Robot = *It;
+			break;
+		}
+	}
+	if (!Robot)
+	{
+		OutError = FString::Printf(TEXT("spawned %s articulation not found"), *ActorId);
 		return false;
 	}
 
-	UPackage* Package = Blueprint->GetOutermost();
-	if (!Package)
+	TArray<UMjGeom*> Geoms;
+	Robot->GetComponents<UMjGeom>(Geoms);
+	for (UMjGeom* Geom : Geoms)
 	{
-		OutError = FString::Printf(TEXT("object %s has no outer package"), *Blueprint->GetName());
-		return false;
+		if (!Geom) continue;
+		const FString MjName = Geom->MjName.IsEmpty() ? Geom->GetName() : Geom->MjName;
+		if (MjName == TEXT("floor") || MjName == TEXT("vision_floor") || MjName == TEXT("vision_marker"))
+		{
+			Geom->SetGeomVisibility(false);
+		}
 	}
-	const FString PackageFileName = FPackageName::LongPackageNameToFilename(
-		Package->GetName(), FPackageName::GetAssetPackageExtension());
-	FSavePackageArgs SaveArgs;
-	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-	SaveArgs.SaveFlags = SAVE_NoError;
-	if (!UPackage::SavePackage(Package, Blueprint, *PackageFileName, SaveArgs))
-	{
-		OutError = FString::Printf(TEXT("failed to save package %s"), *Package->GetName());
-		return false;
-	}
+	Robot->MarkPackageDirty();
 	return true;
 }
 
@@ -74,10 +76,7 @@ bool EnsureRobotCameras(UWorld* World, const FString& ActorId, FString& OutError
 	Robot->GetComponents<UMjCamera>(Cameras);
 	for (UMjCamera* Camera : Cameras)
 	{
-		if (!Camera)
-		{
-			continue;
-		}
+		if (!Camera) continue;
 		if (Camera->CaptureComponent)
 		{
 			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
@@ -97,41 +96,6 @@ bool EnsureRobotCameras(UWorld* World, const FString& ActorId, FString& OutError
 	Robot->MarkPackageDirty();
 	return true;
 }
-
-bool HideImportedFieldGeoms(UWorld* World, const FString& ActorId, FString& OutError)
-{
-	AMjArticulation* Robot = nullptr;
-	for (TActorIterator<AMjArticulation> It(World); It; ++It)
-	{
-		if (It->ActorId == ActorId)
-		{
-			Robot = *It;
-			break;
-		}
-	}
-	if (!Robot)
-	{
-		OutError = FString::Printf(TEXT("spawned %s articulation not found"), *ActorId);
-		return false;
-	}
-
-	TArray<UMjGeom*> Geoms;
-	Robot->GetComponents<UMjGeom>(Geoms);
-	for (UMjGeom* Geom : Geoms)
-	{
-		if (!Geom)
-		{
-			continue;
-		}
-		const FString MjName = Geom->MjName.IsEmpty() ? Geom->GetName() : Geom->MjName;
-		if (MjName == TEXT("floor") || MjName == TEXT("vision_floor") || MjName == TEXT("vision_marker"))
-		{
-			Geom->SetGeomVisibility(false);
-		}
-	}
-	Robot->MarkPackageDirty();
-	return true;
-}
 } // namespace
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSTwoRobotFacingCreateMap,
@@ -142,29 +106,17 @@ bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
 {
 	URSoccerLab::FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
 
-	const FString XmlPath = FPaths::ConvertRelativePathToFull(
-		FPaths::Combine(FPaths::ProjectDir(),
-			TEXT("Assets/MosBrainCameraTest/pi_plus/pi_plus_stereo_camera.xml")));
-	TestTrue(TEXT("pi_plus source XML present"), FPaths::FileExists(XmlPath));
+	// Non-destructive: verify baked Blueprint, do NOT re-import.
+	const FString BlueprintObjectPath = TEXT("/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus");
+	TestTrue(TEXT("baked pi_plus Blueprint loadable"),
+		LoadObject<UBlueprint>(nullptr, *BlueprintObjectPath) != nullptr);
 
-	FString BlueprintClassPath;
-	FString BlueprintShortName;
-	FString ImportError;
-	bool bImportedNow = false;
-	TestTrue(TEXT("import pi_plus blueprint"),
-		URLabLevelOps::ImportXmlSync(
-			XmlPath, true, BlueprintClassPath, BlueprintShortName, bImportedNow, ImportError));
-	TestTrue(TEXT("save imported blueprint"), SaveImportedBlueprint(BlueprintShortName, ImportError));
-
-	// Start from the baked field + sky level so we do not have to recreate it.
 	FString LevelPath;
 	FString LevelError;
 	TestTrue(TEXT("load soccer field level"),
 		URLabLevelOps::LoadLevelSync(TEXT("URS_SoccerField"), LevelPath, LevelError));
 
-	// Destroy any pre-existing robots inherited from URS_SoccerField so the
-	// scene config is the sole source of truth. Rename first so the actor
-	// name is released before DestroyActor's cleanup races the new spawn.
+	// Destroy any pre-existing robots inherited from URS_SoccerField.
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	TestNotNull(TEXT("editor world"), World);
 
@@ -197,10 +149,7 @@ bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
 			AAMjManager::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	}
 	TestNotNull(TEXT("AAMjManager present"), Manager);
-	if (!Manager)
-	{
-		return false;
-	}
+	if (!Manager) return false;
 	Manager->bAutoCreateSimulateWidget = false;
 	Manager->SetPaused(false);
 	if (Manager->NetworkManager)
@@ -208,7 +157,6 @@ bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
 		Manager->NetworkManager->bEnableAllCameras = true;
 	}
 
-	// Attach the scene config component pointed at the two-robot file.
 	UURSSceneConfigComponent* SceneComp = FindObject<UURSSceneConfigComponent>(Manager, TEXT("URSSceneConfig"));
 	if (!SceneComp)
 	{
@@ -216,16 +164,9 @@ bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
 			Manager, UURSSceneConfigComponent::StaticClass(), TEXT("URSSceneConfig"));
 	}
 	TestNotNull(TEXT("scene config component"), SceneComp);
-	if (!SceneComp)
-	{
-		return false;
-	}
+	if (!SceneComp) return false;
 	SceneComp->CreationMethod = EComponentCreationMethod::Instance;
 	SceneComp->ConfigPath = TwoRobotSceneConfigPath;
-	// The editor fixture applies the config once during bake. At runtime we
-	// do NOT want BeginPlay to destroy + respawn the already-baked robots:
-	// PIE/world-init destruction races the manager compile. The component
-	// is still useful at runtime for admin `reset` to look up the spawn pose.
 	SceneComp->bAutoApplyOnBeginPlay = false;
 	if (!SceneComp->IsRegistered())
 	{
@@ -262,7 +203,6 @@ bool FURSTwoRobotFacingCreateMap::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("exactly two configured robots in level"), RobotCount, 2);
 
-	// Save under a new level path so the original URS_SoccerField is untouched.
 	FString NewLevelPath = FString::Printf(TEXT("/Game/Levels/%s"), TwoRobotLevelName);
 	FString SavedLevelPath;
 	FString SaveError;
