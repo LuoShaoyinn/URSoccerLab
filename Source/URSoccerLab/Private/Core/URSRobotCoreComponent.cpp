@@ -960,25 +960,6 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 		return Result;
 	}
 
-	TArray<float> InitialJointQpos;
-	InitialJointQpos.Reserve(Endpoint->Joints.Num());
-	for (const FJointInfo& Joint : Endpoint->Joints)
-	{
-		if (Joint.Name == TEXT("root"))
-		{
-			continue;
-		}
-		const float* InitialValue = RobotType->DefaultJointPositions.Find(Joint.Name);
-		if (!InitialValue)
-		{
-			Result.Error = TEXT("missing_default_joint_pose");
-			Result.Message = FString::Printf(TEXT("robot type '%s' has no default qpos for joint '%s'"),
-				*RobotType->Name, *Joint.Name);
-			return Result;
-		}
-		InitialJointQpos.Add(*InitialValue);
-	}
-
 	FVector InitialTrans = FVector::ZeroVector;
 	FQuat InitialRot = FQuat::Identity;
 	if (!SceneComp->GetInitialPose(ActorId, InitialTrans, InitialRot))
@@ -988,5 +969,7 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 		return Result;
 	}
 
-	return SetPose(ActorId, &InitialTrans, &InitialRot, &InitialJointQpos);
+	// Pi's MJCF-native zero qpos is its initial joint state.  The scene config
+	// owns only the free-base transform.
+	return SetPose(ActorId, &InitialTrans, &InitialRot, nullptr);
 }

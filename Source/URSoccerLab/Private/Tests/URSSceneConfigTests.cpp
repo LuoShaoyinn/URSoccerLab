@@ -174,13 +174,6 @@ bool FURSRobotTypeRegistryTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("pi_plus registered"), PiPlus);
 	TestTrue(TEXT("pi_plus blueprint path set"), !PiPlus->BlueprintAssetPath.IsEmpty());
 	TestEqual(TEXT("pi_plus default base height"), PiPlus->DefaultBaseHeightM, 0.3762);
-	TestEqual(TEXT("pi_plus standing pose defines every hinge"), PiPlus->DefaultJointPositions.Num(), 22);
-	const float* LeftCalf = PiPlus->DefaultJointPositions.Find(TEXT("l_calf_joint"));
-	TestNotNull(TEXT("pi_plus standing pose has left calf"), LeftCalf);
-	if (LeftCalf)
-	{
-		TestEqual(TEXT("pi_plus standing left calf angle"), *LeftCalf, 0.65f);
-	}
 
 	TestNull(TEXT("unknown type returns null"), Reg.Find(TEXT("nope")));
 

@@ -9,9 +9,6 @@ struct URSOCCERLAB_API FURSRobotType
 	FString Name;
 	FString BlueprintAssetPath;
 	double DefaultBaseHeightM = 0.0;
-	// Fixed runtime robot types define every non-root MuJoCo joint explicitly.
-	// Reset rejects incomplete definitions instead of silently falling back to zero.
-	TMap<FString, float> DefaultJointPositions;
 };
 
 class URSOCCERLAB_API FURSRobotTypeRegistry
