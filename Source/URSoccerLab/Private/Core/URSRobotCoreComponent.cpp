@@ -53,6 +53,7 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		if (Mgr && Mgr->GetAllArticulations().Num() > 0)
 		{
 			RebuildEndpointCache();
+			InitializeConfiguredRobotPoses();
 			OnRobotsChanged.Broadcast();
 			UE_LOG(LogTemp, Log, TEXT("[URS Core] Late-discovered %d robot(s)."), Endpoints.Num());
 		}
@@ -119,6 +120,7 @@ bool UURSRobotCoreComponent::Initialize()
 	}
 
 	bInitialized = true;
+	InitializeConfiguredRobotPoses();
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized with %d robot(s)."), Endpoints.Num());
 	return true;
 }
@@ -126,7 +128,24 @@ bool UURSRobotCoreComponent::Initialize()
 void UURSRobotCoreComponent::OnSceneConfigApplied()
 {
 	RebuildEndpointCache();
+	InitializeConfiguredRobotPoses();
 	OnRobotsChanged.Broadcast();
+}
+
+void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
+{
+	// A scene-config spawn transform places the UE actor, but a MuJoCo
+	// freejoint has independent qpos state. The endpoint cache is populated
+	// only after URLab compilation, so run this after every cache rebuild.
+	for (const FRobotEndpoint& Endpoint : Endpoints)
+	{
+		const FURSPoseResult PoseResult = ResetRobot(Endpoint.ActorId);
+		if (!PoseResult.bOk)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[URS Core] Failed to initialize '%s' from scene config: %s"),
+				*Endpoint.ActorId, *PoseResult.Error);
+		}
+	}
 }
 
 void UURSRobotCoreComponent::RebuildEndpointCache()

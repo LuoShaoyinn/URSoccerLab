@@ -43,6 +43,23 @@ uv run python demos/head_motion.py
 
 Start the simulator with `Config/URS_two_robot_scene.json` and `/Game/Levels/URS_SoccerField`.
 
+## Walking Camera Video
+
+`demos/walk_policy.py` keeps the mos-brain locomotion policy outside Unreal.
+It drives only the TCP motor-command API and records the left-eye camera:
+
+```bash
+source py_example/.venv-walk/bin/activate
+uv run --no-project --active python py_example/demos/walk_policy.py \
+  --vx 0.35 --duration 8 --video py_example/out/walk_rp0.mp4
+```
+
+It requires `refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt`.
+The policy was trained against the older mos-brain Pi model. It is useful for
+exercising the TCP motor and camera path, but is not a validated gait for the
+current Pi MJCF until its dynamics and actuator calibration are matched or the
+policy is retrained.
+
 ## Vision Smoke Test
 
 From the project root:

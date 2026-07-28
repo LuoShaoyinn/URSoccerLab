@@ -200,6 +200,7 @@ private:
 	void OnSceneConfigApplied();
 
 	void RebuildEndpointCache();
+	void InitializeConfiguredRobotPoses();
 	void RegisterPhysicsCallbacks();
 	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);
 
