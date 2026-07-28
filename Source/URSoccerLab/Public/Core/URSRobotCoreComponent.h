@@ -195,11 +195,13 @@ private:
 	TWeakObjectPtr<UObject> SceneConfigComp;
 	bool bCallbacksRegistered = false;
 	bool bInitialized = false;
+	FTimerHandle CompiledSceneRetryTimer;
 
 	UFUNCTION()
 	void OnSceneConfigApplied();
 
 	void RebuildEndpointCache();
+	void TryInitializeCompiledScene();
 	void InitializeConfiguredRobotPoses();
 	void RegisterPhysicsCallbacks();
 	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);

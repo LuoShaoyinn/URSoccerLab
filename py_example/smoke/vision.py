@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Minimal TCP-based vision smoke client for URSoccerLab.
 
-Connects to a robot TCP port, sends zero motor commands, receives state +
-camera frames, and saves the first camera frame as camera.png.
+Connects to a robot TCP port, holds Pi's standing position targets, receives
+state + camera frames, and saves the first camera frame as camera.png.
 """
 from __future__ import annotations
 
@@ -19,6 +19,41 @@ from PIL import Image
 
 TYPE_JSON = 0x00
 TYPE_CAMERA = 0x01
+
+STANDING_JOINT_POSITIONS = {
+    "l_hip_pitch_joint": -0.25,
+    "l_hip_roll_joint": 0.0,
+    "l_thigh_joint": 0.0,
+    "l_calf_joint": 0.65,
+    "l_ankle_pitch_joint": -0.4,
+    "l_ankle_roll_joint": 0.0,
+    "r_hip_pitch_joint": -0.25,
+    "r_hip_roll_joint": 0.0,
+    "r_thigh_joint": 0.0,
+    "r_calf_joint": 0.65,
+    "r_ankle_pitch_joint": -0.4,
+    "r_ankle_roll_joint": 0.0,
+    "l_shoulder_pitch_joint": 0.0,
+    "l_shoulder_roll_joint": 0.2,
+    "l_upper_arm_joint": 0.0,
+    "l_elbow_joint": -1.2,
+    "r_shoulder_pitch_joint": 0.0,
+    "r_shoulder_roll_joint": -0.2,
+    "r_upper_arm_joint": 0.0,
+    "r_elbow_joint": -1.2,
+    "head_yaw_joint": 0.0,
+    "head_pitch_joint": 0.0,
+}
+
+
+def standing_command(actuator_names: list[str]) -> dict[str, float]:
+    command = {}
+    for actuator_name in actuator_names:
+        joint_name = actuator_name.removesuffix("_servo")
+        if joint_name not in STANDING_JOINT_POSITIONS:
+            raise RuntimeError(f"No standing target configured for actuator {actuator_name}")
+        command[actuator_name] = STANDING_JOINT_POSITIONS[joint_name]
+    return command
 
 
 def recv_all(sock: socket.socket, n: int) -> bytes:
@@ -55,6 +90,7 @@ def main() -> int:
     deadline = time.monotonic() + args.timeout_ms / 1000.0
     cameras_saved = 0
     state_saved = False
+    command_payload: bytes | None = None
 
     while time.monotonic() < deadline and cameras_saved < args.camera_frame_count:
         try:
@@ -80,10 +116,8 @@ def main() -> int:
 
                 num_motors = len(state.get("actuators", {}))
                 if num_motors > 0:
-                    cmd = {k: 0.0 for k in state["actuators"]}
-                    payload_bytes = json.dumps(cmd, separators=(",", ":")).encode("utf-8")
-                    header = struct.pack(">IB", 1 + len(payload_bytes), TYPE_JSON)
-                    sock.sendall(header + payload_bytes)
+                    cmd = standing_command(list(state["actuators"]))
+                    command_payload = json.dumps(cmd, separators=(",", ":")).encode("utf-8")
 
             elif ftype == TYPE_CAMERA:
                 if len(payload) < 10:
@@ -109,9 +143,9 @@ def main() -> int:
                         cameras_saved += 1
 
         try:
-            cmd = b""
-            header = struct.pack(">IB", 1, TYPE_JSON)
-            sock.sendall(header + cmd)
+            if command_payload is not None:
+                header = struct.pack(">IB", 1 + len(command_payload), TYPE_JSON)
+                sock.sendall(header + command_payload)
         except (BlockingIOError, socket.timeout, OSError):
             pass
         time.sleep(0.001)

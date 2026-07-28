@@ -11,6 +11,7 @@
 #include "MuJoCo/Core/MjPhysicsEngine.h"
 #include "MuJoCo/Utils/MjUtils.h"
 #include "Transport/NetworkManager.h"
+#include "TimerManager.h"
 
 struct UURSRobotCoreComponent::FQposLayout
 {
@@ -37,6 +38,10 @@ void UURSRobotCoreComponent::BeginPlay()
 
 void UURSRobotCoreComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CompiledSceneRetryTimer);
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -49,14 +54,7 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	}
 	if (bInitialized && Endpoints.Num() == 0)
 	{
-		AAMjManager* Mgr = Manager.Get();
-		if (Mgr && Mgr->GetAllArticulations().Num() > 0)
-		{
-			RebuildEndpointCache();
-			InitializeConfiguredRobotPoses();
-			OnRobotsChanged.Broadcast();
-			UE_LOG(LogTemp, Log, TEXT("[URS Core] Late-discovered %d robot(s)."), Endpoints.Num());
-		}
+		TryInitializeCompiledScene();
 	}
 	if (bInitialized && Endpoints.Num() > 0)
 	{
@@ -84,7 +82,11 @@ const UURSRobotCoreComponent::FRobotEndpoint* UURSRobotCoreComponent::FindEndpoi
 
 bool UURSRobotCoreComponent::Initialize()
 {
-	if (bInitialized) return true;
+	if (bInitialized)
+	{
+		TryInitializeCompiledScene();
+		return true;
+	}
 
 	AActor* Owner = GetOwner();
 	Manager = Cast<AAMjManager>(Owner);
@@ -120,16 +122,45 @@ bool UURSRobotCoreComponent::Initialize()
 	}
 
 	bInitialized = true;
-	InitializeConfiguredRobotPoses();
+	TryInitializeCompiledScene();
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized with %d robot(s)."), Endpoints.Num());
 	return true;
 }
 
 void UURSRobotCoreComponent::OnSceneConfigApplied()
 {
+	TryInitializeCompiledScene();
+}
+
+void UURSRobotCoreComponent::TryInitializeCompiledScene()
+{
+	AAMjManager* ManagerPtr = Manager.Get();
+	UWorld* World = GetWorld();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine || !World)
+	{
+		return;
+	}
+
+	if (!ManagerPtr->PhysicsEngine->GetModel() || !ManagerPtr->PhysicsEngine->GetData())
+	{
+		World->GetTimerManager().SetTimer(
+			CompiledSceneRetryTimer, this, &UURSRobotCoreComponent::TryInitializeCompiledScene,
+			0.01f, false);
+		return;
+	}
+
 	RebuildEndpointCache();
+	if (Endpoints.Num() == 0)
+	{
+		World->GetTimerManager().SetTimer(
+			CompiledSceneRetryTimer, this, &UURSRobotCoreComponent::TryInitializeCompiledScene,
+			0.01f, false);
+		return;
+	}
+
 	InitializeConfiguredRobotPoses();
 	OnRobotsChanged.Broadcast();
+	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized %d compiled robot endpoint(s)."), Endpoints.Num());
 }
 
 void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
@@ -605,7 +636,11 @@ UURSRobotCoreComponent::FQposLayout UURSRobotCoreComponent::DiscoverQposLayout(A
 	FQposLayout Layout;
 	if (!Articulation || !Model) return Layout;
 
-	for (UMjJoint* Joint : Articulation->GetJoints())
+	TArray<UMjJoint*> Joints = Articulation->GetJoints();
+	Joints.RemoveAll([](UMjJoint* Joint) { return !Joint || Joint->GetMjID() < 0; });
+	Joints.Sort([](const UMjJoint& L, const UMjJoint& R) { return L.GetMjID() < R.GetMjID(); });
+
+	for (UMjJoint* Joint : Joints)
 	{
 		if (!Joint) continue;
 		int32 JointId = Joint->GetMjID();
@@ -895,25 +930,63 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 {
 	UURSSceneConfigComponent* SceneComp = Cast<UURSSceneConfigComponent>(SceneConfigComp.Get());
+	FRobotEndpoint* Endpoint = FindEndpoint(ActorId);
+
+	FURSPoseResult Result;
+	Result.bOk = false;
+	if (!SceneComp || !Endpoint)
+	{
+		Result.Error = TEXT("not_ready");
+		Result.Message = TEXT("scene config or robot endpoint is unavailable");
+		return Result;
+	}
+
+	const URSoccerLab::FURSRobotSpawn* Spawn = SceneComp->GetActiveConfig().Robots.FindByPredicate(
+		[&ActorId](const URSoccerLab::FURSRobotSpawn& Candidate) { return Candidate.ActorId == ActorId; });
+	if (!Spawn)
+	{
+		Result.Error = TEXT("missing_scene_robot");
+		Result.Message = FString::Printf(TEXT("robot '%s' is absent from the active scene config"), *ActorId);
+		return Result;
+	}
+
+	URSoccerLab::FURSRobotTypeRegistry& Registry = URSoccerLab::FURSRobotTypeRegistry::Get();
+	Registry.RegisterDefaultTypes();
+	const URSoccerLab::FURSRobotType* RobotType = Registry.Find(Spawn->Type);
+	if (!RobotType)
+	{
+		Result.Error = TEXT("unknown_robot_type");
+		Result.Message = FString::Printf(TEXT("unknown robot type '%s'"), *Spawn->Type);
+		return Result;
+	}
+
+	TArray<float> InitialJointQpos;
+	InitialJointQpos.Reserve(Endpoint->Joints.Num());
+	for (const FJointInfo& Joint : Endpoint->Joints)
+	{
+		if (Joint.Name == TEXT("root"))
+		{
+			continue;
+		}
+		const float* InitialValue = RobotType->DefaultJointPositions.Find(Joint.Name);
+		if (!InitialValue)
+		{
+			Result.Error = TEXT("missing_default_joint_pose");
+			Result.Message = FString::Printf(TEXT("robot type '%s' has no default qpos for joint '%s'"),
+				*RobotType->Name, *Joint.Name);
+			return Result;
+		}
+		InitialJointQpos.Add(*InitialValue);
+	}
 
 	FVector InitialTrans = FVector::ZeroVector;
 	FQuat InitialRot = FQuat::Identity;
-	bool bHaveInitial = false;
-
-	if (SceneComp)
+	if (!SceneComp->GetInitialPose(ActorId, InitialTrans, InitialRot))
 	{
-		bHaveInitial = SceneComp->GetInitialPose(ActorId, InitialTrans, InitialRot);
+		Result.Error = TEXT("missing_initial_pose");
+		Result.Message = FString::Printf(TEXT("robot '%s' has no configured initial pose"), *ActorId);
+		return Result;
 	}
 
-	FURSPoseResult Result;
-	if (bHaveInitial)
-	{
-		Result = SetPose(ActorId, &InitialTrans, &InitialRot, nullptr);
-	}
-	else
-	{
-		Result = SetPose(ActorId, nullptr, nullptr, nullptr);
-	}
-
-	return Result;
+	return SetPose(ActorId, &InitialTrans, &InitialRot, &InitialJointQpos);
 }

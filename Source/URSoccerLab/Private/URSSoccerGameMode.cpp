@@ -80,3 +80,25 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 		Transport->RegisterComponent();
 	}
 }
+
+void AURSSoccerGameMode::StartPlay()
+{
+	Super::StartPlay();
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<AAMjManager> It(World); It; ++It)
+	{
+		if (UURSRobotCoreComponent* Core = It->FindComponentByClass<UURSRobotCoreComponent>())
+		{
+			// URLab has completed AAMjManager::BeginPlay and compiled mjModel by
+			// this point, so Initialize's retry path can build qpos endpoints.
+			Core->Initialize();
+		}
+		break;
+	}
+}

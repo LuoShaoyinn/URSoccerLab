@@ -88,9 +88,41 @@ class RobotConnection:
         self.conn.close()
 
 
-def default_command(actuator_names: list[str]) -> dict[str, float]:
-    """All actuators at 0 — neutral pose for fixed-base model."""
-    return {n: 0.0 for n in actuator_names}
+STANDING_JOINT_POSITIONS = {
+    "l_hip_pitch_joint": -0.25,
+    "l_hip_roll_joint": 0.0,
+    "l_thigh_joint": 0.0,
+    "l_calf_joint": 0.65,
+    "l_ankle_pitch_joint": -0.4,
+    "l_ankle_roll_joint": 0.0,
+    "r_hip_pitch_joint": -0.25,
+    "r_hip_roll_joint": 0.0,
+    "r_thigh_joint": 0.0,
+    "r_calf_joint": 0.65,
+    "r_ankle_pitch_joint": -0.4,
+    "r_ankle_roll_joint": 0.0,
+    "l_shoulder_pitch_joint": 0.0,
+    "l_shoulder_roll_joint": 0.2,
+    "l_upper_arm_joint": 0.0,
+    "l_elbow_joint": -1.2,
+    "r_shoulder_pitch_joint": 0.0,
+    "r_shoulder_roll_joint": -0.2,
+    "r_upper_arm_joint": 0.0,
+    "r_elbow_joint": -1.2,
+    "head_yaw_joint": 0.0,
+    "head_pitch_joint": 0.0,
+}
+
+
+def standing_command(actuator_names: list[str]) -> dict[str, float]:
+    """Position targets that hold the fixed Pi standing pose."""
+    command = {}
+    for actuator_name in actuator_names:
+        joint_name = actuator_name.removesuffix("_servo")
+        if joint_name not in STANDING_JOINT_POSITIONS:
+            raise RuntimeError(f"No standing target configured for actuator {actuator_name}")
+        command[actuator_name] = STANDING_JOINT_POSITIONS[joint_name]
+    return command
 
 
 def save_video(frames: list[np.ndarray], path: Path, fps: int):
@@ -147,10 +179,10 @@ def main() -> int:
     print(f"[demo] head: {head_yaw_name}, {head_pitch_name}", flush=True)
 
     # Build default commands
-    cmd0_default = default_command(rp0.actuator_names)
-    cmd1_default = default_command(rp1.actuator_names)
+    cmd0_default = standing_command(rp0.actuator_names)
+    cmd1_default = standing_command(rp1.actuator_names)
 
-    # Warm up: hold neutral pose for 1s
+    # Warm up: hold the standing pose for 1s.
     print("[demo] warm-up ...", flush=True)
     warmup_end = time.monotonic() + 1.0
     while time.monotonic() < warmup_end:
