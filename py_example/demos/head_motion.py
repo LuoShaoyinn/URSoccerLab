@@ -13,7 +13,7 @@ The sim must be running with a two-robot scene config, for example
         -RenderOffscreen -URSSceneConfig=/path/to/Config/URS_two_robot_scene.json
 
     cd py_example
-    uv run python ue_head_demo.py \
+    uv run python demos/head_motion.py \
         --host 127.0.0.1 --duration 10 \
         --video0 out/head_demo_rp0.mp4 \
         --video1 out/head_demo_rp1.mp4
@@ -31,8 +31,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from urs_tcp import FrameConn, TYPE_CAMERA, TYPE_JSON  # noqa: E402
+EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(EXAMPLE_ROOT))
+from common.tcp import FrameConn, TYPE_CAMERA, TYPE_JSON  # noqa: E402
 
 
 class RobotConnection:
@@ -69,7 +70,7 @@ class RobotConnection:
                 q = b.get("quat", [1, 0, 0, 0])
                 self.latest_up = 1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2)
             elif ftype == TYPE_CAMERA:
-                from urs_tcp import parse_camera
+                from common.tcp import parse_camera
                 cams = parse_camera(payload)
                 if not cams:
                     continue

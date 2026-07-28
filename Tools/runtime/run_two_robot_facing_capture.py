@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch URS_TwoRobotFacing offscreen and capture one camera frame from each robot.
+"""Launch URS_SoccerField offscreen and capture one camera frame from each robot.
 
 Robots are placed by Config/URS_two_robot_scene.json:
   robot_rp0 at (-1, 0, 0.3762) facing +X (toward robot_rp1)
@@ -23,7 +23,7 @@ import zlib
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
@@ -130,7 +130,7 @@ def main() -> int:
                 "uv",
                 "run",
                 "python",
-                "ue_vision_smoke.py",
+                "smoke/vision.py",
                 "--host",
                 "127.0.0.1",
                 "--robot",

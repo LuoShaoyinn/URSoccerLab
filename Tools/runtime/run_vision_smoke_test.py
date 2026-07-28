@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the URSoccerLab end-to-end vision smoke test.
 
-The test creates/refreshes a UE fixture map, starts that map offscreen, runs the
-Python zero-command client, and requires that a camera PNG is produced.
+The test validates the tracked baked assets, starts the field map offscreen,
+runs the Python zero-command client, and requires that a camera PNG is produced.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import zlib
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
@@ -208,44 +208,24 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--timeout-ms", type=int, default=30000)
     parser.add_argument("--out", type=Path, default=ROOT / "py_example" / "out" / "vision_smoke")
-    parser.add_argument("--skip-setup", action="store_true")
-    parser.add_argument("--scene-config", type=Path, help="scene JSON passed to the runtime")
+    parser.add_argument("--scene-config", type=Path, default=ROOT / "Config" / "URS_scene.json")
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
     parser.add_argument("--camera-frame-count", type=int, default=20)
-    parser.add_argument("--motion-regex", default="")
-    parser.add_argument("--motion-amplitude", type=float, default=1.0)
-    parser.add_argument("--motion-frequency-hz", type=float, default=0.0)
-    parser.add_argument("--motion-duration-sec", type=float, default=3.0)
-    parser.add_argument("--motion-rate-hz", type=float, default=30.0)
     args = parser.parse_args()
 
     if not args.ue.exists():
         raise FileNotFoundError(args.ue)
     args.out = args.out.resolve()
 
-    if not args.skip_setup:
-        run_checked(
-            [
-                str(args.ue),
-                str(PROJECT),
-                "-NullRHI",
-                "-DDC-ForceMemoryCache",
-                "-unattended",
-                "-nop4",
-                "-nosplash",
-                '-ExecCmds=Automation RunTests URSoccerLab.E2E.CreateVisionSmokeMap; Quit',
-            ],
-            ROOT,
-            ROOT / "Saved" / "Logs" / "URS_VisionSmokeSetup.log",
-        )
-
+    if not args.scene_config.exists():
+        raise FileNotFoundError(args.scene_config)
+    run_checked([sys.executable, str(ROOT / "Tools" / "editor" / "validate_baked_assets.py")], ROOT)
     run_checked(["uv", "sync"], ROOT / "py_example")
 
     args.out.mkdir(parents=True, exist_ok=True)
     sim_extra_args = list(args.sim_extra_arg)
-    if args.scene_config:
-        sim_extra_args.append(f"-URSSceneConfig={args.scene_config.resolve()}")
+    sim_extra_args.append(f"-URSSceneConfig={args.scene_config.resolve()}")
     sim = start_simulator(args.ue, sim_extra_args)
     sim_log_path = ROOT / "Saved" / "Logs" / "URS_VisionSmokeRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -276,7 +256,7 @@ def main() -> int:
             "uv",
             "run",
             "python",
-            "ue_vision_smoke.py",
+            "smoke/vision.py",
             "--host",
             args.host,
             "--robot",

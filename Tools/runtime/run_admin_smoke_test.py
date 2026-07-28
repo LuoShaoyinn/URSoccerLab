@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the URSoccerLab admin RPC smoke test end-to-end.
 
-Boots the simulator on the existing URS_SoccerField fixture map and runs
-``Tools/admin_smoke_client.py`` against ``robot_rp0``. Fails unless both
+Boots the tracked URS_SoccerField map and runs
+``Tools/runtime/admin_smoke_client.py`` against ``robot_rp0``. Fails unless both
 the set_pose and reset RPCs return ``ok: true``.
 """
 
@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
@@ -81,13 +81,16 @@ def drain_process_log(
     return ready, thread
 
 
-def run_checked(cmd: list[str], cwd: Path, log_path: Path) -> None:
+def run_checked(cmd: list[str], cwd: Path, log_path: Path | None = None) -> None:
     print("+", " ".join(cmd), flush=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log:
-        proc = subprocess.run(cmd, cwd=cwd, text=True, stdout=log, stderr=subprocess.STDOUT)
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as log:
+            proc = subprocess.run(cmd, cwd=cwd, text=True, stdout=log, stderr=subprocess.STDOUT)
+    else:
+        proc = subprocess.run(cmd, cwd=cwd)
     if proc.returncode != 0:
-        suffix = f" See {log_path}"
+        suffix = f" See {log_path}" if log_path else ""
         raise RuntimeError(f"command failed with exit code {proc.returncode}.{suffix}")
 
 
@@ -97,6 +100,7 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--robot", default="robot_rp0")
     parser.add_argument("--timeout-ms", type=int, default=30000)
+    parser.add_argument("--scene-config", type=Path, default=ROOT / "Config" / "URS_scene.json")
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
     args = parser.parse_args()
@@ -104,24 +108,14 @@ def main() -> int:
     if not args.ue.exists():
         raise FileNotFoundError(args.ue)
 
-    # Re-bake the smoke fixture so the latest MJCF (e.g. freejoint additions)
-    # is re-imported into the blueprint and the saved map.
-    run_checked(
-        [
-            str(args.ue),
-            str(PROJECT),
-            "-NullRHI",
-            "-DDC-ForceMemoryCache",
-            "-unattended",
-            "-nop4",
-            "-nosplash",
-            '-ExecCmds=Automation RunTests URSoccerLab.E2E.CreateVisionSmokeMap; Quit',
-        ],
-        ROOT,
-        ROOT / "Saved" / "Logs" / "URS_AdminSmokeSetup.log",
-    )
+    if not args.scene_config.exists():
+        raise FileNotFoundError(args.scene_config)
+    run_checked([sys.executable, str(ROOT / "Tools" / "editor" / "validate_baked_assets.py")], ROOT)
 
-    sim = start_simulator(args.ue, args.sim_extra_arg)
+    sim = start_simulator(
+        args.ue,
+        [*args.sim_extra_arg, f"-URSSceneConfig={args.scene_config.resolve()}"],
+    )
     sim_log_path = ROOT / "Saved" / "Logs" / "URS_AdminSmokeRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(
@@ -155,7 +149,7 @@ def main() -> int:
             "uv",
             "run",
             "python",
-            str(ROOT / "Tools" / "admin_smoke_client.py"),
+            str(ROOT / "Tools" / "runtime" / "admin_smoke_client.py"),
             "--host",
             args.host,
             "--robot",

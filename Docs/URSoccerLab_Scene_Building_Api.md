@@ -137,7 +137,7 @@ void FURSoccerLabModule::StartupModule()
     // Add a new type:
     URSoccerLab::FURSRobotType K1;
     K1.Name = TEXT("k1");
-    Example.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/example/example.example");
+    K1.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/example/example.example");
     K1.DefaultBaseHeightM = 0.35;
     URSoccerLab::FURSRobotTypeRegistry::Get().Register(K1);
 }
@@ -237,10 +237,10 @@ Super::InitGame                         // standard UE init
 → Find UURSSceneConfigComponent on manager
 → SceneComp->ApplyConfig(Error)        // spawn robots
    ← fires OnSceneConfigApplied
-   ← bridge pulls RobotNames, rebinds sockets
+   ← TCP transport rebuilds its robot listeners
 // ... later, World->BeginPlay fires ...
 // AAMjManager::BeginPlay → Compile() discovers all articulations
-// UURSZmqRobotBridgeComponent::BeginPlay → StartBridge()
+// UURSTcpTransportComponent::BeginPlay → StartTransport()
 ```
 
 ## What goes in the `.umap`
@@ -250,27 +250,25 @@ Only static, non-robot content:
 | Content | Source |
 | --- | --- |
 | Field geometry (static meshes) | `Assets/Scenes/SoccerField/source/field.glb` |
-| Skylight | `URSSceneBakeLibrary::SpawnSpecifiedCubemapSkyLight` |
-| `AAMjManager` | with `UURSZmqRobotBridgeComponent` + `UURSSceneConfigComponent` |
+| Skylight | `Tools/editor/bake_soccer_field.py` |
+| `AAMjManager` | with `UURSSceneConfigComponent` |
 | `WorldSettings` | `DefaultGameMode = AURSSoccerGameMode` |
 
-No `AMjArticulation` actors are baked. The bake fixture
-(`URSoccerLab.E2E.CreateVisionSmokeMap`) imports the pi_plus Blueprint so
-it is available for `LoadClass` at runtime, but does not place the robot
-in the level.
+No `AMjArticulation` actors are baked. Robot Blueprints are imported and
+tracked separately, then resolved with `LoadClass` at runtime.
 
 ## Rebuilding the field
 
 The field geometry is baked from `Assets/Scenes/SoccerField/source/field.glb`
 into `/Game/Levels/URS_SoccerField.umap` by the bake script
-`Tools/ue_bake_soccer_field_scene.py` (executed inside UE Editor).
+`Tools/editor/bake_soccer_field.py` (executed inside UE Editor).
 
 ```bash
 # Re-import field meshes from the GLB and rebuild the level
-python3 Tools/create_soccer_field_scene.py --nullrhi
+python3 Tools/editor/create_soccer_field_scene.py --nullrhi
 
-# Then re-run the vision smoke test (imports Blueprint, spawns manager, captures camera)
-UV_CACHE_DIR=/tmp/uv-cache uv run python Tools/run_vision_smoke_test.py --out py_example/out/vision_smoke
+# Then validate the baked assets and capture a camera frame.
+UV_CACHE_DIR=/tmp/uv-cache uv run --project py_example python Tools/runtime/run_vision_smoke_test.py --out py_example/out/vision_smoke
 ```
 
 The Interchange glTF importer (`bBakeMeshes = true` by default) bakes
@@ -279,10 +277,8 @@ and the 100x m-to-cm conversion — directly into mesh vertices. The bake
 script therefore spawns every mesh actor at the origin with identity
 rotation and unit scale so the node transform is not double-applied.
 
-The `--skip-setup` flag on `run_vision_smoke_test.py` skips the
-`CreateVisionSmokeMap` automation test (which re-imports the pi_plus
-Blueprint, adds the manager + bridge, and saves the level) and launches
-directly on the existing map.
+`run_vision_smoke_test.py` validates the tracked baked assets, then launches
+directly on the existing map with the requested scene config.
 
 ## File layout
 
@@ -295,7 +291,7 @@ Config/
 Assets/
   Robots/
     pi_plus/
-      pi_plus_stereo_camera.xml  source MJCF (fixed-base, no freejoint)
+      pi_plus.xml                source MJCF (fixed-base, no freejoint)
   Scenes/
     SoccerField/
       source/field.glb           field geometry
@@ -313,4 +309,13 @@ Source/URSoccerLab/
       URSSceneConfig.cpp
       URSSceneConfigComponent.cpp
       URSRobotTypeRegistry.cpp
+
+Tools/
+  editor/                        UE Python asset import and field bake scripts
+  runtime/                       headless TCP smoke and capture launchers
+
+py_example/
+  common/tcp.py                  shared protocol client
+  demos/head_motion.py           motor-command camera demo
+  smoke/vision.py                zero-command camera client
 ```

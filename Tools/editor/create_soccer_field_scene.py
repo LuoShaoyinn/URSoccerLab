@@ -8,11 +8,11 @@ import subprocess
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
 LOG_PATH = ROOT / "Saved" / "Logs" / "URS_CreateSoccerFieldScene.log"
-BAKE_SCRIPT = ROOT / "Tools" / "ue_bake_soccer_field_scene.py"
+BAKE_SCRIPT = ROOT / "Tools" / "editor" / "bake_soccer_field.py"
 SUCCESS_MARKER = ROOT / "Saved" / "Logs" / "URS_CreateSoccerFieldScene.done"
 
 

@@ -13,7 +13,7 @@ uv sync
 
 ```bash
 uv run python -c "
-from urs_tcp import RobotClient
+from common.tcp import RobotClient
 client = RobotClient('127.0.0.1', 10000)
 client.send_command({'head_pitch_joint': 0.1})
 for kind, data in client.recv():
@@ -28,7 +28,7 @@ for kind, data in client.recv():
 ## AdminClient — set_pose, reset, lock_pose
 
 ```python
-from urs_tcp import AdminClient
+from common.tcp import AdminClient
 admin = AdminClient('127.0.0.1', 11000)
 admin.set_pose('robot_rp0', translation_m=[0.5, 0.0, 0.3762])
 admin.reset('robot_rp0')
@@ -38,17 +38,17 @@ admin.close()
 ## Head Demo (two robots facing each other)
 
 ```bash
-uv run python ue_head_demo.py
+uv run python demos/head_motion.py
 ```
 
-Requires `Config/URS_two_robot_scene.json` and `/Game/Levels/URS_TwoRobotFacing`.
+Start the simulator with `Config/URS_two_robot_scene.json` and `/Game/Levels/URS_SoccerField`.
 
 ## Vision Smoke Test
 
 From the project root:
 
 ```bash
-uv run python Tools/run_vision_smoke_test.py
+uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
 ```
 
 Starts the simulator, connects via TCP, sends zero commands, captures camera

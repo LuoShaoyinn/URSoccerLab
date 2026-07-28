@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bake the soccer-field GLB plus default lighting into a UE level.
 
-Runs inside Unreal Editor via ``-game -ExecCmds="py Tools/ue_bake_soccer_field_scene.py; Quit"``.
+Runs inside Unreal Editor via ``-ExecutePythonScript=Tools/editor/bake_soccer_field.py``.
 Uses only native UE Python APIs — no project C++ dependency.
 """
 
@@ -14,7 +14,7 @@ from pathlib import Path
 import unreal
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FIELD_GLB = ROOT / "Assets/Scenes/SoccerField/source/field.glb"
 FIELD_IMPORT_PATH = "/Game/URSoccerLab/Scenes/SoccerField"
 LEVEL_NAME = "URS_SoccerField"

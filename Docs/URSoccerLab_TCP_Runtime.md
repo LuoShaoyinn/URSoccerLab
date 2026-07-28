@@ -49,10 +49,10 @@ Supported commands:
 - **reset** — return the robot to its initial spawn pose.
 - **lock_pose / unlock_pose** — hold a robot at a fixed pose (overrides physics).
 
-Minimal example using `py_example/urs_tcp.py`:
+Minimal example using `py_example/common/tcp.py`:
 
 ```python
-from urs_tcp import AdminClient
+from common.tcp import AdminClient
 
 admin = AdminClient("127.0.0.1", 11000)
 reply = admin.set_pose("robot_rp0",
@@ -66,7 +66,7 @@ admin.close()
 ## Quick Client Check
 
 ```python
-from urs_tcp import RobotClient
+from common.tcp import RobotClient
 
 client = RobotClient("127.0.0.1", 10000)
 client.send_command({"head_pitch_joint": 0.1})
@@ -76,8 +76,8 @@ for kind, data in client.recv():
 
 ## Dynamic Scene Config
 
-`UURSSceneConfigComponent` reads `Config/URS_scene.json` on `BeginPlay` and
-spawns the listed robots via the registered robot types. The registered type
+`AURSSoccerGameMode::InitGame` reads `Config/URS_scene.json` before
+`AAMjManager::BeginPlay` and spawns the listed robots via the registered types. The registered type
 is `pi_plus` (fixed base, Z=0.3762) against
 `/Game/URSoccerLab/Robots/pi_plus/pi_plus`.
 
@@ -112,4 +112,5 @@ make UnrealEditor-Linux-Development ARGS="-project=$PROJ"
   -ExecCmds="Automation RunTests URSoccerLab; Quit"
 ```
 
-Result: 15 tests found, all passing.
+The runtime automation suite currently contains 9 tests. Run it after any
+runtime C++ change, together with the TCP smoke clients in `Tools/runtime/`.

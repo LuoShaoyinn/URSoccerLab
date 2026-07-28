@@ -3,7 +3,7 @@
 
 Run the simulator with TCP transport active, then:
 
-    python Tools/admin_smoke_client.py --robot robot_rp0
+    uv run --project py_example python Tools/runtime/admin_smoke_client.py --robot robot_rp0
 
 The client connects to the admin TCP port, exercises set_pose (joint_qpos),
 set_pose (translation), reset, and a deliberate dim_mismatch error.
@@ -17,9 +17,10 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_example"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "py_example"))
 
-from urs_tcp import AdminClient
+from common.tcp import AdminClient
 
 
 def rpc(client: AdminClient, command: str, args: dict, timeout_ms: int) -> dict:
