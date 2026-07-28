@@ -42,37 +42,41 @@ def import_mjcf(xml_path: Path, robot_name: str) -> str:
     return bp_path
 
 
-def migrate_assets(old_prefix: str, new_prefix: str, robot_name: str) -> int:
-    """Rename all assets under old_prefix to new_prefix using asset tools."""
+def migrate_robot_assets(
+    blueprint_package_path: str,
+    dependency_path: str,
+    robot_path: str,
+    robot_name: str,
+) -> int:
+    """Atomically move the imported Blueprint and every dependency asset."""
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    assets = registry.get_assets_by_path(old_prefix, recursive=True)
-    rename_data = []
-    moved = 0
+    registry.scan_paths_synchronous([dependency_path], force_rescan=True)
 
-    for asset_data in assets:
-        old_path = asset_data.package_name
+    blueprint = unreal.load_asset(f"{blueprint_package_path}.{robot_name}")
+    if not blueprint:
+        raise RuntimeError(f"Blueprint not found at {blueprint_package_path}.{robot_name}")
+    rename_data = [unreal.AssetRenameData(blueprint, robot_path, robot_name)]
+
+    for asset_data in registry.get_assets_by_path(dependency_path, recursive=True):
         asset = asset_data.get_asset()
         if not asset:
             continue
+        new_package = str(asset_data.package_path).replace(
+            dependency_path, f"{robot_path}/dependencies", 1
+        )
+        rename_data.append(unreal.AssetRenameData(asset, new_package, str(asset_data.asset_name)))
 
-        obj_name = asset_data.asset_name
-        if str(old_path) == f"{old_prefix}/{robot_name}":
-            new_pkg = new_prefix
-            new_name = robot_name
-        else:
-            new_pkg = str(asset_data.package_path).replace(old_prefix, new_prefix, 1)
-            new_name = str(obj_name)
-
-        rd = unreal.AssetRenameData(asset, new_pkg, new_name)
-        rename_data.append(rd)
-        moved += 1
-
-    if rename_data:
-        asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
-        asset_tools.rename_assets(rename_data)
-
-    unreal.log(f"[import_robot] migrated {moved} asset(s) to {new_prefix}")
+    if not unreal.AssetToolsHelpers.get_asset_tools().rename_assets(rename_data):
+        raise RuntimeError(f"could not migrate imported robot assets to {robot_path}")
+    moved = len(rename_data)
+    unreal.log(f"[import_robot] migrated {moved} asset(s) to {robot_path}")
     return moved
+
+
+def remove_existing_robot_assets(robot_path: str) -> None:
+    if unreal.EditorAssetLibrary.does_directory_exist(robot_path):
+        if not unreal.EditorAssetLibrary.delete_directory(robot_path):
+            raise RuntimeError(f"could not remove existing robot assets at {robot_path}")
 
 
 def main() -> None:
@@ -86,13 +90,11 @@ def main() -> None:
 
     import_mjcf(args.xml, args.name)
 
-    old_prefix = f"{IMPORT_TMP_PATH}/{args.name}"
     old_assets = f"{IMPORT_TMP_PATH}/{args.name}_ue_Assets"
     new_prefix = f"/Game/URSoccerLab/Robots/{args.name}"
-    new_assets = f"{new_prefix}/dependencies"
 
-    migrate_assets(old_prefix, new_prefix, args.name)
-    migrate_assets(old_assets, new_assets, args.name)
+    remove_existing_robot_assets(new_prefix)
+    migrate_robot_assets(f"{IMPORT_TMP_PATH}/{args.name}", old_assets, new_prefix, args.name)
 
     bp_path = f"{new_prefix}/{args.name}.{args.name}"
     if not unreal.EditorAssetLibrary.does_asset_exist(bp_path):

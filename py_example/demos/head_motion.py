@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Two-robot face-to-face demo with head yaw/pitch sweep.
 
-Uses the fixed-base pi_plus_stereo_camera_ue model (22 actuators including
+Uses the floating-base pi_plus model (22 actuators including
 head_yaw_joint_servo and head_pitch_joint_servo).  Pure motor-command
 control via the per-robot TCP port — no admin API, no lock_pose, no
 physics override.  Just like driving a real robot.

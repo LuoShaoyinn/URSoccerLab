@@ -78,7 +78,7 @@ for kind, data in client.recv():
 
 `AURSSoccerGameMode::InitGame` reads `Config/URS_scene.json` before
 `AAMjManager::BeginPlay` and spawns the listed robots via the registered types. The registered type
-is `pi_plus` (fixed base, Z=0.3762) against
+is `pi_plus` (floating base, spawn Z=0.3762) against
 `/Game/URSoccerLab/Robots/pi_plus/pi_plus`.
 
 The runtime accepts `-URSSceneConfig=<path>` to override the scene JSON. A

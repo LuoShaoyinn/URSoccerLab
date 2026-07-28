@@ -33,6 +33,11 @@ def rpc(client: AdminClient, command: str, args: dict, timeout_ms: int) -> dict:
     raise TimeoutError(f"admin request '{command}' timed out after {timeout_ms} ms")
 
 
+def reply_result(reply: dict) -> dict:
+    result = reply.get("result")
+    return result if isinstance(result, dict) else reply
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -49,7 +54,8 @@ def main() -> int:
         summary["ops"].append({"op": "get_pose_initial", "reply": initial_reply})
         if not initial_reply.get("ok"):
             raise RuntimeError(f"initial get_pose failed: {initial_reply}")
-        initial_joint_qpos = initial_reply.get("joint_qpos", [])
+        initial_pose = reply_result(initial_reply)
+        initial_joint_qpos = initial_pose.get("joint_qpos", [])
         if not initial_joint_qpos:
             raise RuntimeError(f"initial get_pose missing joint_qpos: {initial_reply}")
 
@@ -72,7 +78,7 @@ def main() -> int:
         summary["ops"].append({"op": "get_pose_after_set", "reply": verify_reply})
         if not verify_reply.get("ok"):
             raise RuntimeError(f"post-set get_pose failed: {verify_reply}")
-        verified = verify_reply.get("joint_qpos", [])
+        verified = reply_result(verify_reply).get("joint_qpos", [])
         if len(verified) != joint_dim:
             raise RuntimeError(f"post-set joint_qpos length {len(verified)} != expected {joint_dim}")
         if abs(verified[0] - moved_joints[0]) > 0.01:
@@ -81,7 +87,7 @@ def main() -> int:
                 f"expected joint[0]={moved_joints[0]:.4f}, got {verified[0]:.4f}"
             )
 
-        initial_t = initial_reply.get("translation_m", [0, 0, 0])
+        initial_t = initial_pose.get("translation_m", [0, 0, 0])
         translation_probe = rpc(client, "set_pose", {
             "actor_id": args.robot,
             "translation_m": [0.5, 0.0, max(initial_t[2] if initial_t else 0, 0.0)],
@@ -90,7 +96,7 @@ def main() -> int:
         summary["ops"].append({"op": "set_pose_translation_probe", "reply": translation_probe})
         if translation_probe.get("ok"):
             verify_t = rpc(client, "get_pose", {"actor_id": args.robot}, args.timeout_ms)
-            verified_t = verify_t.get("translation_m", [])
+            verified_t = reply_result(verify_t).get("translation_m", [])
             if len(verified_t) != 3 or abs(verified_t[0] - 0.5) > 1e-3:
                 raise RuntimeError(f"set_pose translation did not land in MuJoCo xpos: got {verified_t}")
             summary["ops"].append({"op": "get_pose_after_translate", "reply": verify_t})
@@ -104,7 +110,7 @@ def main() -> int:
 
         reset_verify = rpc(client, "get_pose", {"actor_id": args.robot}, args.timeout_ms)
         summary["ops"].append({"op": "get_pose_after_reset", "reply": reset_verify})
-        reset_joints = reset_verify.get("joint_qpos", [])
+        reset_joints = reply_result(reset_verify).get("joint_qpos", [])
         if len(reset_joints) != joint_dim:
             raise RuntimeError(f"post-reset joint_qpos length mismatch")
         for idx, value in enumerate(reset_joints):

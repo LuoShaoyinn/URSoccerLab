@@ -291,7 +291,7 @@ Config/
 Assets/
   Robots/
     pi_plus/
-      pi_plus.xml                source MJCF (fixed-base, no freejoint)
+      pi_plus.xml                source MJCF (floating-base root freejoint)
   Scenes/
     SoccerField/
       source/field.glb           field geometry
