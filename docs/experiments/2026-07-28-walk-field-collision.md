@@ -32,13 +32,16 @@ current project MJCF.
 - Video artifact: H.264, `640x480`, 81 frames at 15 FPS, encoded duration `5.4 s`.
 - The simulator advanced slower than real time, so the 8-second wall-clock
   policy interval produced 5.4 seconds of camera simulation time.
-- All inspected frames were black. Therefore the video does **not** validate
-  the UE render path. It reproduces the existing camera startup/capture issue
-  seen by the vision smoke test.
+- All inspected frames were black. Follow-up comparison with the known-good
+  `head_demo_runtime_rp0_last.png` capture showed that the current free-base
+  robot falls onto the new MuJoCo ground under zero motor targets; its base
+  settled near `z=0.08 m` with an upright score near zero. The eye cameras
+  then point into the black sky. This is a standing-pose/control issue, not a
+  missing field mesh or a camera-stream startup failure.
 
 ## Interpretation
 
 The run exercises TCP motor commands and the new MuJoCo ground contact; it
-does not establish that the old policy is a valid gait or that camera capture
-is working. The next focused task is to make camera publication wait for a
-nonblank rendered frame, then rerun this exact command.
+does not establish that the old policy is a valid gait. The next focused task
+is to supply the actual standing joint targets (or calibrate the position
+servo gains) before rerunning this exact command.
