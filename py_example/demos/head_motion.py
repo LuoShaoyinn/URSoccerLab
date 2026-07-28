@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Two-robot face-to-face demo with head yaw/pitch sweep.
+"""Capture two standing robots, optionally sweeping both heads.
 
 Uses the floating-base pi_plus model (22 actuators including
 head_yaw_joint_servo and head_pitch_joint_servo).  Pure motor-command
 control via the per-robot TCP port — no admin API, no lock_pose, no
 physics override.  Just like driving a real robot.
 
-The sim must be running with a two-robot scene config, for example
-``Config/URS_two_robot_scene.json``, passed with ``-URSSceneConfig``:
+The sim must be running with
+``Config/examples/two_robots_face_to_face.json`` passed with
+``-URSSceneConfig``:
 
     UnrealEditor URSoccerLab.uproject /Game/Levels/URS_SoccerField -game \
-        -RenderOffscreen -URSSceneConfig=/path/to/Config/URS_two_robot_scene.json
+        -RenderOffscreen -URSSceneConfig=/path/to/Config/examples/two_robots_face_to_face.json
 
     cd py_example
-    uv run python demos/head_motion.py \
+    uv run python demos/head_motion.py --mode sweep \
         --host 127.0.0.1 --duration 10 \
         --video0 out/head_demo_rp0.mp4 \
         --video1 out/head_demo_rp1.mp4
@@ -108,6 +109,8 @@ def main() -> int:
     ap.add_argument("--robot0-port", type=int, default=10000)
     ap.add_argument("--robot1-port", type=int, default=10001)
     ap.add_argument("--duration", type=float, default=10.0)
+    ap.add_argument("--mode", choices=("sweep", "static"), default="sweep",
+                    help="sweep both robots' head joints, or capture with no motor commands")
     ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=15)
     ap.add_argument("--video0", type=Path, default=Path("py_example/out/head_demo_rp0.mp4"))
@@ -133,29 +136,19 @@ def main() -> int:
 
     print(f"[demo] {len(rp0.actuator_names)} actuators: {rp0.actuator_names[-4:]}", flush=True)
 
-    # Identify head actuators
-    head_yaw_name = next((n for n in rp0.actuator_names if "head_yaw" in n), None)
-    head_pitch_name = next((n for n in rp0.actuator_names if "head_pitch" in n), None)
-    if not head_yaw_name or not head_pitch_name:
-        print(f"[demo] ERROR: head actuators not found in {rp0.actuator_names}", flush=True)
-        return 1
-    print(f"[demo] head: {head_yaw_name}, {head_pitch_name}", flush=True)
+    head_yaw_name = None
+    head_pitch_name = None
+    if args.mode == "sweep":
+        head_yaw_name = next((n for n in rp0.actuator_names if "head_yaw" in n), None)
+        head_pitch_name = next((n for n in rp0.actuator_names if "head_pitch" in n), None)
+        rp1_head_yaw_name = next((n for n in rp1.actuator_names if "head_yaw" in n), None)
+        rp1_head_pitch_name = next((n for n in rp1.actuator_names if "head_pitch" in n), None)
+        if not head_yaw_name or not head_pitch_name or not rp1_head_yaw_name or not rp1_head_pitch_name:
+            print(f"[demo] ERROR: head actuators not found in {rp0.actuator_names}", flush=True)
+            return 1
+        print(f"[demo] heads: {head_yaw_name}, {head_pitch_name}", flush=True)
 
-    # Build default commands
-    cmd0_default: dict[str, float] = {}
-    cmd1_default: dict[str, float] = {}
-
-    # Warm up with Pi's MJCF-native zero joint state for 1s.
-    print("[demo] warm-up ...", flush=True)
-    warmup_end = time.monotonic() + 1.0
-    while time.monotonic() < warmup_end:
-        rp0.pump(); rp1.pump()
-        rp0.send_command(cmd0_default)
-        rp1.send_command(cmd1_default)
-        time.sleep(0.02)
-
-    # Sweep head yaw/pitch on rp0; rp1 holds still
-    print(f"[demo] sweeping head for {args.duration:.0f}s ...", flush=True)
+    print(f"[demo] {args.mode} capture for {args.duration:.0f}s ...", flush=True)
     interval = 1.0 / args.cmd_hz
     t0 = time.monotonic()
     next_cmd = t0
@@ -167,14 +160,13 @@ def main() -> int:
             rp0.pump(); rp1.pump()
 
             t = (now - t0) / args.duration
-            head_yaw = 0.8 * math.sin(2.0 * math.pi * t)
-            head_pitch = 0.4 * math.sin(4.0 * math.pi * t)
-
-            cmd = dict(cmd0_default)
-            cmd[head_yaw_name] = head_yaw
-            cmd[head_pitch_name] = head_pitch
-            rp0.send_command(cmd)
-            rp1.send_command(cmd1_default)
+            head_yaw = 0.0
+            head_pitch = 0.0
+            if args.mode == "sweep":
+                head_yaw = 0.8 * math.sin(2.0 * math.pi * t)
+                head_pitch = 0.4 * math.sin(4.0 * math.pi * t)
+                rp0.send_command({head_yaw_name: head_yaw, head_pitch_name: head_pitch})
+                rp1.send_command({rp1_head_yaw_name: -head_yaw, rp1_head_pitch_name: head_pitch})
 
             step += 1
             if step % 30 == 0:

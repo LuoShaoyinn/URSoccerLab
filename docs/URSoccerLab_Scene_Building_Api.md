@@ -37,7 +37,7 @@ The key ordering guarantee: **robots exist in the world before
 
 ## Config file format
 
-`Config/URS_scene.json`:
+For example, `Config/examples/two_robots_face_to_face.json`:
 
 ```json
 {
@@ -289,8 +289,10 @@ directly on the existing map with the requested scene config.
 
 ```
 Config/
-  URS_scene.json                 default scene config (two robots facing)
-  URS_two_robot_scene.json       alternate config (same layout, kept for reference)
+  URS_scene.json                 default one-robot scene config
+  examples/
+    two_robots_face_to_face.json two standing robots at (-1, 0) and (1, 0)
+    walker_and_observer.json     walker at (0, 0), observer at (0, 3)
   DefaultEngine.ini              GlobalDefaultGameMode = AURSSoccerGameMode
 
 Assets/

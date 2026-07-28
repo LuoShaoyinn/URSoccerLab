@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Run the mos-brain Pi Plus policy and record its left-eye camera.
+"""Run one Pi Plus policy while recording both robots' left-eye cameras.
 
-The simulator must be running with ``Config/URS_scene.json``.  This is an
-external client: it reads TCP state, sends named motor position targets, and
-does not use the admin pose API.
+The simulator must be running with
+``Config/examples/walker_and_observer.json``. Robot ``robot_rp0`` walks from
+``(0, 0)`` along ``+X``; ``robot_rp1`` stands at ``(0, 3)`` facing ``-Y``.
+This external client reads TCP state, sends named motor position targets only
+to the walker, and does not use the admin pose API.
 
 The policy was trained for the older mos-brain Pi dynamics. It exercises the
 runtime protocol and capture path, but it is not a validated gait for the
@@ -13,7 +15,9 @@ Run with the policy environment (which provides PyTorch):
 
     source py_example/.venv-walk/bin/activate
     uv run --no-project --active python py_example/demos/walk_policy.py \
-        --vx 0.35 --duration 8 --video py_example/out/walk_rp0.mp4
+        --vx 0.35 --duration 8 \
+        --video py_example/out/walker.mp4 \
+        --observer-video py_example/out/observer.mp4
 """
 from __future__ import annotations
 
@@ -164,23 +168,28 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--robot-port", type=int, default=10000)
+    parser.add_argument("--observer-port", type=int, default=10001)
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
     parser.add_argument("--duration", type=float, default=8.0)
     parser.add_argument("--vx", type=float, default=0.35)
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--video-fps", type=int, default=15)
-    parser.add_argument("--video", type=Path, default=Path("py_example/out/walk_rp0.mp4"))
+    parser.add_argument("--video", type=Path, default=Path("py_example/out/walker.mp4"))
+    parser.add_argument("--observer-video", type=Path, default=Path("py_example/out/observer.mp4"))
     args = parser.parse_args()
 
     policy = load_policy(args.policy)
     client = RobotClient(args.host, args.robot_port)
+    observer = RobotClient(args.host, args.observer_port)
     command = np.asarray([np.clip(args.vx, -1.5, 1.5), 0.0, 0.0], dtype=np.float32)
     history = np.zeros(OBS_STEP_DIM * OBS_HISTORY, dtype=np.float32)
     last_action = np.zeros(20, dtype=np.float32)
     targets = DEFAULT_DOF.copy()
     latest_state: dict | None = None
     frames: list[np.ndarray] = []
+    observer_frames: list[np.ndarray] = []
     last_frame_time = float("-inf")
+    observer_last_frame_time = float("-inf")
     actuator_names: list[str] | None = None
 
     def send_targets() -> None:
@@ -216,10 +225,31 @@ def main() -> int:
                 frames.append(np.asarray(image))
                 last_frame_time = camera["sim_time"]
 
+    def pump_observer() -> None:
+        nonlocal observer_last_frame_time
+        for kind, payload in observer.recv():
+            if kind != "camera":
+                continue
+            camera = payload[0]
+            if camera["sim_time"] - observer_last_frame_time < 1.0 / args.video_fps:
+                continue
+            if not camera["data"]:
+                continue
+            if camera["codec"] == "jpeg":
+                image = Image.open(io.BytesIO(camera["data"])).convert("RGB")
+            elif camera["codec"] == "raw":
+                image = Image.frombytes("RGBA", (camera["width"], camera["height"]), camera["data"])
+                image = image.convert("RGB")
+            else:
+                raise RuntimeError(f"Unsupported camera codec: {camera['codec']}")
+            observer_frames.append(np.asarray(image))
+            observer_last_frame_time = camera["sim_time"]
+
     try:
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline and (latest_state is None or actuator_names is None):
             pump()
+            pump_observer()
             send_targets()
             time.sleep(0.002)
         if latest_state is None or actuator_names is None:
@@ -231,6 +261,7 @@ def main() -> int:
         while time.monotonic() < warmup_until:
             send_targets()
             pump()
+            pump_observer()
             time.sleep(0.01)
 
         print(f"[walk] walking at vx={command[0]:.2f} m/s for {args.duration:.1f} s")
@@ -239,6 +270,7 @@ def main() -> int:
         next_policy = time.monotonic()
         while time.monotonic() < end:
             pump()
+            pump_observer()
             now = time.monotonic()
             if latest_state is not None and now >= next_policy:
                 step = observation(latest_state, command, last_action)
@@ -253,12 +285,15 @@ def main() -> int:
             time.sleep(0.001)
 
         pump()
+        pump_observer()
         end_x = latest_state["base"]["pos"][0] if latest_state else start_x
         print(f"[walk] forward displacement: {end_x - start_x:+.3f} m")
         save_video(frames, args.video, args.video_fps)
+        save_video(observer_frames, args.observer_video, args.video_fps)
         return 0
     finally:
         client.close()
+        observer.close()
 
 
 if __name__ == "__main__":

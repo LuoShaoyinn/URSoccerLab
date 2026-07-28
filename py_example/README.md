@@ -35,30 +35,66 @@ admin.reset('robot_rp0')
 admin.close()
 ```
 
-## Head Demo (two robots facing each other)
+## Run A Scene
+
+Start an offscreen runtime from the project root with the scene config named
+by the example:
 
 ```bash
-uv run python demos/head_motion.py
+/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor \
+  "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game -RenderOffscreen \
+  -DDC-ForceMemoryCache -unattended -nop4 -nosplash -NoSound \
+  -URSSceneConfig="$PWD/Config/examples/two_robots_face_to_face.json"
 ```
 
-Start the simulator with `Config/URS_two_robot_scene.json` and `/Game/Levels/URS_SoccerField`.
+Each client uses TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port
+`10001`. Output files go under `py_example/out/` and are ignored by Git.
 
-## Walking Camera Video
+## 1. Head Motion
 
-`demos/walk_policy.py` keeps the mos-brain locomotion policy outside Unreal.
-It drives only the TCP motor-command API and records the left-eye camera:
+Two standing robots are at `(-1, 0)` and `(1, 0)`, facing one another. Both
+heads sweep while the legs remain uncommanded. Both left-eye videos are
+recorded.
+
+```bash
+uv run python demos/head_motion.py --mode sweep \
+  --video0 out/head_motion_rp0.mp4 --video1 out/head_motion_rp1.mp4
+```
+
+Use `Config/examples/two_robots_face_to_face.json` in the runtime command.
+
+## 2. Walker And Observer
+
+`robot_rp0` starts at `(0, 0)` and walks along `+X`. `robot_rp1` stands at
+`(0, 3)` facing the walker. The policy sends motor commands only to `robot_rp0`
+and records both left-eye cameras:
 
 ```bash
 source py_example/.venv-walk/bin/activate
 uv run --no-project --active python py_example/demos/walk_policy.py \
-  --vx 0.35 --duration 8 --video py_example/out/walk_rp0.mp4
+  --vx 0.35 --duration 8 \
+  --video py_example/out/walker.mp4 \
+  --observer-video py_example/out/observer.mp4
 ```
 
+Use `Config/examples/walker_and_observer.json` in the runtime command.
 It requires `refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt`.
 The policy was trained against the older mos-brain Pi model. It is useful for
 exercising the TCP motor and camera path, but is not a validated gait for the
 current Pi MJCF until its dynamics and actuator calibration are matched or the
 policy is retrained.
+
+## 3. Static Face-To-Face
+
+The same `(-1, 0)` / `(1, 0)` scene, but neither robot receives a motor
+command. This is a two-camera standing capture, not a control test:
+
+```bash
+uv run python demos/head_motion.py --mode static \
+  --video0 out/standing_rp0.mp4 --video1 out/standing_rp1.mp4
+```
+
+Use `Config/examples/two_robots_face_to_face.json` in the runtime command.
 
 ## Vision Smoke Test
 

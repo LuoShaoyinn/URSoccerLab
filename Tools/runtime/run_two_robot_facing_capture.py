@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch URS_SoccerField offscreen and capture one camera frame from each robot.
 
-Robots are placed by Config/URS_two_robot_scene.json:
+Robots are placed by Config/examples/two_robots_face_to_face.json:
   robot_rp0 at (-1, 0, 0.3762) facing +X (toward robot_rp1)
   robot_rp1 at ( 1, 0, 0.3762) facing -X (toward robot_rp0)
 
@@ -28,7 +28,7 @@ DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binarie
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
 OUT_DIR = ROOT / "py_example" / "out" / "two_robot_facing"
-DEFAULT_SCENE_CONFIG = ROOT / "Config" / "URS_two_robot_scene.json"
+DEFAULT_SCENE_CONFIG = ROOT / "Config" / "examples" / "two_robots_face_to_face.json"
 
 
 def start_simulator(ue: Path, scene_config: Path) -> subprocess.Popen[str]:
