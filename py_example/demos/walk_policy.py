@@ -57,8 +57,8 @@ DEFAULT_DOF = np.asarray(
      -0.25, 0.0, 0.0, 0.65, -0.4, 0.0, 0.0, -0.2, 0.0, -1.2],
     dtype=np.float32,
 )
-# The runtime initializes Pi at DEFAULT_DOF, matching the pre-trained policy's
-# position-control reference.
+# The walking scene configuration initializes Pi at DEFAULT_DOF, matching this
+# pre-trained policy's position-control reference.
 OBS_STEP_DIM = 69
 OBS_HISTORY = 5
 ACTION_SCALE = 0.25

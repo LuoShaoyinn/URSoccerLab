@@ -11,6 +11,8 @@ struct URSOCCERLAB_API FURSRobotSpawn
 	FString Type;
 	TOptional<FVector> TranslationMeters;
 	TOptional<FQuat> RotationQuatXyzw;
+	// Optional named qpos values for every non-root joint of this robot type.
+	TOptional<TMap<FString, float>> JointPositionsRad;
 };
 
 struct URSOCCERLAB_API FURSSceneConfig

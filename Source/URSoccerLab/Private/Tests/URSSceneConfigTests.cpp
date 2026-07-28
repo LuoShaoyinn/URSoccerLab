@@ -60,7 +60,8 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 {
 	FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
 
-	const FURSSceneConfig Original = FURSSceneConfigIo::MakeDefault();
+	FURSSceneConfig Original = FURSSceneConfigIo::MakeDefault();
+	Original.Robots[0].JointPositionsRad = TMap<FString, float>{{TEXT("head_yaw_joint"), 0.25f}};
 	const FString Path = WriteTempConfig(Original);
 	TestTrue(TEXT("temp config written"), !Path.IsEmpty());
 
@@ -75,6 +76,8 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("round-trip translation present"), Loaded.Robots[0].TranslationMeters.IsSet());
 	TestEqual(TEXT("round-trip translation Z"), Loaded.Robots[0].TranslationMeters.GetValue().Z, 0.3762);
 	TestTrue(TEXT("round-trip rotation present"), Loaded.Robots[0].RotationQuatXyzw.IsSet());
+	TestTrue(TEXT("round-trip joint positions present"), Loaded.Robots[0].JointPositionsRad.IsSet());
+	TestEqual(TEXT("round-trip head yaw"), Loaded.Robots[0].JointPositionsRad.GetValue()[TEXT("head_yaw_joint")], 0.25f);
 
 	IFileManager::Get().Delete(*Path);
 	return true;
@@ -116,6 +119,9 @@ bool FURSSceneConfigLoadRejectionTest::RunTest(const FString& Parameters)
 
 	TestFalse(TEXT("non-finite translation rejected"),
 		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[{\"actor_id\":\"r\",\"type\":\"pi_plus\",\"translation_m\":[1e999,0,0]}]}"), Out, Error));
+
+	TestFalse(TEXT("non-finite joint position rejected"),
+		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[{\"actor_id\":\"r\",\"type\":\"pi_plus\",\"joint_positions_rad\":{\"head_yaw_joint\":1e999}}]}"), Out, Error));
 
 	TestFalse(TEXT("missing file rejected"),
 		FURSSceneConfigIo::LoadFromFile(FPaths::CreateTempFilename(*TempDir, TEXT("Nope"), TEXT(".json")), Out, Error));

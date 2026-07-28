@@ -13,8 +13,9 @@ robot endpoints and never retried after compilation.
 
 ## Changes
 
-- Reset applies only the scene-configured free-base transform after URLab
-  model/data exist. Pi keeps its MJCF-native zero joint qpos.
+- Reset applies the scene-configured free-base transform after URLab model/data
+  exist. It uses MJCF-native zero qpos unless a robot explicitly supplies a
+  complete named `joint_positions_rad` map in the scene config.
 - `AURSSoccerGameMode::StartPlay` triggers the post-compile initialization.
 - Pi position actuators use the old simulator's Kp/Kd and 20 Nm effort limit.
 - Head-motion commands only the two head actuators. Vision smoke sends no
@@ -30,3 +31,10 @@ robot endpoints and never retried after compilation.
   `1.00` during the eight-second head sweep.
 - Standard vision harness passed with a 640x480 frame, mean RGB 38.21 and
   nonblack pixel ratio 0.418.
+- Zero qpos is statically upright, but the legacy walking policy is trained
+  around its nonzero `DEFAULT_DOF` reference. The active walking scene records
+  that posture in configuration rather than runtime code.
+- With that configured posture, the external TCP walking client completed its
+  eight-second `vx=0.35` run, reported `+2.413 m` forward displacement, and
+  wrote a 74-frame left-eye MP4 with the field and goal visible mid-run. This
+  validates the runtime protocol and capture path, not policy-model parity.

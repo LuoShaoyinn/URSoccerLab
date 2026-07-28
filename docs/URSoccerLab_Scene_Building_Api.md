@@ -67,6 +67,11 @@ The key ordering guarantee: **robots exist in the world before
 | `robots[].type` | string | yes | — (must exist in the registry) |
 | `robots[].translation_m` | `[x, y, z]` meters (MuJoCo frame) | no | `[0, 0, Type.DefaultBaseHeightM]` |
 | `robots[].rotation_quat_xyzw` | `[x, y, z, w]` | no | `[0, 0, 0, 1]` (identity) |
+| `robots[].joint_positions_rad` | object: non-root joint name to radians | no | MuJoCo native zero qpos |
+
+When `joint_positions_rad` is present, it must contain every non-root joint of
+the spawned robot and no unknown names. This makes a policy-specific standing
+posture explicit in the scene configuration; it is not baked into runtime C++.
 
 ### Coordinate frame
 

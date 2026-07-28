@@ -132,6 +132,34 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 			Spawn.RotationQuatXyzw = Rot;
 		}
 
+		const TSharedPtr<FJsonObject>* JointPositionsObj = nullptr;
+		if ((*RobotObj)->TryGetObjectField(TEXT("joint_positions_rad"), JointPositionsObj))
+		{
+			if (!JointPositionsObj || !JointPositionsObj->IsValid())
+			{
+				OutError = FString::Printf(TEXT("scene config: robot '%s' has invalid 'joint_positions_rad' (need an object)"), *Spawn.ActorId);
+				return false;
+			}
+
+			TMap<FString, float> JointPositions;
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*JointPositionsObj)->Values)
+			{
+				double Value = 0.0;
+				if (Pair.Key.IsEmpty() || !Pair.Value.IsValid() || !Pair.Value->TryGetNumber(Value) || !FMath::IsFinite(Value))
+				{
+					OutError = FString::Printf(TEXT("scene config: robot '%s' has invalid joint position '%s'"), *Spawn.ActorId, *Pair.Key);
+					return false;
+				}
+				JointPositions.Add(Pair.Key, static_cast<float>(Value));
+			}
+			if (JointPositions.IsEmpty())
+			{
+				OutError = FString::Printf(TEXT("scene config: robot '%s' has empty 'joint_positions_rad'"), *Spawn.ActorId);
+				return false;
+			}
+			Spawn.JointPositionsRad = MoveTemp(JointPositions);
+		}
+
 		Out.Robots.Add(MoveTemp(Spawn));
 	}
 
@@ -170,6 +198,18 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 			RotJson.Add(MakeShared<FJsonValueNumber>(Quat.Z));
 			RotJson.Add(MakeShared<FJsonValueNumber>(Quat.W));
 			RobotObj->SetArrayField(TEXT("rotation_quat_xyzw"), RotJson);
+		}
+		if (Spawn.JointPositionsRad.IsSet())
+		{
+			TSharedPtr<FJsonObject> JointPositionsObj = MakeShared<FJsonObject>();
+			TArray<FString> JointNames;
+			Spawn.JointPositionsRad.GetValue().GetKeys(JointNames);
+			JointNames.Sort();
+			for (const FString& JointName : JointNames)
+			{
+				JointPositionsObj->SetNumberField(JointName, Spawn.JointPositionsRad.GetValue()[JointName]);
+			}
+			RobotObj->SetObjectField(TEXT("joint_positions_rad"), JointPositionsObj);
 		}
 		RobotsJson.Add(MakeShared<FJsonValueObject>(RobotObj));
 	}
@@ -244,6 +284,24 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 		{
 			Result.bOk = false;
 			Result.Errors.Add(FString::Printf(TEXT("robot '%s' has invalid rotation quaternion"), *Spawn.ActorId));
+		}
+		if (Spawn.JointPositionsRad.IsSet())
+		{
+			const TMap<FString, float>& JointPositions = Spawn.JointPositionsRad.GetValue();
+			if (JointPositions.IsEmpty())
+			{
+				Result.bOk = false;
+				Result.Errors.Add(FString::Printf(TEXT("robot '%s' has empty joint positions"), *Spawn.ActorId));
+			}
+			for (const TPair<FString, float>& Pair : JointPositions)
+			{
+				if (Pair.Key.IsEmpty() || !FMath::IsFinite(Pair.Value))
+				{
+					Result.bOk = false;
+					Result.Errors.Add(FString::Printf(TEXT("robot '%s' has invalid joint position"), *Spawn.ActorId));
+					break;
+				}
+			}
 		}
 	}
 	return Result;
