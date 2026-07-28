@@ -2,6 +2,8 @@
 
 #include "EngineUtils.h"
 #include "GameFramework/SpectatorPawn.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
@@ -42,6 +44,15 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	{
 		UE_LOG(LogTemp, Warning, TEXT("URSSoccerGameMode: no UURSSceneConfigComponent on AAMjManager; skipping robot bootstrap."));
 		return;
+	}
+
+	FString SceneConfigOverride;
+	if (FParse::Value(FCommandLine::Get(), TEXT("URSSceneConfig="), SceneConfigOverride)
+		&& !SceneConfigOverride.IsEmpty())
+	{
+		SceneComp->ConfigPath = SceneConfigOverride;
+		UE_LOG(LogTemp, Log, TEXT("URSSoccerGameMode: using scene config override '%s'."),
+			*SceneConfigOverride);
 	}
 
 	// Spawn robots BEFORE any BeginPlay. AAMjManager::BeginPlay compiles the

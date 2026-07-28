@@ -26,11 +26,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UE = Path("/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
 PROJECT = ROOT / "URSoccerLab.uproject"
-MAP_PATH = "/Game/Levels/URS_TwoRobotFacing"
+MAP_PATH = "/Game/Levels/URS_SoccerField"
 OUT_DIR = ROOT / "py_example" / "out" / "two_robot_facing"
+DEFAULT_SCENE_CONFIG = ROOT / "Config" / "URS_two_robot_scene.json"
 
 
-def start_simulator(ue: Path) -> subprocess.Popen[str]:
+def start_simulator(ue: Path, scene_config: Path) -> subprocess.Popen[str]:
     cmd = [
         str(ue),
         str(PROJECT),
@@ -42,6 +43,7 @@ def start_simulator(ue: Path) -> subprocess.Popen[str]:
         "-nop4",
         "-nosplash",
         "-NoSound",
+        f"-URSSceneConfig={scene_config.resolve()}",
     ]
     print("+", " ".join(cmd), flush=True)
     return subprocess.Popen(
@@ -92,11 +94,14 @@ def main() -> int:
     parser.add_argument("--ue", type=Path, default=DEFAULT_UE)
     parser.add_argument("--timeout-ms", type=int, default=30000)
     parser.add_argument("--render-warmup-sec", type=float, default=3.0)
+    parser.add_argument("--scene-config", type=Path, default=DEFAULT_SCENE_CONFIG)
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    sim = start_simulator(args.ue)
+    if not args.scene_config.exists():
+        raise FileNotFoundError(args.scene_config)
+    sim = start_simulator(args.ue, args.scene_config)
     sim_log_path = ROOT / "Saved" / "Logs" / "URS_TwoRobotFacingRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(
@@ -125,7 +130,7 @@ def main() -> int:
                 "uv",
                 "run",
                 "python",
-                "main.py",
+                "ue_vision_smoke.py",
                 "--host",
                 "127.0.0.1",
                 "--robot",

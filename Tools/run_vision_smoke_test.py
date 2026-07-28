@@ -209,6 +209,7 @@ def main() -> int:
     parser.add_argument("--timeout-ms", type=int, default=30000)
     parser.add_argument("--out", type=Path, default=ROOT / "py_example" / "out" / "vision_smoke")
     parser.add_argument("--skip-setup", action="store_true")
+    parser.add_argument("--scene-config", type=Path, help="scene JSON passed to the runtime")
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
     parser.add_argument("--camera-frame-count", type=int, default=20)
@@ -242,7 +243,10 @@ def main() -> int:
     run_checked(["uv", "sync"], ROOT / "py_example")
 
     args.out.mkdir(parents=True, exist_ok=True)
-    sim = start_simulator(args.ue, args.sim_extra_arg)
+    sim_extra_args = list(args.sim_extra_arg)
+    if args.scene_config:
+        sim_extra_args.append(f"-URSSceneConfig={args.scene_config.resolve()}")
+    sim = start_simulator(args.ue, sim_extra_args)
     sim_log_path = ROOT / "Saved" / "Logs" / "URS_VisionSmokeRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(

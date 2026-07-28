@@ -24,7 +24,10 @@ void UURSSceneConfigComponent::BeginPlay()
 
 bool UURSSceneConfigComponent::ReloadConfig(FString& OutError)
 {
-	const FString AbsPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / ConfigPath);
+	const FString ConfigFilePath = FPaths::IsRelative(ConfigPath)
+		? FPaths::Combine(FPaths::ProjectDir(), ConfigPath)
+		: ConfigPath;
+	const FString AbsPath = FPaths::ConvertRelativePathToFull(ConfigFilePath);
 	if (!FURSSceneConfigIo::LoadFromFile(AbsPath, ActiveConfig, OutError))
 	{
 		return false;

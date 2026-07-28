@@ -6,14 +6,17 @@ head_yaw_joint_servo and head_pitch_joint_servo).  Pure motor-command
 control via the per-robot TCP port — no admin API, no lock_pose, no
 physics override.  Just like driving a real robot.
 
-The sim must be running with Config/URS_scene.json configured for
-two pi_plus robots.
+The sim must be running with a two-robot scene config, for example
+``Config/URS_two_robot_scene.json``, passed with ``-URSSceneConfig``:
 
-    source /tmp/opencode/walk-venv/bin/activate
-    python py_example/ue_head_demo.py \
+    UnrealEditor URSoccerLab.uproject /Game/Levels/URS_SoccerField -game \
+        -RenderOffscreen -URSSceneConfig=/path/to/Config/URS_two_robot_scene.json
+
+    cd py_example
+    uv run python ue_head_demo.py \
         --host 127.0.0.1 --duration 10 \
-        --video0 py_example/out/head_demo_rp0.mp4 \
-        --video1 py_example/out/head_demo_rp1.mp4
+        --video0 out/head_demo_rp0.mp4 \
+        --video1 out/head_demo_rp1.mp4
 """
 from __future__ import annotations
 

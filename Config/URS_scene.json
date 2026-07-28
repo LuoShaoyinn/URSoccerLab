@@ -1,6 +1,7 @@
 {
   "version": "urs_scene_v1",
   "robots": [
-    {"actor_id": "robot_rp0", "type": "pi_plus", "translation_m": [0.0, 0.0, 0.3762], "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]}
+    {"actor_id": "robot_rp0", "type": "pi_plus", "translation_m": [-1.0, 0.0, 0.3762], "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]},
+    {"actor_id": "robot_rp1", "type": "pi_plus", "translation_m": [1.0, 0.0, 0.3762], "rotation_quat_xyzw": [0.0, 0.0, 1.0, 0.0]}
   ]
 }

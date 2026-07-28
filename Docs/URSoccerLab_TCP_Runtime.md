@@ -27,7 +27,7 @@ All TCP communication uses length-prefixed frames:
 ### Camera frame layout
 
 ```text
-[1-byte codec] [1-byte num_cameras]
+[1-byte codec] [1-byte num_cameras] [sim_time LE float64]
   per-camera:
     [width LE16] [height LE16] [data_len LE32] [pixel data]
 ```
@@ -80,6 +80,10 @@ for kind, data in client.recv():
 spawns the listed robots via the registered robot types. The registered type
 is `pi_plus` (fixed base, Z=0.3762) against
 `/Game/URSoccerLab/Robots/pi_plus/pi_plus`.
+
+The runtime accepts `-URSSceneConfig=<path>` to override the scene JSON. A
+relative path is resolved from the project directory; an absolute path may be
+used for per-example or externally managed configurations.
 
 ```json
 {
