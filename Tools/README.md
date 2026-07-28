@@ -15,3 +15,11 @@ Rebuild the field map only after changing `Assets/Scenes/SoccerField/source/fiel
 ```bash
 python3 Tools/editor/create_soccer_field_scene.py --nullrhi
 ```
+
+After changing `Assets/Scenes/SoccerField/physics/field_physics.xml`, bake the
+MuJoCo collision actor into the existing field level:
+
+```bash
+UnrealEditor URSoccerLab.uproject \
+  -ExecutePythonScript=Tools/editor/bake_field_physics.py
+```

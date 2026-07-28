@@ -3,6 +3,7 @@ Assets/Robots/**/*.STL filter=lfs diff=lfs merge=lfs -text
 Assets/Scenes/SoccerField/source/*.blend1 filter=lfs diff=lfs merge=lfs -text
 Assets/Scenes/SoccerField/source/*.glb filter=lfs diff=lfs merge=lfs -text
 Assets/Scenes/SoccerField/source/*.blend filter=lfs diff=lfs merge=lfs -text
+Assets/Scenes/SoccerField/physics/*.xml filter=lfs diff=lfs merge=lfs -text
 Content/URSoccerLab/Robots/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 Content/Levels/URS_SoccerField.umap filter=lfs diff=lfs merge=lfs -text
 Content/URSoccerLab/Scenes/SoccerField/**/*.uasset filter=lfs diff=lfs merge=lfs -text

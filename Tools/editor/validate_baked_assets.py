@@ -18,11 +18,13 @@ EXPECTED_ASSETS = [
     ("Blueprint", "Content/URSoccerLab/Robots/pi_plus/pi_plus.uasset"),
     ("Level", "Content/Levels/URS_SoccerField.umap"),
     ("Field mesh", "Content/URSoccerLab/Scenes/SoccerField/field/StaticMeshes/Plane.uasset"),
+    ("Field physics", "Content/URSoccerLab/Scenes/SoccerField/Physics/field_physics.uasset"),
 ]
 
 EXPECTED_UE_PATHS = [
     "/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus",
     "/Game/Levels/URS_SoccerField",
+    "/Game/URSoccerLab/Scenes/SoccerField/Physics/field_physics.field_physics",
 ]
 
 
