@@ -1,23 +1,13 @@
 #!/usr/bin/env python3
 """Bake the soccer-field GLB plus default lighting into a UE level.
 
-This script runs inside Unreal Editor via ``-ExecutePythonScript``. It is
-deliberately editor-only: packaged simulator builds should load the baked
-``/Game/Levels/URS_SoccerField`` map, not recreate it.
-
-The UE Interchange glTF importer (default ``bBakeMeshes = true``) bakes
-each glTF scene-node's full global transform (translation, rotation,
-scale, plus the 100x m-to-cm conversion) directly into the mesh
-vertices.  The imported ``UStaticMesh`` assets are therefore already in
-the correct world-space position and orientation.  We spawn every mesh
-actor at the origin with identity rotation and unit scale so we do not
-double-apply the node transform.
+Runs inside Unreal Editor via ``-game -ExecCmds="py Tools/ue_bake_soccer_field_scene.py; Quit"``.
+Uses only native UE Python APIs — no project C++ dependency.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import struct
 from pathlib import Path
 
@@ -27,69 +17,25 @@ import unreal
 ROOT = Path(__file__).resolve().parents[1]
 FIELD_GLB = ROOT / "Assets/Scenes/SoccerField/source/field.glb"
 FIELD_IMPORT_PATH = "/Game/URSoccerLab/Scenes/SoccerField"
-LEVEL_PATH = "/Game/Levels/URS_SoccerField"
-SUCCESS_MARKER = ROOT / "Saved/Logs/URS_CreateSoccerFieldScene.done"
+LEVEL_NAME = "URS_SoccerField"
+LEVEL_PATH = f"/Game/Levels/{LEVEL_NAME}"
 SKY_CUBEMAP = "/Engine/MapTemplates/Sky/DaylightAmbientCubemap.DaylightAmbientCubemap"
 SKY_INTENSITY = 3.0
 
 
-def read_glb_json(path: Path) -> dict:
+def read_glb_nodes(path: Path) -> list[dict]:
     data = path.read_bytes()
-    magic, _version, _length = struct.unpack_from("<III", data, 0)
+    magic = struct.unpack_from("<I", data, 0)[0]
     if magic != 0x46546C67:
         raise RuntimeError(f"{path} is not a GLB file")
-    chunk_length, chunk_type = struct.unpack_from("<II", data, 12)
-    if chunk_type != 0x4E4F534A:
-        raise RuntimeError(f"{path} first GLB chunk is not JSON")
-    return json.loads(data[20 : 20 + chunk_length].decode("utf-8"))
-
-
-def glb_translation_to_ue_cm(value: list[float] | None) -> unreal.Vector:
-    """Convert a glTF translation (metres, Y-up) to UE (cm, Z-up).
-
-    Kept for reference; not used in ``spawn_field`` because the Interchange
-    importer already bakes translations into mesh vertices.
-    """
-    x, y_up, z_width = value or [0.0, 0.0, 0.0]
-    return unreal.Vector(x * 100.0, z_width * 100.0, y_up * 100.0)
-
-
-def glb_scale_to_ue(value: list[float] | None) -> unreal.Vector:
-    """Convert a glTF scale (Y-up) to UE (Z-up).
-
-    Kept for reference; not used in ``spawn_field`` because the Interchange
-    importer already bakes scale into mesh vertices.
-    """
-    x, y_up, z_width = value or [1.0, 1.0, 1.0]
-    return unreal.Vector(x, z_width, y_up)
-
-
-def glb_rotation_to_ue(rotation: list[float] | None) -> unreal.Rotator:
-    """Convert a glTF quaternion (Y-up) to UE rotator (Z-up).
-
-    Kept for reference; not used in ``spawn_field`` because the Interchange
-    importer already bakes rotation into mesh vertices.
-    """
-    if not rotation:
-        return unreal.Rotator(0.0, 0.0, 0.0)
-
-    x, y, z, w = rotation
-    half_sqrt = math.sqrt(0.5)
-    if (
-        math.isclose(abs(x), half_sqrt, abs_tol=1e-5)
-        and math.isclose(y, 0.0, abs_tol=1e-5)
-        and math.isclose(z, 0.0, abs_tol=1e-5)
-        and math.isclose(abs(w), half_sqrt, abs_tol=1e-5)
-    ):
-        return unreal.Rotator(0.0, 0.0, 90.0 if x * w >= 0.0 else -90.0)
-
-    raise RuntimeError(f"unsupported GLB node rotation {rotation}; add an explicit conversion")
+    chunk_length = struct.unpack_from("<I", data, 12)[0]
+    glb = json.loads(data[20 : 20 + chunk_length].decode("utf-8"))
+    scene_index = glb.get("scene", 0)
+    scene_nodes = set(glb["scenes"][scene_index]["nodes"])
+    return [n for i, n in enumerate(glb["nodes"]) if i in scene_nodes]
 
 
 def import_field_meshes() -> dict[str, unreal.StaticMesh]:
-    if not FIELD_GLB.exists():
-        raise FileNotFoundError(FIELD_GLB)
-
     asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
     task = unreal.AssetImportTask()
     task.filename = str(FIELD_GLB)
@@ -113,66 +59,57 @@ def import_field_meshes() -> dict[str, unreal.StaticMesh]:
     return meshes
 
 
-def new_level() -> None:
-    if not unreal.URSSceneBakeLibrary.create_or_replace_level("URS_SoccerField"):
-        raise RuntimeError(f"failed to create level {LEVEL_PATH}")
+def create_level() -> None:
+    if unreal.EditorAssetLibrary.does_asset_exist(LEVEL_PATH):
+        unreal.EditorAssetLibrary.delete_asset(LEVEL_PATH)
+    asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+    factory = unreal.WorldFactory()
+    factory.world_type = unreal.WorldType.Editor
+    asset_tools.create_asset(LEVEL_NAME, "/Game/Levels", None, factory)
 
 
-def spawn_field(meshes: dict[str, unreal.StaticMesh], nodes: list[dict]) -> None:
-    """Spawn each imported mesh at the origin with identity transform.
-
-    The Interchange importer (``bBakeMeshes = true`` by default) already
-    baked the full glTF node transform — translation, rotation, scale,
-    and the 100x m-to-cm conversion — into each mesh's vertices.  We
-    must NOT re-apply those transforms here, or every mesh would be
-    double-scaled / double-translated.
-    """
+def spawn_mesh_actors(meshes: dict[str, unreal.StaticMesh], nodes: list[dict]) -> None:
+    editor = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    origin = unreal.Vector(0.0, 0.0, 0.0)
+    rot = unreal.Rotator(0.0, 0.0, 0.0)
+    scale = unreal.Vector(1.0, 1.0, 1.0)
     for index, node in enumerate(nodes):
         name = node.get("name")
         if not name or "mesh" not in node:
             continue
-
         mesh = meshes.get(name)
         if mesh is None:
             raise RuntimeError(f"missing imported static mesh for GLB node {name}")
-
-        if not unreal.URSSceneBakeLibrary.spawn_static_mesh_actor(
-            mesh,
-            f"URS_SoccerField_{index}_{name}",
-            unreal.Vector(0.0, 0.0, 0.0),
-            unreal.Rotator(0.0, 0.0, 0.0),
-            unreal.Vector(1.0, 1.0, 1.0),
-            "URLab.ActorId=soccer_field_visual",
-        ):
-            raise RuntimeError(f"failed to spawn field mesh node {name}")
+        actor = editor.spawn_actor_from_object(mesh, origin, rot, scale)
+        if actor:
+            actor.set_actor_label(f"URS_SoccerField_{index}_{name}")
+            actor.set_editor_property("actor_guid", unreal.Guid.new_guid())
 
 
-def spawn_default_skylight() -> None:
+def spawn_skylight() -> None:
+    editor = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     cubemap = unreal.load_asset(SKY_CUBEMAP)
-    if not unreal.URSSceneBakeLibrary.spawn_specified_cubemap_sky_light(
-        cubemap,
-        "URS_DefaultSkyLight",
-        SKY_INTENSITY,
-        "URLab.ActorId=default_sky_light",
-    ):
-        raise RuntimeError("failed to spawn default skylight")
+    sky = editor.spawn_actor_from_class(
+        unreal.SkyLight, unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0)
+    )
+    if sky:
+        sky.set_editor_property("source_type", unreal.SkyLightSourceType.SLS_SPECIFIED_CUBEMAP)
+        sky.set_editor_property("cubemap", cubemap)
+        sky.set_editor_property("intensity", SKY_INTENSITY)
+        sky.set_actor_label("URS_DefaultSkyLight")
+
+
+def save_level() -> None:
+    unreal.EditorLoadingAndSavingUtils.save_current_level()
 
 
 def main() -> None:
-    glb = read_glb_json(FIELD_GLB)
-    scene_index = glb.get("scene", 0)
-    scene_nodes = set(glb["scenes"][scene_index]["nodes"])
-    nodes = [node for index, node in enumerate(glb["nodes"]) if index in scene_nodes]
-
+    nodes = read_glb_nodes(FIELD_GLB)
     meshes = import_field_meshes()
-    new_level()
-    spawn_field(meshes, nodes)
-    spawn_default_skylight()
-
-    if not unreal.URSSceneBakeLibrary.save_current_level(LEVEL_PATH):
-        raise RuntimeError(f"failed to save {LEVEL_PATH}")
-    SUCCESS_MARKER.parent.mkdir(parents=True, exist_ok=True)
-    SUCCESS_MARKER.write_text(json.dumps({"level": LEVEL_PATH}) + "\n", encoding="utf-8")
+    create_level()
+    spawn_mesh_actors(meshes, nodes)
+    spawn_skylight()
+    save_level()
     unreal.log(f"URSoccerLab soccer field scene ready at {LEVEL_PATH}")
 
 

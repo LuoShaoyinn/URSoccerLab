@@ -103,7 +103,7 @@ command can return to spawn.
 ## Validation Run
 
 ```bash
-make URSoccerLabEditor-Linux-Development ARGS="-NoHotReload -DisableUnity"
+make UnrealEditor-Linux-Development ARGS="-project=$PROJ"
 "$UE" "$PROJ" -NullRHI -unattended -nop4 -nosplash \
   -ExecCmds="Automation RunTests URSoccerLab; Quit"
 ```

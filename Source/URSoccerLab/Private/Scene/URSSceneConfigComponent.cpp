@@ -212,7 +212,9 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 			UE_LOG(LogTemp, Warning, TEXT("URSoccerLab scene config: could not rename actor to '%s'."), *Spawn.ActorId);
 		}
 	}
+#if WITH_EDITOR
 	Articulation->SetActorLabel(Spawn.ActorId);
+#endif
 
 	ConfigureRobotCameras(Articulation, Spawn.ActorId);
 	HideImportedFieldGeoms(Articulation);
