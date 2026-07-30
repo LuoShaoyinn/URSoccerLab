@@ -24,9 +24,11 @@ Motion blur can be tuned per run:
 Target FPS `0` follows the actual render-frame rate. A fixed value is generally
 more reproducible for robotics datasets.
 
-When launched with `-RenderOffscreen`, the game mode disables rendering of the
-unused spectator/main viewport while keeping the RHI and robot
-`SceneCaptureComponent2D` views active. Override this for diagnostics with:
+Do not disable main-viewport world rendering for the ordinary
+`SceneCaptureComponent2D` backend. UE dispatches its deferred captures from the
+viewport draw, so disabling the world view freezes the camera render targets.
+Use a small offscreen viewport (`-ForceRes -ResX=64 -ResY=64`) to make its cost
+negligible. The following switch remains available for render-path diagnostics:
 
 ```text
 -URSDisableMainViewport=0|1

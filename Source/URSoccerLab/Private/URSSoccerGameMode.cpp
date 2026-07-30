@@ -10,6 +10,7 @@
 #include "Scene/URSRobotTypeRegistry.h"
 #include "Core/URSRobotCoreComponent.h"
 #include "Transport/URSTcpTransportComponent.h"
+#include "NDisplay/URSDisplayClusterCameraBinderComponent.h"
 
 AURSSoccerGameMode::AURSSoccerGameMode()
 {
@@ -80,6 +81,13 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 		UURSTcpTransportComponent* Transport = NewObject<UURSTcpTransportComponent>(Manager, TEXT("URSTcpTransport"));
 		Transport->RegisterComponent();
 	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras"))
+		&& !Manager->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>())
+	{
+		UURSDisplayClusterCameraBinderComponent* Binder =
+			NewObject<UURSDisplayClusterCameraBinderComponent>(Manager, TEXT("URSDisplayClusterCameraBinder"));
+		Binder->RegisterComponent();
+	}
 }
 
 void AURSSoccerGameMode::StartPlay()
@@ -92,11 +100,15 @@ void AURSSoccerGameMode::StartPlay()
 		return;
 	}
 
-	int32 bDisableMainViewport = FParse::Param(
-		FCommandLine::Get(), TEXT("RenderOffscreen")) ? 1 : 0;
+	// This is diagnostic-only. UE dispatches ordinary deferred
+	// SceneCaptureComponent2D updates from the viewport draw, so suppressing
+	// world rendering also freezes those camera targets. nDisplay is exempt
+	// because its atlas is itself the main viewport.
+	int32 bDisableMainViewport = 0;
 	FParse::Value(
 		FCommandLine::Get(), TEXT("URSDisableMainViewport="), bDisableMainViewport);
-	if (bDisableMainViewport != 0)
+	if (bDisableMainViewport != 0
+		&& !FParse::Param(FCommandLine::Get(), TEXT("dc_cluster")))
 	{
 		// Keep the RHI and SceneCaptureComponent2D rendering active while
 		// suppressing the unused spectator/main-view scene render.

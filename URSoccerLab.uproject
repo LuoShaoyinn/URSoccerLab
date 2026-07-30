@@ -32,6 +32,14 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "nDisplay",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Linux",
+				"Win64"
+			]
 		}
 	]
 }

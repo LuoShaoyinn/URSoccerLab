@@ -10,7 +10,15 @@ public class URSoccerLab : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "URLab" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "Json", "JsonUtilities", "Sockets", "ImageWrapper" });
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			"Json",
+			"JsonUtilities",
+			"Sockets",
+			"ImageWrapper",
+			"DisplayCluster",
+			"DisplayClusterProjection"
+		});
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

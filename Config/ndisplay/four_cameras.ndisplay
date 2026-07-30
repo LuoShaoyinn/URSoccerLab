@@ -1,0 +1,131 @@
+{
+  "nDisplay": {
+    "description": "URS four-camera 2x2 profiling atlas",
+    "version": "5.00",
+    "assetPath": "/Game/URSoccerLab/NDisplay/URS_FourCameras.URS_FourCameras",
+    "misc": {
+      "bFollowLocalPlayerCamera": false,
+      "bExitOnEsc": true,
+      "bOverrideViewportsFromExternalConfig": true,
+      "bOverrideTransformsFromExternalConfig": true
+    },
+    "scene": {
+      "xforms": {},
+      "cameras": {
+        "DefaultViewPoint": {
+          "interpupillaryDistance": 6.4,
+          "swapEyes": false,
+          "stereoOffset": "none",
+          "parentId": "",
+          "location": { "x": 0, "y": 0, "z": 0 },
+          "rotation": { "pitch": 0, "yaw": 0, "roll": 0 }
+        }
+      },
+      "screens": {}
+    },
+    "cluster": {
+      "primaryNode": {
+        "id": "node_0",
+        "ports": {
+          "ClusterSync": 41001,
+          "ClusterEventsJson": 41003,
+          "ClusterEventsBinary": 41004
+        }
+      },
+      "sync": {
+        "renderSyncPolicy": {
+          "type": "none",
+          "parameters": {}
+        },
+        "inputSyncPolicy": {
+          "type": "ReplicatePrimary",
+          "parameters": {}
+        }
+      },
+      "network": {
+        "ConnectRetriesAmount": "10",
+        "ConnectRetryDelay": "100",
+        "GameStartBarrierTimeout": "30000",
+        "FrameStartBarrierTimeout": "30000",
+        "FrameEndBarrierTimeout": "30000",
+        "RenderSyncBarrierTimeout": "30000"
+      },
+      "nodes": {
+        "node_0": {
+          "host": "127.0.0.1",
+          "sound": false,
+          "fullScreen": false,
+          "window": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 960
+          },
+          "postprocess": {},
+          "viewports": {
+            "camera_00": {
+              "camera": "DefaultViewPoint",
+              "bufferRatio": 1,
+              "gPUIndex": -1,
+              "allowCrossGPUTransfer": false,
+              "isShared": false,
+              "region": { "x": 0, "y": 0, "w": 640, "h": 480 },
+              "projectionPolicy": {
+                "type": "camera",
+                "parameters": {}
+              }
+            },
+            "camera_01": {
+              "camera": "DefaultViewPoint",
+              "bufferRatio": 1,
+              "gPUIndex": -1,
+              "allowCrossGPUTransfer": false,
+              "isShared": false,
+              "region": { "x": 640, "y": 0, "w": 640, "h": 480 },
+              "projectionPolicy": {
+                "type": "camera",
+                "parameters": {}
+              }
+            },
+            "camera_02": {
+              "camera": "DefaultViewPoint",
+              "bufferRatio": 1,
+              "gPUIndex": -1,
+              "allowCrossGPUTransfer": false,
+              "isShared": false,
+              "region": { "x": 0, "y": 480, "w": 640, "h": 480 },
+              "projectionPolicy": {
+                "type": "camera",
+                "parameters": {}
+              }
+            },
+            "camera_03": {
+              "camera": "DefaultViewPoint",
+              "bufferRatio": 1,
+              "gPUIndex": -1,
+              "allowCrossGPUTransfer": false,
+              "isShared": false,
+              "region": { "x": 640, "y": 480, "w": 640, "h": 480 },
+              "projectionPolicy": {
+                "type": "camera",
+                "parameters": {}
+              }
+            }
+          },
+          "outputRemap": {
+            "bEnable": false,
+            "dataSource": "mesh",
+            "staticMeshAsset": "",
+            "externalFile": ""
+          }
+        }
+      }
+    },
+    "customParameters": {},
+    "diagnostics": {
+      "simulateLag": false,
+      "minLagTime": 0.01,
+      "maxLagTime": 0.3
+    }
+  }
+}

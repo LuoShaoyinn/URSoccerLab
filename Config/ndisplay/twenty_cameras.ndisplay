@@ -1,0 +1,76 @@
+{
+  "nDisplay": {
+    "description": "URS twenty-camera 5x4 profiling atlas",
+    "version": "5.00",
+    "assetPath": "/Game/URSoccerLab/NDisplay/URS_TwentyCameras.URS_TwentyCameras",
+    "misc": {
+      "bFollowLocalPlayerCamera": false,
+      "bExitOnEsc": true,
+      "bOverrideViewportsFromExternalConfig": true,
+      "bOverrideTransformsFromExternalConfig": true
+    },
+    "scene": {
+      "xforms": {},
+      "cameras": {
+        "DefaultViewPoint": {
+          "interpupillaryDistance": 6.4,
+          "swapEyes": false,
+          "stereoOffset": "none",
+          "parentId": "",
+          "location": {"x":0,"y":0,"z":0},
+          "rotation": {"pitch":0,"yaw":0,"roll":0}
+        }
+      },
+      "screens": {}
+    },
+    "cluster": {
+      "primaryNode": {
+        "id": "node_0",
+        "ports": {"ClusterSync":41001,"ClusterEventsJson":41003,"ClusterEventsBinary":41004}
+      },
+      "sync": {
+        "renderSyncPolicy": {"type":"none","parameters":{}},
+        "inputSyncPolicy": {"type":"ReplicatePrimary","parameters":{}}
+      },
+      "network": {
+        "ConnectRetriesAmount":"10","ConnectRetryDelay":"100",
+        "GameStartBarrierTimeout":"30000","FrameStartBarrierTimeout":"30000",
+        "FrameEndBarrierTimeout":"30000","RenderSyncBarrierTimeout":"30000"
+      },
+      "nodes": {
+        "node_0": {
+          "host": "127.0.0.1",
+          "sound": false,
+          "fullScreen": false,
+          "window": {"x":0,"y":0,"w":3200,"h":1920},
+          "postprocess": {},
+          "viewports": {
+            "camera_00":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":0,"y":0,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_01":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":640,"y":0,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_02":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1280,"y":0,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_03":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1920,"y":0,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_04":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":2560,"y":0,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_05":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":0,"y":480,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_06":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":640,"y":480,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_07":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1280,"y":480,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_08":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1920,"y":480,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_09":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":2560,"y":480,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_10":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":0,"y":960,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_11":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":640,"y":960,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_12":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1280,"y":960,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_13":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1920,"y":960,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_14":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":2560,"y":960,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_15":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":0,"y":1440,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_16":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":640,"y":1440,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_17":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1280,"y":1440,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_18":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":1920,"y":1440,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}},
+            "camera_19":{"camera":"DefaultViewPoint","bufferRatio":1,"gPUIndex":-1,"allowCrossGPUTransfer":false,"isShared":false,"region":{"x":2560,"y":1440,"w":640,"h":480},"projectionPolicy":{"type":"camera","parameters":{}}}
+          },
+          "outputRemap": {"bEnable":false,"dataSource":"mesh","staticMeshAsset":"","externalFile":""}
+        }
+      }
+    },
+    "customParameters": {},
+    "diagnostics": {"simulateLag":false,"minLagTime":0.01,"maxLagTime":0.3}
+  }
+}
