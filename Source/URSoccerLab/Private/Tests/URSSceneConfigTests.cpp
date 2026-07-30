@@ -46,6 +46,11 @@ bool FURSSceneConfigDefaultTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("default translation set"), Config.Robots[0].TranslationMeters.IsSet());
 	TestEqual(TEXT("default translation Z"), Config.Robots[0].TranslationMeters.GetValue().Z, 0.3762);
 	TestTrue(TEXT("default rotation set"), Config.Robots[0].RotationQuatXyzw.IsSet());
+	TestTrue(TEXT("default vision is stereo RGB"), Config.Vision.Mode == EURSVisionMode::StereoRgb);
+	TestTrue(TEXT("default RGB compression is JPEG"), Config.Vision.Rgb.Compression == EURSRgbCompression::Jpeg);
+	TestEqual(TEXT("default RGB rate"), Config.Vision.Rgb.RateHz, 15.0);
+	TestTrue(TEXT("default depth compression is lossless zlib uint16"),
+		Config.Vision.Depth.Compression == EURSDepthCompression::ZlibUint16Millimeters);
 
 	const FURSSceneConfigValidationResult Validation = FURSSceneConfigIo::Validate(Config);
 	TestTrue(TEXT("default config valid"), Validation.bOk);
@@ -61,6 +66,11 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
 
 	FURSSceneConfig Original = FURSSceneConfigIo::MakeDefault();
+	Original.Vision.Mode = EURSVisionMode::Rgbd;
+	Original.Vision.Rgb.RateHz = 30.0;
+	Original.Vision.Rgb.JpegQuality = 78;
+	Original.Vision.Depth.RateHz = 12.5;
+	Original.Vision.Depth.MaxDepthMeters = 20.0;
 	Original.Robots[0].JointPositionsRad = TMap<FString, float>{{TEXT("head_yaw_joint"), 0.25f}};
 	const FString Path = WriteTempConfig(Original);
 	TestTrue(TEXT("temp config written"), !Path.IsEmpty());
@@ -78,6 +88,11 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("round-trip rotation present"), Loaded.Robots[0].RotationQuatXyzw.IsSet());
 	TestTrue(TEXT("round-trip joint positions present"), Loaded.Robots[0].JointPositionsRad.IsSet());
 	TestEqual(TEXT("round-trip head yaw"), Loaded.Robots[0].JointPositionsRad.GetValue()[TEXT("head_yaw_joint")], 0.25f);
+	TestTrue(TEXT("round-trip RGBD mode"), Loaded.Vision.Mode == EURSVisionMode::Rgbd);
+	TestEqual(TEXT("round-trip RGB rate"), Loaded.Vision.Rgb.RateHz, 30.0);
+	TestEqual(TEXT("round-trip JPEG quality"), Loaded.Vision.Rgb.JpegQuality, 78);
+	TestEqual(TEXT("round-trip depth rate"), Loaded.Vision.Depth.RateHz, 12.5);
+	TestEqual(TEXT("round-trip maximum depth"), Loaded.Vision.Depth.MaxDepthMeters, 20.0);
 
 	IFileManager::Get().Delete(*Path);
 	return true;
@@ -123,6 +138,18 @@ bool FURSSceneConfigLoadRejectionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("non-finite joint position rejected"),
 		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[{\"actor_id\":\"r\",\"type\":\"pi_plus\",\"joint_positions_rad\":{\"head_yaw_joint\":1e999}}]}"), Out, Error));
 
+	TestFalse(TEXT("unknown vision mode rejected"),
+		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"vision\":{\"mode\":\"thermal\"},\"robots\":[]}"), Out, Error));
+
+	TestFalse(TEXT("unknown RGB compression rejected"),
+		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"vision\":{\"rgb\":{\"compression\":\"webp\"}},\"robots\":[]}"), Out, Error));
+
+	TestFalse(TEXT("unknown depth compression rejected"),
+		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"vision\":{\"depth\":{\"compression\":\"jpeg\"}},\"robots\":[]}"), Out, Error));
+
+	TestFalse(TEXT("fractional JPEG quality rejected"),
+		WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"vision\":{\"rgb\":{\"jpeg_quality\":80.5}},\"robots\":[]}"), Out, Error));
+
 	TestFalse(TEXT("missing file rejected"),
 		FURSSceneConfigIo::LoadFromFile(FPaths::CreateTempFilename(*TempDir, TEXT("Nope"), TEXT(".json")), Out, Error));
 	return true;
@@ -164,6 +191,16 @@ bool FURSSceneConfigValidateTest::RunTest(const FString& Parameters)
 	EmptyId.Type = TEXT("pi_plus");
 	Result = FURSSceneConfigIo::Validate(Config);
 	TestFalse(TEXT("empty actor_id invalid"), Result.bOk);
+
+	Config = FURSSceneConfigIo::MakeDefault();
+	Config.Vision.Rgb.RateHz = 0.0;
+	Config.Vision.Depth.MaxDepthMeters = 100.0;
+	Result = FURSSceneConfigIo::Validate(Config);
+	TestFalse(TEXT("invalid vision settings rejected"), Result.bOk);
+	TestTrue(TEXT("RGB rate error reported"),
+		Result.Errors.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("rgb.rate_hz")); }));
+	TestTrue(TEXT("maximum depth error reported"),
+		Result.Errors.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("max_depth_m")); }));
 	return true;
 }
 

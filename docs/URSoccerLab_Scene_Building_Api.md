@@ -42,6 +42,21 @@ For example, `Config/examples/two_robots_face_to_face.json`:
 ```json
 {
   "version": "urs_scene_v1",
+  "vision": {
+    "mode": "stereo_rgb",
+    "left_camera": "left_eye",
+    "right_camera": "right_eye",
+    "rgb": {
+      "rate_hz": 30,
+      "compression": "jpeg",
+      "jpeg_quality": 85
+    },
+    "depth": {
+      "rate_hz": 15,
+      "compression": "zlib_u16_mm",
+      "max_depth_m": 65.535
+    }
+  },
   "robots": [
     {
       "actor_id": "robot_rp0",
@@ -62,6 +77,15 @@ For example, `Config/examples/two_robots_face_to_face.json`:
 | Field | Type | Required | Default if absent |
 | --- | --- | :---: | --- |
 | `version` | string | yes | — (must be `"urs_scene_v1"`) |
+| `vision.mode` | `"stereo_rgb"` or `"rgbd"` | no | `"stereo_rgb"` |
+| `vision.left_camera` | camera name | no | `"left_eye"` |
+| `vision.right_camera` | camera name | no | `"right_eye"` |
+| `vision.rgb.rate_hz` | number in `(0, 240]` | no | `15` |
+| `vision.rgb.compression` | `"raw"` or `"jpeg"` | no | `"jpeg"` |
+| `vision.rgb.jpeg_quality` | integer in `[1, 100]` | no | `85` |
+| `vision.depth.rate_hz` | number in `(0, 240]` | no | `15` |
+| `vision.depth.compression` | `"raw_f32"`, `"raw_u16_mm"`, or `"zlib_u16_mm"` | no | `"zlib_u16_mm"` |
+| `vision.depth.max_depth_m` | number in `(0, 65.535]` | no | `65.535` |
 | `robots` | array | yes | — |
 | `robots[].actor_id` | string | yes | — (must be unique) |
 | `robots[].type` | string | yes | — (must exist in the registry) |
@@ -72,6 +96,25 @@ For example, `Config/examples/two_robots_face_to_face.json`:
 When `joint_positions_rad` is present, it must contain every non-root joint of
 the spawned robot and no unknown names. This makes a policy-specific standing
 posture explicit in the scene configuration; it is not baked into runtime C++.
+
+### Vision modes and compression
+
+`stereo_rgb` publishes RGB from both named cameras. `rgbd` publishes RGB and
+aligned depth from the left-eye viewpoint; `right_camera` names the camera
+component that the runtime repurposes as the aligned depth capture.
+
+RGB and depth have independent publication rates. JPEG is the practical RGB
+default. Depth is never JPEG-compressed: `raw_f32` preserves the render
+target's floating-point values, `raw_u16_mm` quantizes to millimetres, and
+`zlib_u16_mm` losslessly compresses that quantized buffer. The latter is the
+network-oriented default because smooth depth images compress well and use
+half the bytes even before zlib.
+
+The maintained match examples are:
+
+- `Config/examples/six_robots_stereo_rgb.json`: 3v3, 12 RGB streams.
+- `Config/examples/six_robots_rgbd.json`: 3v3, 6 RGB plus 6 depth streams.
+- `Config/examples/ten_robots_twenty_cameras.json`: 5v5, 20 RGB streams.
 
 ### Coordinate frame
 

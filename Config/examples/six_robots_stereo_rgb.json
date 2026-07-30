@@ -1,0 +1,26 @@
+{
+  "version": "urs_scene_v1",
+  "vision": {
+    "mode": "stereo_rgb",
+    "left_camera": "left_eye",
+    "right_camera": "right_eye",
+    "rgb": {
+      "rate_hz": 30,
+      "compression": "jpeg",
+      "jpeg_quality": 85
+    },
+    "depth": {
+      "rate_hz": 15,
+      "compression": "zlib_u16_mm",
+      "max_depth_m": 65.535
+    }
+  },
+  "robots": [
+    {"actor_id":"robot_rp00","type":"pi_plus","translation_m":[-1.0,-2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,0.0,1.0]},
+    {"actor_id":"robot_rp01","type":"pi_plus","translation_m":[0.0,-2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,0.0,1.0]},
+    {"actor_id":"robot_rp02","type":"pi_plus","translation_m":[1.0,-2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,0.0,1.0]},
+    {"actor_id":"robot_rp03","type":"pi_plus","translation_m":[-1.0,2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,1.0,0.0]},
+    {"actor_id":"robot_rp04","type":"pi_plus","translation_m":[0.0,2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,1.0,0.0]},
+    {"actor_id":"robot_rp05","type":"pi_plus","translation_m":[1.0,2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,1.0,0.0]}
+  ]
+}
