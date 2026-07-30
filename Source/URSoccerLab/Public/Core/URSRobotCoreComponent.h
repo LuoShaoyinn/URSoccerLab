@@ -169,6 +169,11 @@ private:
 		TWeakObjectPtr<UMjJoint> Joint;
 		FString Name;
 		int32 MjId = -1;
+		int32 JointType = -1;
+		int32 QposAdr = -1;
+		int32 QposSize = 0;
+		int32 DofAdr = -1;
+		int32 DofSize = 0;
 	};
 
 	struct FCameraEntry
@@ -187,6 +192,8 @@ private:
 		TMap<FString, int32> ActuatorNameToIndex;
 
 		TArray<FJointInfo> Joints;
+		int32 RootBodyId = -1;
+		int32 RootQposAdr = -1;
 
 		TArray<FCameraEntry> Cameras;
 
@@ -199,6 +206,11 @@ private:
 	};
 
 	TArray<FRobotEndpoint> Endpoints;
+	// Endpoint metadata and command/pose-lock state are shared by the game
+	// thread and the asynchronous MuJoCo pre-step callback. Lock ordering for
+	// operations that also touch live mjData is:
+	// PhysicsEngine::CallbackMutex -> EndpointMutex.
+	mutable FCriticalSection EndpointMutex;
 	TWeakObjectPtr<AAMjManager> Manager;
 	TWeakObjectPtr<UObject> SceneConfigComp;
 	bool bCallbacksRegistered = false;

@@ -52,11 +52,16 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	{
 		Initialize();
 	}
-	if (bInitialized && Endpoints.Num() == 0)
+	int32 EndpointCount = 0;
+	{
+		FScopeLock Lock(&EndpointMutex);
+		EndpointCount = Endpoints.Num();
+	}
+	if (bInitialized && EndpointCount == 0)
 	{
 		TryInitializeCompiledScene();
 	}
-	if (bInitialized && Endpoints.Num() > 0)
+	if (bInitialized && EndpointCount > 0)
 	{
 		SetComponentTickEnabled(false);
 	}
@@ -112,7 +117,10 @@ bool UURSRobotCoreComponent::Initialize()
 	if (!bCallbacksRegistered)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[URS Core] Physics engine not ready; will retry next tick."));
-		Endpoints.Reset();
+		{
+			FScopeLock Lock(&EndpointMutex);
+			Endpoints.Reset();
+		}
 		return false;
 	}
 
@@ -123,7 +131,10 @@ bool UURSRobotCoreComponent::Initialize()
 
 	bInitialized = true;
 	TryInitializeCompiledScene();
-	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized with %d robot(s)."), Endpoints.Num());
+	{
+		FScopeLock Lock(&EndpointMutex);
+		UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized with %d robot(s)."), Endpoints.Num());
+	}
 	return true;
 }
 
@@ -150,7 +161,12 @@ void UURSRobotCoreComponent::TryInitializeCompiledScene()
 	}
 
 	RebuildEndpointCache();
-	if (Endpoints.Num() == 0)
+	int32 EndpointCount = 0;
+	{
+		FScopeLock Lock(&EndpointMutex);
+		EndpointCount = Endpoints.Num();
+	}
+	if (EndpointCount == 0)
 	{
 		World->GetTimerManager().SetTimer(
 			CompiledSceneRetryTimer, this, &UURSRobotCoreComponent::TryInitializeCompiledScene,
@@ -160,7 +176,7 @@ void UURSRobotCoreComponent::TryInitializeCompiledScene()
 
 	InitializeConfiguredRobotPoses();
 	OnRobotsChanged.Broadcast();
-	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized %d compiled robot endpoint(s)."), Endpoints.Num());
+	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized %d compiled robot endpoint(s)."), EndpointCount);
 }
 
 void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
@@ -168,25 +184,36 @@ void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
 	// A scene-config spawn transform places the UE actor, but a MuJoCo
 	// freejoint has independent qpos state. The endpoint cache is populated
 	// only after URLab compilation, so run this after every cache rebuild.
-	for (const FRobotEndpoint& Endpoint : Endpoints)
+	TArray<FString> ActorIds;
 	{
-		const FURSPoseResult PoseResult = ResetRobot(Endpoint.ActorId);
+		FScopeLock Lock(&EndpointMutex);
+		ActorIds.Reserve(Endpoints.Num());
+		for (const FRobotEndpoint& Endpoint : Endpoints)
+		{
+			ActorIds.Add(Endpoint.ActorId);
+		}
+	}
+	for (const FString& ActorId : ActorIds)
+	{
+		const FURSPoseResult PoseResult = ResetRobot(ActorId);
 		if (!PoseResult.bOk)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[URS Core] Failed to initialize '%s' from scene config: %s"),
-				*Endpoint.ActorId, *PoseResult.Error);
+				*ActorId, *PoseResult.Error);
 		}
 	}
 }
 
 void UURSRobotCoreComponent::RebuildEndpointCache()
 {
-	Endpoints.Reset();
-
 	AAMjManager* ManagerPtr = Manager.Get();
 	if (!ManagerPtr) return;
 
 	UURSSceneConfigComponent* SceneComp = Cast<UURSSceneConfigComponent>(SceneConfigComp.Get());
+	TArray<FRobotEndpoint> NewEndpoints;
+	const mjModel* Model = ManagerPtr->PhysicsEngine
+		? ManagerPtr->PhysicsEngine->GetModel()
+		: nullptr;
 
 	TMap<FString, AMjArticulation*> ArticulationsByName;
 	for (AMjArticulation* Articulation : ManagerPtr->GetAllArticulations())
@@ -232,7 +259,30 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 			Info.Joint = Joint;
 			Info.Name = CleanName;
 			Info.MjId = Joint->GetMjID();
+			if (Model && Info.MjId >= 0 && Info.MjId < Model->njnt)
+			{
+				Info.JointType = Model->jnt_type[Info.MjId];
+				Info.QposAdr = Model->jnt_qposadr[Info.MjId];
+				const int32 QposEnd = (Info.MjId + 1 < Model->njnt)
+					? Model->jnt_qposadr[Info.MjId + 1]
+					: Model->nq;
+				Info.QposSize = QposEnd - Info.QposAdr;
+				Info.DofAdr = Model->jnt_dofadr[Info.MjId];
+				const int32 DofEnd = (Info.MjId + 1 < Model->njnt)
+					? Model->jnt_dofadr[Info.MjId + 1]
+					: Model->nv;
+				Info.DofSize = DofEnd - Info.DofAdr;
+			}
 			Ep.Joints.Add(MoveTemp(Info));
+		}
+		if (Model)
+		{
+			Ep.RootBodyId = DiscoverRootBodyId(Articulation, Model);
+			const FQposLayout Layout = DiscoverQposLayout(Articulation, Model);
+			if (!Layout.RootSlots.IsEmpty())
+			{
+				Ep.RootQposAdr = Layout.RootSlots[0].Adr;
+			}
 		}
 
 		TArray<UMjCamera*> Cameras;
@@ -263,7 +313,7 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 			Ep.Cameras.Add(MoveTemp(Entry));
 		}
 
-		Endpoints.Add(MoveTemp(Ep));
+		NewEndpoints.Add(MoveTemp(Ep));
 	};
 
 	if (SceneComp)
@@ -282,7 +332,7 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		}
 	}
 
-	if (Endpoints.Num() == 0)
+	if (NewEndpoints.Num() == 0)
 	{
 		TSet<AMjArticulation*> Seen;
 		for (auto& Pair : ArticulationsByName)
@@ -293,7 +343,12 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[URS Core] Endpoint cache rebuilt: %d robot(s)."), Endpoints.Num());
+	const int32 NewEndpointCount = NewEndpoints.Num();
+	{
+		FScopeLock Lock(&EndpointMutex);
+		Endpoints = MoveTemp(NewEndpoints);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[URS Core] Endpoint cache rebuilt: %d robot(s)."), NewEndpointCount);
 }
 
 void UURSRobotCoreComponent::RegisterPhysicsCallbacks()
@@ -316,6 +371,7 @@ void UURSRobotCoreComponent::RegisterPhysicsCallbacks()
 
 void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 {
+	FScopeLock Lock(&EndpointMutex);
 	ApplyPoseLocks(Model, Data);
 	ApplyCommands(FPlatformTime::Seconds());
 }
@@ -389,14 +445,6 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 	const FVector* Trans, const FQuat* Rot, const TArray<float>* JointQpos)
 {
 	FURSPoseResult Result;
-	FRobotEndpoint* Ep = FindEndpoint(ActorId);
-	if (!Ep)
-	{
-		Result.Error = TEXT("not_found");
-		Result.Message = FString::Printf(TEXT("Robot '%s' not found"), *ActorId);
-		return Result;
-	}
-
 	AAMjManager* ManagerPtr = Manager.Get();
 	if (!ManagerPtr || !ManagerPtr->PhysicsEngine)
 	{
@@ -408,7 +456,15 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 	// ApplyPoseLocks is itself called while the worker owns CallbackMutex.
 	// Serialize the game-thread update here instead of recursively taking
 	// the non-recursive mutex inside the physics callback.
-	FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+	FScopeLock EndpointLock(&EndpointMutex);
+	FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep)
+	{
+		Result.Error = TEXT("not_found");
+		Result.Message = FString::Printf(TEXT("Robot '%s' not found"), *ActorId);
+		return Result;
+	}
 	if (bLock)
 	{
 		Ep->PoseLock.bActive = true;
@@ -453,6 +509,7 @@ void UURSRobotCoreComponent::ApplyCommands(double NowSec)
 
 TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 {
+	FScopeLock Lock(&EndpointMutex);
 	TArray<FString> Ids;
 	Ids.Reserve(Endpoints.Num());
 	for (const FRobotEndpoint& Ep : Endpoints)
@@ -464,79 +521,117 @@ TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 
 bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotState& OutState)
 {
+	FScopeLock EndpointLock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
 	AAMjManager* ManagerPtr = Manager.Get();
 	if (!ManagerPtr || !ManagerPtr->PhysicsEngine) return false;
 
-	mjModel* Model = ManagerPtr->PhysicsEngine->GetModel();
-	mjData* Data = ManagerPtr->PhysicsEngine->GetData();
-	if (!Model || !Data) return false;
-
 	const double NowSec = FPlatformTime::Seconds();
 
 	OutState = FURSRobotState();
 	OutState.ActorId = ActorId;
-	OutState.SimTime = Data->time;
 	OutState.bCommandTimedOut = !Ep->bHasCommand || (NowSec - Ep->LastCommandTimeSec > CommandTimeoutSec);
 
-	// Find root joint for base pose
-	int32 RootBodyId = DiscoverRootBodyId(Ep->Articulation.Get(), Model);
-	if (RootBodyId > 0 && RootBodyId < Model->nbody)
-	{
-		const mjtNum* Xpos = Data->xpos + RootBodyId * 3;
-		const mjtNum* Xquat = Data->xquat + RootBodyId * 4;
-		OutState.BasePos = FVector(Xpos[0], Xpos[1], Xpos[2]);
-		OutState.BaseQuat = FQuat(Xquat[1], Xquat[2], Xquat[3], Xquat[0]);
-	}
-	else
-	{
-		FQposLayout Layout = DiscoverQposLayout(Ep->Articulation.Get(), Model);
-		if (!Layout.RootSlots.IsEmpty())
+	bool bHaveSnapshot = false;
+	ManagerPtr->PhysicsEngine->WithRenderState(
+		[&](const FMjRenderSnapshot& Snapshot)
 		{
-			int32 Adr = Layout.RootSlots[0].Adr;
-			OutState.BasePos = FVector(Data->qpos[Adr], Data->qpos[Adr+1], Data->qpos[Adr+2]);
-			OutState.BaseQuat = FQuat(Data->qpos[Adr+4], Data->qpos[Adr+5], Data->qpos[Adr+6], Data->qpos[Adr+3]);
-		}
-	}
+			if (Snapshot.FrameId == 0)
+			{
+				return;
+			}
+			bHaveSnapshot = true;
+			OutState.SimTime = Snapshot.SimTime;
 
-	// Base velocity from free joint qvel
-	for (const FJointInfo& JointInfo : Ep->Joints)
+			// Find root joint for base pose.
+			if (Ep->RootBodyId > 0
+				&& Snapshot.XPos.IsValidIndex(Ep->RootBodyId * 3 + 2)
+				&& Snapshot.XQuat.IsValidIndex(Ep->RootBodyId * 4 + 3))
+			{
+				const int32 PosAdr = Ep->RootBodyId * 3;
+				const int32 QuatAdr = Ep->RootBodyId * 4;
+				OutState.BasePos = FVector(
+					Snapshot.XPos[PosAdr],
+					Snapshot.XPos[PosAdr + 1],
+					Snapshot.XPos[PosAdr + 2]);
+				OutState.BaseQuat = FQuat(
+					Snapshot.XQuat[QuatAdr + 1],
+					Snapshot.XQuat[QuatAdr + 2],
+					Snapshot.XQuat[QuatAdr + 3],
+					Snapshot.XQuat[QuatAdr]);
+			}
+			else if (Ep->RootQposAdr >= 0)
+			{
+				const int32 Adr = Ep->RootQposAdr;
+				if (Snapshot.QPos.IsValidIndex(Adr + 6))
+				{
+					OutState.BasePos = FVector(
+						Snapshot.QPos[Adr],
+						Snapshot.QPos[Adr + 1],
+						Snapshot.QPos[Adr + 2]);
+					OutState.BaseQuat = FQuat(
+						Snapshot.QPos[Adr + 4],
+						Snapshot.QPos[Adr + 5],
+						Snapshot.QPos[Adr + 6],
+						Snapshot.QPos[Adr + 3]);
+				}
+			}
+
+			// Base velocity from the free joint.
+			for (const FJointInfo& JointInfo : Ep->Joints)
+			{
+				if (JointInfo.JointType != mjJNT_FREE
+					|| JointInfo.DofAdr < 0
+					|| JointInfo.DofSize < 6)
+				{
+					continue;
+				}
+				const int32 DofAdr = JointInfo.DofAdr;
+				if (Snapshot.QVel.IsValidIndex(DofAdr + 5))
+				{
+					for (int32 Idx = 0; Idx < 6; ++Idx)
+					{
+						OutState.BaseVel.Add(Snapshot.QVel[DofAdr + Idx]);
+					}
+				}
+				break;
+			}
+
+			// Joints (non-root only — free-joint data is in base).
+			for (const FJointInfo& JointInfo : Ep->Joints)
+			{
+				if (JointInfo.JointType == mjJNT_FREE
+					|| JointInfo.QposAdr < 0
+					|| JointInfo.DofAdr < 0)
+				{
+					continue;
+				}
+
+				OutState.JointNames.Add(JointInfo.Name);
+				const int32 QposBegin = JointInfo.QposAdr;
+				const int32 QposEnd = QposBegin + JointInfo.QposSize;
+				for (int32 Idx = QposBegin;
+					Idx < QposEnd && Snapshot.QPos.IsValidIndex(Idx);
+					++Idx)
+				{
+					OutState.JointQpos.Add(Snapshot.QPos[Idx]);
+				}
+
+				const int32 QvelBegin = JointInfo.DofAdr;
+				const int32 QvelEnd = QvelBegin + JointInfo.DofSize;
+				for (int32 Idx = QvelBegin;
+					Idx < QvelEnd && Snapshot.QVel.IsValidIndex(Idx);
+					++Idx)
+				{
+					OutState.JointQvel.Add(Snapshot.QVel[Idx]);
+				}
+			}
+		});
+	if (!bHaveSnapshot)
 	{
-		int32 JId = JointInfo.MjId;
-		if (JId < 0 || JId >= Model->njnt) continue;
-		if (Model->jnt_type[JId] != mjJNT_FREE) continue;
-		int32 DofAdr = Model->jnt_dofadr[JId];
-		for (int32 i = 0; i < 6; ++i)
-		{
-			OutState.BaseVel.Add(Data->qvel[DofAdr + i]);
-		}
-		break;
-	}
-
-	// Joints (non-root only — free joint data is in base)
-	for (const FJointInfo& JointInfo : Ep->Joints)
-	{
-		int32 JId = JointInfo.MjId;
-		if (JId < 0 || JId >= Model->njnt) continue;
-		if (Model->jnt_type[JId] == mjJNT_FREE) continue;
-
-		OutState.JointNames.Add(JointInfo.Name);
-
-		int32 QposBegin = Model->jnt_qposadr[JId];
-		int32 QposEnd = (JId + 1 < Model->njnt) ? Model->jnt_qposadr[JId + 1] : Model->nq;
-		for (int32 Idx = QposBegin; Idx < QposEnd; ++Idx)
-		{
-			OutState.JointQpos.Add(Data->qpos[Idx]);
-		}
-
-		int32 QvelBegin = Model->jnt_dofadr[JId];
-		int32 QvelEnd = (JId + 1 < Model->njnt) ? Model->jnt_dofadr[JId + 1] : Model->nv;
-		for (int32 Idx = QvelBegin; Idx < QvelEnd; ++Idx)
-		{
-			OutState.JointQvel.Add(Data->qvel[Idx]);
-		}
+		return false;
 	}
 
 	// Actuators
@@ -570,6 +665,7 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 
 void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FString, float>& NamedValues)
 {
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
 
@@ -597,6 +693,7 @@ void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FS
 
 bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 {
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -626,6 +723,7 @@ bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 
 bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, const FString& CameraName)
 {
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -659,6 +757,7 @@ bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, 
 
 bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FString& CameraName) const
 {
+	FScopeLock Lock(&EndpointMutex);
 	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -675,6 +774,7 @@ bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FS
 
 bool UURSRobotCoreComponent::ConsumeCameraFrame(const FString& ActorId, const FString& CameraName, TArray<FColor>& OutPixels)
 {
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -701,6 +801,7 @@ bool UURSRobotCoreComponent::ConsumeDepthCameraFrame(
 	const FString& CameraName,
 	TArray<float>& OutDepthMeters)
 {
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -786,6 +887,16 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 	FURSPoseResult Result;
 	Result.bOk = false;
 
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine)
+	{
+		Result.Error = TEXT("not_ready");
+		Result.Message = TEXT("Physics engine not ready");
+		return Result;
+	}
+
+	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+	FScopeLock EndpointLock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -795,8 +906,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 	}
 
 	AMjArticulation* Articulation = Ep->Articulation.Get();
-	AAMjManager* ManagerPtr = Manager.Get();
-	if (!Articulation || !ManagerPtr || !ManagerPtr->PhysicsEngine)
+	if (!Articulation)
 	{
 		Result.Error = TEXT("not_ready");
 		Result.Message = TEXT("Physics engine not ready");
@@ -877,8 +987,6 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 	}
 
 	{
-		FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-
 		if (!Layout.RootSlots.IsEmpty())
 		{
 			int32 Adr = Layout.RootSlots[0].Adr;
@@ -963,6 +1071,15 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 	FURSPoseResult Result;
 	Result.bOk = false;
 
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine)
+	{
+		Result.Error = TEXT("not_ready");
+		return Result;
+	}
+
+	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+	FScopeLock EndpointLock(&EndpointMutex);
 	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -971,8 +1088,7 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 	}
 
 	AMjArticulation* Articulation = Ep->Articulation.Get();
-	AAMjManager* ManagerPtr = Manager.Get();
-	if (!Articulation || !ManagerPtr || !ManagerPtr->PhysicsEngine)
+	if (!Articulation)
 	{
 		Result.Error = TEXT("not_ready");
 		return Result;
@@ -990,8 +1106,6 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 	int32 RootBodyId = DiscoverRootBodyId(Articulation, Model);
 
 	{
-		FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-
 		if (RootBodyId > 0 && RootBodyId < Model->nbody)
 		{
 			const mjtNum* Xpos = Data->xpos + RootBodyId * 3;
@@ -1024,11 +1138,27 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 {
 	UURSSceneConfigComponent* SceneComp = Cast<UURSSceneConfigComponent>(SceneConfigComp.Get());
-	FRobotEndpoint* Endpoint = FindEndpoint(ActorId);
+	bool bHasEndpoint = false;
+	TArray<FString> NonRootJointNames;
+	{
+		FScopeLock Lock(&EndpointMutex);
+		if (const FRobotEndpoint* Endpoint = FindEndpoint(ActorId))
+		{
+			bHasEndpoint = true;
+			NonRootJointNames.Reserve(Endpoint->Joints.Num());
+			for (const FJointInfo& Joint : Endpoint->Joints)
+			{
+				if (Joint.JointType != mjJNT_FREE)
+				{
+					NonRootJointNames.Add(Joint.Name);
+				}
+			}
+		}
+	}
 
 	FURSPoseResult Result;
 	Result.bOk = false;
-	if (!SceneComp || !Endpoint)
+	if (!SceneComp || !bHasEndpoint)
 	{
 		Result.Error = TEXT("not_ready");
 		Result.Message = TEXT("scene config or robot endpoint is unavailable");
@@ -1070,19 +1200,17 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 
 	const TMap<FString, float>& ConfiguredJointPositions = Spawn->JointPositionsRad.GetValue();
 	TArray<float> InitialJointQpos;
-	InitialJointQpos.Reserve(Endpoint->Joints.Num() - 1);
-	for (const FJointInfo& Joint : Endpoint->Joints)
+	InitialJointQpos.Reserve(NonRootJointNames.Num());
+	for (const FString& JointName : NonRootJointNames)
 	{
-		if (Joint.Name == TEXT("root"))
-		{
-			continue;
-		}
-
-		const float* Position = ConfiguredJointPositions.Find(Joint.Name);
+		const float* Position = ConfiguredJointPositions.Find(JointName);
 		if (!Position)
 		{
 			Result.Error = TEXT("incomplete_initial_joint_positions");
-			Result.Message = FString::Printf(TEXT("robot '%s' is missing initial position for joint '%s'"), *ActorId, *Joint.Name);
+			Result.Message = FString::Printf(
+				TEXT("robot '%s' is missing initial position for joint '%s'"),
+				*ActorId,
+				*JointName);
 			return Result;
 		}
 		InitialJointQpos.Add(*Position);
