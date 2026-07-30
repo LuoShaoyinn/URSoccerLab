@@ -54,6 +54,19 @@ Run the end-to-end vision smoke test:
 uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
 ```
 
+Select and verify the camera wire encoding with `--camera-compress`. JPEG
+quality is configurable; `raw` sends uncompressed BGRA:
+
+```bash
+uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
+  --camera-compress jpeg --jpeg-quality 85 \
+  --out py_example/out/vision_jpeg_q85
+
+uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
+  --camera-compress raw \
+  --out py_example/out/vision_raw
+```
+
 While Unreal is serving camera frames, measure message rate, payload bandwidth,
 frame intervals, and whether every message contains the expected cameras:
 

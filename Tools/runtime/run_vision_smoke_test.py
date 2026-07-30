@@ -143,18 +143,20 @@ def run_checked(cmd: list[str], cwd: Path, log_path: Path | None = None) -> None
         raise RuntimeError(f"command failed with exit code {proc.returncode}.{suffix}")
 
 
-def start_simulator(ue: Path, extra_args: list[str]) -> subprocess.Popen[str]:
+def start_simulator(
+    ue: Path, extra_args: list[str], *, force_memory_ddc: bool = False
+) -> subprocess.Popen[str]:
     cmd = [
         str(ue),
         str(PROJECT),
         MAP_PATH,
         "-game",
         "-RenderOffscreen",
-        "-DDC-ForceMemoryCache",
         "-unattended",
         "-nop4",
         "-nosplash",
         "-NoSound",
+        *(["-DDC-ForceMemoryCache"] if force_memory_ddc else []),
         *extra_args,
     ]
     print("+", " ".join(cmd), flush=True)
@@ -212,6 +214,23 @@ def main() -> int:
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
     parser.add_argument("--camera-frame-count", type=int, default=20)
+    parser.add_argument(
+        "--camera-compress",
+        choices=("jpeg", "raw"),
+        default="jpeg",
+        help="Camera wire encoding selected by the Unreal transport.",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=85,
+        help="JPEG quality from 1 to 100; ignored for raw transport.",
+    )
+    parser.add_argument(
+        "--force-memory-ddc",
+        action="store_true",
+        help="Use a non-persistent in-memory Unreal DDC (slower on repeated runs).",
+    )
     args = parser.parse_args()
 
     if not args.ue.exists():
@@ -220,13 +239,20 @@ def main() -> int:
 
     if not args.scene_config.exists():
         raise FileNotFoundError(args.scene_config)
+    if not 1 <= args.jpeg_quality <= 100:
+        parser.error("--jpeg-quality must be between 1 and 100")
     run_checked([sys.executable, str(ROOT / "Tools" / "editor" / "validate_baked_assets.py")], ROOT)
     run_checked(["uv", "sync"], ROOT / "py_example")
 
     args.out.mkdir(parents=True, exist_ok=True)
     sim_extra_args = list(args.sim_extra_arg)
     sim_extra_args.append(f"-URSSceneConfig={args.scene_config.resolve()}")
-    sim = start_simulator(args.ue, sim_extra_args)
+    sim_extra_args.append(f"-URSCameraCompress={args.camera_compress}")
+    if args.camera_compress == "jpeg":
+        sim_extra_args.append(f"-URSJpegQuality={args.jpeg_quality}")
+    sim = start_simulator(
+        args.ue, sim_extra_args, force_memory_ddc=args.force_memory_ddc
+    )
     sim_log_path = ROOT / "Saved" / "Logs" / "URS_VisionSmokeRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(
@@ -269,6 +295,8 @@ def main() -> int:
             str(args.out),
             "--camera-frame-count",
             str(args.camera_frame_count),
+            "--expected-codec",
+            args.camera_compress,
         ]
 
         result = subprocess.run(
@@ -300,7 +328,20 @@ def main() -> int:
         raise RuntimeError(f"camera.png appears blank or nearly black: {stats}. See {sim_log_path}")
 
     print(f"vision smoke passed: {camera_path}")
-    print(json.dumps({"camera_stats": stats}, indent=2, sort_keys=True))
+    transport_path = args.out / "transport.json"
+    transport = json.loads(transport_path.read_text()) if transport_path.exists() else {}
+    print(
+        json.dumps(
+            {
+                "camera_compress": args.camera_compress,
+                "jpeg_quality": args.jpeg_quality if args.camera_compress == "jpeg" else None,
+                "camera_stats": stats,
+                "transport": transport,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

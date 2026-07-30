@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--timeout-ms", type=int, default=30000)
     parser.add_argument("--out", type=Path, default=Path("out/vision_smoke"))
     parser.add_argument("--camera-frame-count", type=int, default=1)
+    parser.add_argument("--expected-codec", choices=("jpeg", "raw"))
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -33,6 +34,9 @@ def main() -> int:
     deadline = time.monotonic() + args.timeout_ms / 1000.0
     cameras_saved = 0
     state_saved = False
+    image_saved = False
+    codec_counts: dict[str, int] = {}
+    payload_bytes = 0
 
     while time.monotonic() < deadline and cameras_saved < args.camera_frame_count:
         for kind, payload in client.recv():
@@ -43,7 +47,20 @@ def main() -> int:
             elif kind == "camera":
                 for camera in payload:
                     if camera["data"] and camera["width"] > 0 and camera["height"] > 0:
-                        Image.fromarray(camera_to_rgb(camera)).save(args.out / "camera.png")
+                        codec = str(camera["codec"])
+                        if args.expected_codec and codec != args.expected_codec:
+                            print(
+                                f"Expected {args.expected_codec} camera data, received {codec}"
+                            )
+                            client.close()
+                            return 1
+                        if not image_saved:
+                            Image.fromarray(camera_to_rgb(camera)).save(
+                                args.out / "camera.png"
+                            )
+                            image_saved = True
+                        codec_counts[codec] = codec_counts.get(codec, 0) + 1
+                        payload_bytes += len(camera["data"])
                         cameras_saved += 1
 
         time.sleep(0.001)
@@ -54,7 +71,17 @@ def main() -> int:
         print(f"No camera frames received for {args.robot}")
         return 1
 
+    result = {
+        "camera_frames": cameras_saved,
+        "codec_counts": codec_counts,
+        "payload_bytes": payload_bytes,
+        "mean_payload_bytes": payload_bytes / cameras_saved,
+    }
+    (args.out / "transport.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n"
+    )
     print(f"vision smoke: saved {cameras_saved} camera frame(s) to {args.out}")
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 

@@ -120,6 +120,26 @@ uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
 Starts the simulator, connects via TCP, sends zero commands, captures camera
 frames, and validates non-blank RGB content.
 
+The runner can compare JPEG and uncompressed BGRA transport:
+
+```bash
+uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
+  --camera-compress jpeg --jpeg-quality 85 \
+  --out py_example/out/vision_jpeg_q85
+
+uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
+  --camera-compress raw \
+  --out py_example/out/vision_raw
+```
+
+Each output directory includes `transport.json` with the received codec and
+encoded payload sizes. The saved `camera.png` is only a decoded inspection
+image; it does not indicate the wire encoding.
+
+The launcher uses Unreal's persistent Zen derived-data cache by default so
+compiled shaders are reused. `--force-memory-ddc` is available only as a
+recovery option; it discards compiled shader data when Unreal exits.
+
 ## Layout
 
 ```text
