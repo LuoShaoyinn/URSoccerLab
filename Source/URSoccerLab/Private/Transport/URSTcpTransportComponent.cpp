@@ -1,5 +1,6 @@
 #include "Transport/URSTcpTransportComponent.h"
 #include "Core/URSRobotCoreComponent.h"
+#include "Scene/URSSceneConfigComponent.h"
 
 #include "Sockets.h"
 #include "SocketSubsystem.h"
@@ -14,8 +15,81 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Misc/CommandLine.h"
+#include "Misc/Compression.h"
 #include "Misc/Parse.h"
 #include "Modules/ModuleManager.h"
+
+namespace
+{
+struct FURSImageEntry
+{
+	FString CameraName;
+	uint8 Codec = URSProtocol::ImageCodec_Raw;
+	uint8 PixelFormat = URSProtocol::PixelFormat_BGRA8;
+	uint16 Width = 0;
+	uint16 Height = 0;
+	uint32 UncompressedBytes = 0;
+	TArray<uint8> Data;
+};
+
+void AppendU16Le(TArray<uint8>& Out, const uint16 Value)
+{
+	Out.Add(static_cast<uint8>(Value & 0xff));
+	Out.Add(static_cast<uint8>((Value >> 8) & 0xff));
+}
+
+void AppendU32Le(TArray<uint8>& Out, const uint32 Value)
+{
+	Out.Add(static_cast<uint8>(Value & 0xff));
+	Out.Add(static_cast<uint8>((Value >> 8) & 0xff));
+	Out.Add(static_cast<uint8>((Value >> 16) & 0xff));
+	Out.Add(static_cast<uint8>((Value >> 24) & 0xff));
+}
+
+void AppendF64Le(TArray<uint8>& Out, const double Value)
+{
+	static_assert(PLATFORM_LITTLE_ENDIAN, "URS image protocol currently requires a little-endian host");
+	uint8 Bytes[sizeof(double)];
+	FMemory::Memcpy(Bytes, &Value, sizeof(double));
+	Out.Append(Bytes, sizeof(double));
+}
+
+TArray<uint8> BuildImageMessage(
+	const uint32 Sequence,
+	const double SimTime,
+	const TArray<FURSImageEntry>& Entries)
+{
+	TArray<uint8> Packed;
+	Packed.Add(URSProtocol::ImageMessageVersion);
+	Packed.Add(static_cast<uint8>(FMath::Min(Entries.Num(), 255)));
+	AppendU16Le(Packed, 0); // reserved flags
+	AppendU32Le(Packed, Sequence);
+	AppendF64Le(Packed, SimTime);
+
+	for (const FURSImageEntry& Entry : Entries)
+	{
+		FTCHARToUTF8 CameraNameUtf8(*Entry.CameraName);
+		const int32 NameLength = FMath::Min(CameraNameUtf8.Length(), 255);
+		Packed.Add(static_cast<uint8>(NameLength));
+		Packed.Append(reinterpret_cast<const uint8*>(CameraNameUtf8.Get()), NameLength);
+		Packed.Add(Entry.Codec);
+		Packed.Add(Entry.PixelFormat);
+		Packed.Add(0); // reserved
+		AppendU16Le(Packed, Entry.Width);
+		AppendU16Le(Packed, Entry.Height);
+		AppendU32Le(Packed, Entry.UncompressedBytes);
+		AppendU32Le(Packed, static_cast<uint32>(Entry.Data.Num()));
+		Packed.Append(Entry.Data);
+	}
+	return Packed;
+}
+
+const FURSCameraInfo* FindCameraInfo(const FURSRobotState& State, const FString& Name)
+{
+	return State.Cameras.FindByPredicate(
+		[&Name](const FURSCameraInfo& Info) { return Info.Name == Name; });
+}
+} // namespace
 
 UURSTcpTransportComponent::UURSTcpTransportComponent()
 {
@@ -26,6 +100,33 @@ UURSTcpTransportComponent::UURSTcpTransportComponent()
 void UURSTcpTransportComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (AActor* Owner = GetOwner())
+	{
+		if (const UURSSceneConfigComponent* SceneConfig =
+			Owner->FindComponentByClass<UURSSceneConfigComponent>())
+		{
+			VisionConfig = SceneConfig->GetActiveConfig().Vision;
+		}
+	}
+	CameraRateHz = VisionConfig.Rgb.RateHz;
+	CameraCompress = VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg
+		? TEXT("jpeg") : TEXT("raw");
+	JpegQuality = VisionConfig.Rgb.JpegQuality;
+	DepthRateHz = VisionConfig.Depth.RateHz;
+	switch (VisionConfig.Depth.Compression)
+	{
+	case URSoccerLab::EURSDepthCompression::RawFloat32:
+		DepthCompress = TEXT("raw_f32");
+		break;
+	case URSoccerLab::EURSDepthCompression::RawUint16Millimeters:
+		DepthCompress = TEXT("raw_u16_mm");
+		break;
+	case URSoccerLab::EURSDepthCompression::ZlibUint16Millimeters:
+	default:
+		DepthCompress = TEXT("zlib_u16_mm");
+		break;
+	}
 
 	double RequestedCameraRateHz = CameraRateHz;
 	if (FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), RequestedCameraRateHz))
@@ -54,13 +155,41 @@ void UURSTcpTransportComponent::BeginPlay()
 	{
 		JpegQuality = FMath::Clamp(RequestedJpegQuality, 1, 100);
 	}
+
+	double RequestedDepthRateHz = DepthRateHz;
+	if (FParse::Value(FCommandLine::Get(), TEXT("URSDepthRateHz="), RequestedDepthRateHz))
+	{
+		DepthRateHz = FMath::Clamp(RequestedDepthRateHz, 1.0, 120.0);
+	}
+
+	FString RequestedDepthCompress;
+	if (FParse::Value(FCommandLine::Get(), TEXT("URSDepthCompress="), RequestedDepthCompress))
+	{
+		RequestedDepthCompress.ToLowerInline();
+		if (RequestedDepthCompress == TEXT("raw_f32")
+			|| RequestedDepthCompress == TEXT("raw_u16_mm")
+			|| RequestedDepthCompress == TEXT("zlib_u16_mm"))
+		{
+			DepthCompress = MoveTemp(RequestedDepthCompress);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[URS TCP] Ignoring unsupported depth codec '%s'."),
+				*RequestedDepthCompress);
+		}
+	}
 	bLogCameraStats = FParse::Param(FCommandLine::Get(), TEXT("URSCameraStats"));
 	CameraStatsWindowStartSec = FPlatformTime::Seconds();
-	NextCameraTimeSec = CameraStatsWindowStartSec;
+	NextRgbTimeSec = CameraStatsWindowStartSec;
+	NextDepthTimeSec = CameraStatsWindowStartSec;
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[URS TCP] Camera transport: rate=%.2f Hz codec=%s jpeg_quality=%d stats=%s."),
-		CameraRateHz, *CameraCompress, JpegQuality, bLogCameraStats ? TEXT("on") : TEXT("off"));
+		TEXT("[URS TCP] Vision transport: mode=%s rgb=%.2fHz/%s(q=%d) depth=%.2fHz/%s stats=%s."),
+		VisionConfig.Mode == URSoccerLab::EURSVisionMode::Rgbd ? TEXT("rgbd") : TEXT("stereo_rgb"),
+		CameraRateHz, *CameraCompress, JpegQuality,
+		DepthRateHz, *DepthCompress,
+		bLogCameraStats ? TEXT("on") : TEXT("off"));
 
 	if (bAutoStart)
 	{
@@ -806,91 +935,219 @@ void UURSTcpTransportComponent::FlushAllWrites()
 void UURSTcpTransportComponent::TickCameraPublish()
 {
 	const double Now = FPlatformTime::Seconds();
-	const double Interval = CameraRateHz > 0 ? 1.0 / CameraRateHz : 0.0;
-
-	if (Interval > 0 && Now >= NextCameraTimeSec)
+	auto AdvanceClock = [Now](double& NextTime, const double RateHz) -> bool
 	{
-		// Keep a fixed-rate phase instead of resetting the clock to Now.
-		// Resetting here quantizes a 30 Hz sensor to alternating 2/3-frame
-		// gaps at a 60 Hz game rate, yielding only about 24 Hz.
+		const double Interval = RateHz > 0.0 ? 1.0 / RateHz : 0.0;
+		if (Interval <= 0.0 || Now < NextTime)
+		{
+			return false;
+		}
+		// Preserve a fixed-rate phase. Resetting to Now quantizes sensor
+		// rates against the game tick and unnecessarily lowers throughput.
 		do
 		{
-			NextCameraTimeSec += Interval;
+			NextTime += Interval;
 		}
-		while (NextCameraTimeSec <= Now);
+		while (NextTime <= Now);
+		return true;
+	};
 
-		for (FRobotListener& L : RobotListeners)
+	const bool bRequestRgb = AdvanceClock(NextRgbTimeSec, CameraRateHz);
+	const bool bRequestDepth =
+		VisionConfig.Mode == URSoccerLab::EURSVisionMode::Rgbd
+		&& AdvanceClock(NextDepthTimeSec, DepthRateHz);
+
+	if (bRequestRgb || bRequestDepth)
+	{
+		for (FRobotListener& Listener : RobotListeners)
 		{
-			if (L.Clients.Num() == 0) continue;
-			Core->RequestCameraReadback(L.ActorId);
+			if (Listener.Clients.IsEmpty()) continue;
+			if (bRequestRgb)
+			{
+				Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.LeftCamera);
+				if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
+				{
+					Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.RightCamera);
+				}
+			}
+			if (bRequestDepth)
+			{
+				Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.RightCamera);
+			}
 		}
 	}
 
-	for (FRobotListener& L : RobotListeners)
+	for (FRobotListener& Listener : RobotListeners)
 	{
-		if (L.Clients.Num() == 0) continue;
+		if (Listener.Clients.IsEmpty()) continue;
 
 		FURSRobotState State;
-		if (!Core->GetRobotState(L.ActorId, State)) continue;
+		if (!Core->GetRobotState(Listener.ActorId, State)) continue;
 
-		TArray<uint8> Packed;
-		const uint8 Codec = (CameraCompress == TEXT("jpeg")) ? URSProtocol::CameraCodec_JPEG : URSProtocol::CameraCodec_Raw;
-		Packed.Add(Codec);
-		Packed.Add(static_cast<uint8>(State.Cameras.Num()));
-
-		// Simulation timestamp (8-byte LE double) for correlating with state
-		uint8 SimTimeBytes[8];
-		FMemory::Memcpy(SimTimeBytes, &State.SimTime, 8);
-		Packed.Append(SimTimeBytes, 8);
-
-		bool bAnyNewFrame = false;
-
-		for (const FURSCameraInfo& CamInfo : State.Cameras)
+		TArray<FString> RgbCameraNames{VisionConfig.LeftCamera};
+		if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
 		{
-			TArray<FColor> Pixels;
-			bool bHasFrame = Core->ConsumeCameraFrame(L.ActorId, CamInfo.Name, Pixels) && Pixels.Num() > 0;
-			if (bHasFrame) bAnyNewFrame = true;
+			RgbCameraNames.Add(VisionConfig.RightCamera);
+		}
 
-			TArray<uint8> Encoded;
-			if (bHasFrame && Codec == URSProtocol::CameraCodec_JPEG)
+		bool bRgbReady = true;
+		for (const FString& CameraName : RgbCameraNames)
+		{
+			bRgbReady = bRgbReady && Core->IsCameraFrameReady(Listener.ActorId, CameraName);
+		}
+		if (bRgbReady)
+		{
+			TArray<FURSImageEntry> Entries;
+			bool bValidRgbSet = true;
+			for (const FString& CameraName : RgbCameraNames)
 			{
-				const double JpegStartSec = FPlatformTime::Seconds();
-				IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-				TSharedPtr<IImageWrapper> Wrapper(Module.CreateImageWrapper(EImageFormat::JPEG));
-				const uint8* RawBGRA = reinterpret_cast<const uint8*>(Pixels.GetData());
-				if (Wrapper->SetRaw(RawBGRA, CamInfo.Width * CamInfo.Height * 4, CamInfo.Width, CamInfo.Height, ERGBFormat::BGRA, 8))
+				const FURSCameraInfo* Info = FindCameraInfo(State, CameraName);
+				TArray<FColor> Pixels;
+				if (!Info || !Core->ConsumeCameraFrame(Listener.ActorId, CameraName, Pixels)
+					|| Pixels.Num() != Info->Width * Info->Height)
 				{
-					Encoded = Wrapper->GetCompressed(JpegQuality);
+					bValidRgbSet = false;
+					break;
 				}
-				CameraStatsJpegSec += FPlatformTime::Seconds() - JpegStartSec;
-			}
-			else if (bHasFrame)
-			{
-				Encoded.Append(reinterpret_cast<const uint8*>(Pixels.GetData()), Pixels.Num() * 4);
-			}
-			if (bHasFrame)
-			{
-				++CameraStatsEntryCount;
-				CameraStatsPayloadBytes += Encoded.Num();
+
+				FURSImageEntry& Entry = Entries.AddDefaulted_GetRef();
+				Entry.CameraName = CameraName;
+				Entry.PixelFormat = URSProtocol::PixelFormat_BGRA8;
+				Entry.Width = static_cast<uint16>(Info->Width);
+				Entry.Height = static_cast<uint16>(Info->Height);
+				Entry.UncompressedBytes = static_cast<uint32>(Pixels.Num() * sizeof(FColor));
+
+				if (CameraCompress == TEXT("jpeg"))
+				{
+					const double JpegStartSec = FPlatformTime::Seconds();
+					IImageWrapperModule& Module =
+						FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+					TSharedPtr<IImageWrapper> Wrapper(Module.CreateImageWrapper(EImageFormat::JPEG));
+					if (Wrapper->SetRaw(
+						reinterpret_cast<const uint8*>(Pixels.GetData()),
+						Entry.UncompressedBytes,
+						Info->Width,
+						Info->Height,
+						ERGBFormat::BGRA,
+						8))
+					{
+						Entry.Data = Wrapper->GetCompressed(JpegQuality);
+						Entry.Codec = URSProtocol::ImageCodec_JPEG;
+					}
+					CameraStatsJpegSec += FPlatformTime::Seconds() - JpegStartSec;
+				}
+				else
+				{
+					Entry.Data.Append(
+						reinterpret_cast<const uint8*>(Pixels.GetData()),
+						Entry.UncompressedBytes);
+					Entry.Codec = URSProtocol::ImageCodec_Raw;
+				}
+				bValidRgbSet = bValidRgbSet && !Entry.Data.IsEmpty();
 			}
 
-			Packed.Add(static_cast<uint8>(CamInfo.Width & 0xFF));
-			Packed.Add(static_cast<uint8>((CamInfo.Width >> 8) & 0xFF));
-			Packed.Add(static_cast<uint8>(CamInfo.Height & 0xFF));
-			Packed.Add(static_cast<uint8>((CamInfo.Height >> 8) & 0xFF));
-			int32 Len = Encoded.Num();
-			Packed.Add(static_cast<uint8>(Len & 0xFF));
-			Packed.Add(static_cast<uint8>((Len >> 8) & 0xFF));
-			Packed.Add(static_cast<uint8>((Len >> 16) & 0xFF));
-			Packed.Add(static_cast<uint8>((Len >> 24) & 0xFF));
-			Packed.Append(Encoded);
+			if (bValidRgbSet && Entries.Num() == RgbCameraNames.Num())
+			{
+				TArray<uint8> Packed =
+					BuildImageMessage(Listener.NextRgbSequence++, State.SimTime, Entries);
+				for (const FURSImageEntry& Entry : Entries)
+				{
+					++CameraStatsEntryCount;
+					CameraStatsPayloadBytes += Entry.Data.Num();
+				}
+				++CameraStatsMessageCount;
+				SendToClients(
+					Listener, URSProtocol::Type_RGB, Packed.GetData(), Packed.Num());
+			}
 		}
 
-		if (bAnyNewFrame)
+		if (VisionConfig.Mode != URSoccerLab::EURSVisionMode::Rgbd
+			|| !Core->IsCameraFrameReady(Listener.ActorId, VisionConfig.RightCamera))
 		{
-			++CameraStatsMessageCount;
-			SendToClients(L, URSProtocol::Type_Camera, Packed.GetData(), Packed.Num());
+			continue;
 		}
+
+		const FURSCameraInfo* Info = FindCameraInfo(State, VisionConfig.RightCamera);
+		TArray<float> DepthMeters;
+		if (!Info
+			|| !Core->ConsumeDepthCameraFrame(
+				Listener.ActorId, VisionConfig.RightCamera, DepthMeters)
+			|| DepthMeters.Num() != Info->Width * Info->Height)
+		{
+			continue;
+		}
+
+		FURSImageEntry DepthEntry;
+		DepthEntry.CameraName = VisionConfig.LeftCamera;
+		DepthEntry.Width = static_cast<uint16>(Info->Width);
+		DepthEntry.Height = static_cast<uint16>(Info->Height);
+		if (DepthCompress == TEXT("raw_f32"))
+		{
+			DepthEntry.Codec = URSProtocol::ImageCodec_Raw;
+			DepthEntry.PixelFormat = URSProtocol::PixelFormat_DepthFloat32Meters;
+			DepthEntry.UncompressedBytes =
+				static_cast<uint32>(DepthMeters.Num() * sizeof(float));
+			DepthEntry.Data.Append(
+				reinterpret_cast<const uint8*>(DepthMeters.GetData()),
+				DepthEntry.UncompressedBytes);
+		}
+		else
+		{
+			TArray<uint8> Quantized;
+			Quantized.SetNumUninitialized(DepthMeters.Num() * sizeof(uint16));
+			const double MaxMillimeters = VisionConfig.Depth.MaxDepthMeters * 1000.0;
+			for (int32 Index = 0; Index < DepthMeters.Num(); ++Index)
+			{
+				const double DepthMillimeters = FMath::IsFinite(DepthMeters[Index])
+					? FMath::Clamp(
+						static_cast<double>(DepthMeters[Index]) * 1000.0,
+						0.0,
+						MaxMillimeters)
+					: 0.0;
+				const uint16 Value = static_cast<uint16>(FMath::RoundToInt(DepthMillimeters));
+				Quantized[Index * 2] = static_cast<uint8>(Value & 0xff);
+				Quantized[Index * 2 + 1] = static_cast<uint8>((Value >> 8) & 0xff);
+			}
+
+			DepthEntry.PixelFormat = URSProtocol::PixelFormat_DepthUint16Millimeters;
+			DepthEntry.UncompressedBytes = static_cast<uint32>(Quantized.Num());
+			if (DepthCompress == TEXT("zlib_u16_mm"))
+			{
+				int32 CompressedSize =
+					FCompression::CompressMemoryBound(NAME_Zlib, Quantized.Num());
+				DepthEntry.Data.SetNumUninitialized(CompressedSize);
+				if (FCompression::CompressMemory(
+					NAME_Zlib,
+					DepthEntry.Data.GetData(),
+					CompressedSize,
+					Quantized.GetData(),
+					Quantized.Num(),
+					COMPRESS_BiasSpeed))
+				{
+					DepthEntry.Data.SetNum(CompressedSize, EAllowShrinking::No);
+					DepthEntry.Codec = URSProtocol::ImageCodec_Zlib;
+				}
+				else
+				{
+					DepthEntry.Data = MoveTemp(Quantized);
+					DepthEntry.Codec = URSProtocol::ImageCodec_Raw;
+				}
+			}
+			else
+			{
+				DepthEntry.Data = MoveTemp(Quantized);
+				DepthEntry.Codec = URSProtocol::ImageCodec_Raw;
+			}
+		}
+
+		TArray<FURSImageEntry> DepthEntries{MoveTemp(DepthEntry)};
+		TArray<uint8> Packed =
+			BuildImageMessage(Listener.NextDepthSequence++, State.SimTime, DepthEntries);
+		++CameraStatsEntryCount;
+		CameraStatsPayloadBytes += DepthEntries[0].Data.Num();
+		++CameraStatsMessageCount;
+		SendToClients(
+			Listener, URSProtocol::Type_Depth, Packed.GetData(), Packed.Num());
 	}
 }
 

@@ -266,7 +266,7 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurMax="), MotionBlurMax);
 	MotionBlurMax = FMath::Clamp(MotionBlurMax, 0.0f, 100.0f);
 
-	double CameraRateHz = 15.0;
+	double CameraRateHz = ActiveConfig.Vision.Rgb.RateHz;
 	FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
 	int32 MotionBlurTargetFps = FMath::Clamp(FMath::RoundToInt(CameraRateHz), 1, 120);
 	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurTargetFPS="), MotionBlurTargetFps);
@@ -274,6 +274,50 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 
 	TArray<UMjCamera*> Cameras;
 	Articulation->GetComponents<UMjCamera>(Cameras);
+
+	UMjCamera* LeftCamera = nullptr;
+	UMjCamera* RightCamera = nullptr;
+	for (UMjCamera* Camera : Cameras)
+	{
+		if (!Camera) continue;
+		if (Camera->GetName() == ActiveConfig.Vision.LeftCamera)
+		{
+			LeftCamera = Camera;
+		}
+		if (Camera->GetName() == ActiveConfig.Vision.RightCamera)
+		{
+			RightCamera = Camera;
+		}
+	}
+	if (!LeftCamera || !RightCamera)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[URS Camera] actor=%s could not resolve configured cameras left='%s' right='%s'."),
+			*ActorId, *ActiveConfig.Vision.LeftCamera, *ActiveConfig.Vision.RightCamera);
+	}
+	else
+	{
+		LeftCamera->CaptureMode = EMjCameraMode::Real;
+		if (ActiveConfig.Vision.Mode == EURSVisionMode::Rgbd)
+		{
+			// A URLab camera has one capture mode. Reuse the right-eye
+			// component as a depth capture, but align it exactly with the
+			// left-eye RGB component so RGB and depth share a viewpoint.
+			RightCamera->CaptureMode = EMjCameraMode::Depth;
+			RightCamera->Pos = LeftCamera->Pos;
+			RightCamera->Quat = LeftCamera->Quat;
+			RightCamera->bOverride_Pos = LeftCamera->bOverride_Pos;
+			RightCamera->bOverride_Quat = LeftCamera->bOverride_Quat;
+			RightCamera->SetRelativeTransform(LeftCamera->GetRelativeTransform());
+			RightCamera->DepthFarCm = static_cast<float>(
+				ActiveConfig.Vision.Depth.MaxDepthMeters * 100.0);
+		}
+		else
+		{
+			RightCamera->CaptureMode = EMjCameraMode::Real;
+		}
+	}
+
 	for (int32 CamIdx = 0; CamIdx < Cameras.Num(); ++CamIdx)
 	{
 		UMjCamera* Camera = Cameras[CamIdx];
@@ -312,8 +356,9 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 	}
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[URS Camera] actor=%s motion_blur=%s amount=%.3f max=%.3f target_fps=%d."),
+		TEXT("[URS Camera] actor=%s mode=%s motion_blur=%s amount=%.3f max=%.3f target_fps=%d."),
 		*ActorId,
+		ActiveConfig.Vision.Mode == EURSVisionMode::Rgbd ? TEXT("rgbd") : TEXT("stereo_rgb"),
 		MotionBlurEnabled != 0 ? TEXT("on") : TEXT("off"),
 		MotionBlurAmount,
 		MotionBlurMax,

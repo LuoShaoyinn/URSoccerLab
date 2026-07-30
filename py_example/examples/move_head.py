@@ -30,7 +30,14 @@ from pathlib import Path
 import numpy as np
 
 from ursoccerlab.media import camera_to_rgb, write_video
-from ursoccerlab.tcp import FrameConn, TYPE_CAMERA, TYPE_JSON, parse_camera
+from ursoccerlab.tcp import (
+    IMAGE_MESSAGE_VERSION,
+    FrameConn,
+    TYPE_JSON,
+    TYPE_RGB,
+    parse_camera,
+    parse_image_message,
+)
 
 
 class RobotConnection:
@@ -57,8 +64,12 @@ class RobotConnection:
                 self.latest_z = b.get("pos", [0, 0, 0])[2]
                 q = b.get("quat", [1, 0, 0, 0])
                 self.latest_up = 1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2)
-            elif ftype == TYPE_CAMERA:
-                cams = parse_camera(payload)
+            elif ftype == TYPE_RGB:
+                cams = (
+                    parse_image_message(payload)
+                    if payload and payload[0] == IMAGE_MESSAGE_VERSION
+                    else parse_camera(payload)
+                )
                 if not cams:
                     continue
                 # Left eye is camera index 0

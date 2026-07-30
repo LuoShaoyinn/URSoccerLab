@@ -119,7 +119,15 @@ public:
 	bool RequestCameraReadback(const FString& ActorId);
 
 	UFUNCTION(BlueprintCallable, Category = "URSoccerLab")
+	bool RequestNamedCameraReadback(const FString& ActorId, const FString& CameraName);
+
+	UFUNCTION(BlueprintPure, Category = "URSoccerLab")
+	bool IsCameraFrameReady(const FString& ActorId, const FString& CameraName) const;
+
+	UFUNCTION(BlueprintCallable, Category = "URSoccerLab")
 	bool ConsumeCameraFrame(const FString& ActorId, const FString& CameraName, TArray<FColor>& OutPixels);
+
+	bool ConsumeDepthCameraFrame(const FString& ActorId, const FString& CameraName, TArray<float>& OutDepthMeters);
 
 	FURSPoseResult SetPose(const FString& ActorId, const FVector* Translation, const FQuat* Rotation, const TArray<float>* JointQpos);
 

@@ -44,7 +44,7 @@ def main() -> int:
                 state = payload
                 (args.out / "state.json").write_text(json.dumps(state, indent=2))
                 state_saved = True
-            elif kind == "camera":
+            elif kind in ("rgb", "camera"):
                 for camera in payload:
                     if camera["data"] and camera["width"] > 0 and camera["height"] > 0:
                         codec = str(camera["codec"])

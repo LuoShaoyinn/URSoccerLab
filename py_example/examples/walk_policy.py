@@ -187,7 +187,7 @@ def main() -> int:
                     if missing:
                         raise RuntimeError(f"Robot is missing required position actuators: {missing}")
                     actuator_names = names
-            elif kind == "camera":
+            elif kind in ("rgb", "camera"):
                 camera = payload[0]  # left eye
                 if camera["sim_time"] - last_frame_time < 1.0 / args.video_fps:
                     continue
@@ -199,7 +199,7 @@ def main() -> int:
     def pump_observer() -> None:
         nonlocal observer_last_frame_time
         for kind, payload in observer.recv():
-            if kind != "camera":
+            if kind not in ("rgb", "camera"):
                 continue
             camera = payload[0]
             if camera["sim_time"] - observer_last_frame_time < 1.0 / args.video_fps:

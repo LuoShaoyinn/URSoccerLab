@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Scene/URSSceneConfig.h"
 #include "URSTcpTransportComponent.generated.h"
 
 class UURSRobotCoreComponent;
@@ -10,10 +11,18 @@ class FSocket;
 namespace URSProtocol
 {
 	static constexpr uint8 Type_JSON = 0x00;
-	static constexpr uint8 Type_Camera = 0x01;
+	static constexpr uint8 Type_RGB = 0x01;
+	static constexpr uint8 Type_Depth = 0x02;
 
-	static constexpr uint8 CameraCodec_Raw = 0x00;
-	static constexpr uint8 CameraCodec_JPEG = 0x01;
+	static constexpr uint8 ImageMessageVersion = 0x02;
+
+	static constexpr uint8 ImageCodec_Raw = 0x00;
+	static constexpr uint8 ImageCodec_JPEG = 0x01;
+	static constexpr uint8 ImageCodec_Zlib = 0x02;
+
+	static constexpr uint8 PixelFormat_BGRA8 = 0x00;
+	static constexpr uint8 PixelFormat_DepthFloat32Meters = 0x01;
+	static constexpr uint8 PixelFormat_DepthUint16Millimeters = 0x02;
 
 	static constexpr int32 DefaultRobotBasePort = 10000;
 	static constexpr int32 DefaultAdminPort = 11000;
@@ -48,6 +57,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1", ClampMax = "100"))
 	int32 JpegQuality = 85;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1.0", ClampMax = "120.0"))
+	double DepthRateHz = 15.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab")
+	FString DepthCompress = TEXT("zlib_u16_mm");
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "65536", ClampMax = "67108864"))
 	int32 MaxSendQueueBytes = 4 * 1024 * 1024;
 
@@ -68,6 +83,8 @@ private:
 		FString ActorId;
 		FSocket* ListenerSocket = nullptr;
 		TArray<FTcpClient> Clients;
+		uint32 NextRgbSequence = 0;
+		uint32 NextDepthSequence = 0;
 	};
 
 	TWeakObjectPtr<UURSRobotCoreComponent> Core;
@@ -76,8 +93,10 @@ private:
 	TArray<FRobotListener> RobotListeners;
 
 	double LastStateTimeSec = 0.0;
-	double NextCameraTimeSec = 0.0;
+	double NextRgbTimeSec = 0.0;
+	double NextDepthTimeSec = 0.0;
 	TArray<FString> LastKnownRobots;
+	URSoccerLab::FURSVisionConfig VisionConfig;
 
 	bool bLogCameraStats = false;
 	double CameraStatsWindowStartSec = 0.0;

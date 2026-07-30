@@ -607,7 +607,14 @@ bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 		{
 			if (!CamEntry.bReadbackRequested && Cam->IsReadbackReady())
 			{
-				Cam->ConsumePixels();
+				if (Cam->CaptureMode == EMjCameraMode::Depth)
+				{
+					Cam->ConsumeFloatPixels();
+				}
+				else
+				{
+					Cam->ConsumePixels();
+				}
 			}
 			Cam->RequestReadback();
 			CamEntry.bReadbackRequested = true;
@@ -615,6 +622,55 @@ bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 		}
 	}
 	return bAnyRequested;
+}
+
+bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, const FString& CameraName)
+{
+	FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep) return false;
+
+	for (FCameraEntry& CamEntry : Ep->Cameras)
+	{
+		if (CamEntry.Name != CameraName) continue;
+
+		UMjCamera* Cam = CamEntry.Camera.Get();
+		if (!Cam) return false;
+		if (CamEntry.bReadbackRequested)
+		{
+			return false;
+		}
+		if (Cam->IsReadbackReady())
+		{
+			if (Cam->CaptureMode == EMjCameraMode::Depth)
+			{
+				Cam->ConsumeFloatPixels();
+			}
+			else
+			{
+				Cam->ConsumePixels();
+			}
+		}
+		Cam->RequestReadback();
+		CamEntry.bReadbackRequested = true;
+		return true;
+	}
+	return false;
+}
+
+bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FString& CameraName) const
+{
+	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep) return false;
+
+	for (const FCameraEntry& CamEntry : Ep->Cameras)
+	{
+		if (CamEntry.Name == CameraName)
+		{
+			const UMjCamera* Cam = CamEntry.Camera.Get();
+			return CamEntry.bReadbackRequested && Cam && Cam->IsReadbackReady();
+		}
+	}
+	return false;
 }
 
 bool UURSRobotCoreComponent::ConsumeCameraFrame(const FString& ActorId, const FString& CameraName, TArray<FColor>& OutPixels)
@@ -628,6 +684,7 @@ bool UURSRobotCoreComponent::ConsumeCameraFrame(const FString& ActorId, const FS
 
 		UMjCamera* Cam = CamEntry.Camera.Get();
 		if (!Cam) return false;
+		if (Cam->CaptureMode == EMjCameraMode::Depth) return false;
 
 		if (!CamEntry.bReadbackRequested) return false;
 		if (!Cam->IsReadbackReady()) return false;
@@ -635,6 +692,35 @@ bool UURSRobotCoreComponent::ConsumeCameraFrame(const FString& ActorId, const FS
 		OutPixels = Cam->ConsumePixels();
 		CamEntry.bReadbackRequested = false;
 		return OutPixels.Num() > 0;
+	}
+	return false;
+}
+
+bool UURSRobotCoreComponent::ConsumeDepthCameraFrame(
+	const FString& ActorId,
+	const FString& CameraName,
+	TArray<float>& OutDepthMeters)
+{
+	FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep) return false;
+
+	for (FCameraEntry& CamEntry : Ep->Cameras)
+	{
+		if (CamEntry.Name != CameraName) continue;
+
+		UMjCamera* Cam = CamEntry.Camera.Get();
+		if (!Cam || Cam->CaptureMode != EMjCameraMode::Depth) return false;
+		if (!CamEntry.bReadbackRequested || !Cam->IsReadbackReady()) return false;
+
+		OutDepthMeters = Cam->ConsumeFloatPixels();
+		CamEntry.bReadbackRequested = false;
+		// SceneCapture SCS_SceneDepth is expressed in UE world units
+		// (centimetres). The transport protocol standardises on metres.
+		for (float& Depth : OutDepthMeters)
+		{
+			Depth *= 0.01f;
+		}
+		return OutDepthMeters.Num() > 0;
 	}
 	return false;
 }

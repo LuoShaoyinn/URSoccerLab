@@ -7,7 +7,10 @@
 - **Admin RPC socket**: one TCP listener on port 11000 (global, shared by all robots).
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
 - **State publishing**: outbound JSON on the robot port at `StateRateHz` (default 60 Hz). Includes `sim_time`, base pose/velocity, joint qpos/qvel, actuator values, and camera metadata.
-- **Camera publishing**: outbound binary on the robot port at `CameraRateHz` (default 15 Hz). All cameras for one robot are packed into a single frame message. Packets are sent only when a new GPU readback is available — no empty-camera packets on intermediate ticks.
+- **Vision publishing**: RGB (`0x01`) and depth (`0x02`) are separate,
+  versioned binary messages. Scene config selects stereo RGB or aligned RGBD
+  and gives RGB/depth independent rates and codecs. Packets are emitted only
+  when a new GPU readback is available.
 - **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. The default amount is `0.5` (a 180-degree shutter), the maximum streak is 5% of screen width, and velocity scaling follows `CameraRateHz`.
 - **Outbound write queues**: each client has a `WriteBuffer`. Frames are enqueued non-blocking and flushed every transport tick. Clients whose queue exceeds `MaxSendQueueBytes` (default 4 MB) are disconnected (back-pressure).
 - **Command watchdog**: `CommandTimeoutSec` (default 2 s). If no valid command arrives within the timeout, motors are zeroed.
@@ -45,17 +48,32 @@ All TCP communication uses length-prefixed frames:
 | Type | Value | Payload |
 |------|-------|---------|
 | JSON | 0x00  | UTF-8 JSON text |
-| Camera | 0x01 | Binary packed camera data |
+| RGB | 0x01 | Versioned RGB image set |
+| Depth | 0x02 | Versioned depth image set |
 
-### Camera frame layout
+### RGB and depth message layout
 
 ```text
-[1-byte codec] [1-byte num_cameras] [sim_time LE float64]
-  per-camera:
-    [width LE16] [height LE16] [data_len LE32] [pixel data]
+[version u8 = 2] [image_count u8] [flags LE16]
+[sequence LE32] [sim_time LE float64]
+  per image:
+    [camera_name_length u8] [camera_name UTF-8]
+    [codec u8] [pixel_format u8] [reserved u8]
+    [width LE16] [height LE16]
+    [uncompressed_length LE32] [data_length LE32] [data]
 ```
 
-Codec: 0x00 = raw BGRA, 0x01 = JPEG.
+Codecs are `0x00` raw, `0x01` JPEG, and `0x02` zlib. Pixel formats are
+`0x00` BGRA8, `0x01` little-endian float32 depth in metres, and `0x02`
+little-endian uint16 depth in millimetres.
+
+A stereo-RGB message contains the synchronized left and right images. In RGBD
+mode, the RGB message contains the left image and the independently scheduled
+depth message contains depth aligned to that left camera. Sequences are
+per-robot and per-message-type; use `sim_time` to correlate vision with state.
+
+The Python client continues to recognize the legacy pre-v2 `0x01` packed
+camera payload so old recordings can still be inspected.
 
 ## Admin RPC
 
@@ -111,6 +129,15 @@ used for per-example or externally managed configurations.
 ```json
 {
   "version": "urs_scene_v1",
+  "vision": {
+    "mode": "rgbd",
+    "rgb": {"rate_hz": 30, "compression": "jpeg", "jpeg_quality": 85},
+    "depth": {
+      "rate_hz": 15,
+      "compression": "zlib_u16_mm",
+      "max_depth_m": 65.535
+    }
+  },
   "robots": [
     {
       "actor_id": "robot_rp0",

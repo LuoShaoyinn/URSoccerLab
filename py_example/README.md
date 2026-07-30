@@ -36,7 +36,9 @@ for kind, data in client.recv():
 
 - Motor commands: JSON dict of `{actuator_name: float}`
 - State: JSON with `sim_time`, `base`, `joints`, `actuators`, `cameras`
-- Camera: packed binary with `sim_time`, width, height, JPEG/raw pixels
+- RGB: versioned binary image sets with JPEG/raw BGRA pixels
+- Depth: independent versioned messages with float32 metres or
+  raw/zlib-compressed uint16 millimetres
 
 ## AdminClient — set_pose, reset, lock_pose
 
@@ -160,12 +162,21 @@ uv run python -m unittest discover -s tests
 Frame format: `[4-byte BE length][1-byte type][payload]`
 
 - Type `0x00`: JSON (state, command, admin)
-- Type `0x01`: Camera (binary packed)
+- Type `0x01`: RGB image set
+- Type `0x02`: Depth image set
 
-Camera layout:
+RGB/depth v2 layout:
+
 ```
-[1-byte codec][1-byte num_cams][8-byte LE double sim_time]
-per-cam: [width LE16][height LE16][data_len LE32][pixel data]
+[u8 version=2][u8 image_count][u16 flags]
+[u32 sequence][f64 sim_time]
+then, per image:
+  [u8 name_len][UTF-8 camera_name]
+  [u8 codec][u8 pixel_format][u8 reserved]
+  [u16 width][u16 height]
+  [u32 uncompressed_len][u32 data_len][data]
 ```
 
-Codec: `0x00` = raw BGRA, `0x01` = JPEG.
+Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib. Pixel format: `0x00`
+BGRA8, `0x01` float32 metres, `0x02` uint16 millimetres. Use
+`camera_to_rgb()` and `depth_to_meters()` for decoded NumPy arrays.
