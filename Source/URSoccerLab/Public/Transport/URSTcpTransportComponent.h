@@ -2,11 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Containers/Queue.h"
 #include "Scene/URSSceneConfig.h"
 #include "URSTcpTransportComponent.generated.h"
 
 class UURSRobotCoreComponent;
 class FSocket;
+class IImageWrapperModule;
 
 namespace URSProtocol
 {
@@ -85,6 +87,27 @@ private:
 		TArray<FTcpClient> Clients;
 		uint32 NextRgbSequence = 0;
 		uint32 NextDepthSequence = 0;
+		uint64 Generation = 0;
+		bool bRgbEncodeInFlight = false;
+		bool bDepthEncodeInFlight = false;
+	};
+
+	struct FCompletedVisionPacket
+	{
+		FString ActorId;
+		uint64 ListenerGeneration = 0;
+		uint8 FrameType = 0;
+		bool bSuccess = false;
+		TArray<uint8> Payload;
+		uint32 EntryCount = 0;
+		uint64 ImagePayloadBytes = 0;
+		double EncodeSeconds = 0.0;
+	};
+
+	struct FAsyncVisionState
+	{
+		TQueue<FCompletedVisionPacket, EQueueMode::Mpsc> CompletedPackets;
+		TAtomic<bool> bAcceptResults{true};
 	};
 
 	TWeakObjectPtr<UURSRobotCoreComponent> Core;
@@ -97,11 +120,14 @@ private:
 	double NextDepthTimeSec = 0.0;
 	TArray<FString> LastKnownRobots;
 	URSoccerLab::FURSVisionConfig VisionConfig;
+	uint64 ListenerGenerationCounter = 0;
+	TSharedPtr<FAsyncVisionState, ESPMode::ThreadSafe> AsyncVisionState;
+	IImageWrapperModule* ImageWrapperModule = nullptr;
 
 	bool bLogCameraStats = false;
 	double CameraStatsWindowStartSec = 0.0;
 	double CameraStatsPublishSec = 0.0;
-	double CameraStatsJpegSec = 0.0;
+	double CameraStatsEncodeSec = 0.0;
 	uint64 CameraStatsTickCount = 0;
 	uint64 CameraStatsMessageCount = 0;
 	uint64 CameraStatsEntryCount = 0;
@@ -124,6 +150,7 @@ private:
 
 	void TickStatePublish();
 	void TickCameraPublish();
+	void DrainCompletedVisionPackets();
 
 	FString BuildStateJson(const FString& ActorId);
 

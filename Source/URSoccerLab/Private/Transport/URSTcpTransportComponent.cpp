@@ -14,6 +14,7 @@
 
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
+#include "Async/Async.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Compression.h"
 #include "Misc/Parse.h"
@@ -30,6 +31,14 @@ struct FURSImageEntry
 	uint16 Height = 0;
 	uint32 UncompressedBytes = 0;
 	TArray<uint8> Data;
+};
+
+struct FURSRawRgbImage
+{
+	FString CameraName;
+	uint16 Width = 0;
+	uint16 Height = 0;
+	TArray<FColor> Pixels;
 };
 
 void AppendU16Le(TArray<uint8>& Out, const uint16 Value)
@@ -100,6 +109,9 @@ UURSTcpTransportComponent::UURSTcpTransportComponent()
 void UURSTcpTransportComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	AsyncVisionState = MakeShared<FAsyncVisionState, ESPMode::ThreadSafe>();
+	ImageWrapperModule =
+		&FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
 
 	if (AActor* Owner = GetOwner())
 	{
@@ -199,6 +211,11 @@ void UURSTcpTransportComponent::BeginPlay()
 
 void UURSTcpTransportComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (AsyncVisionState.IsValid())
+	{
+		AsyncVisionState->bAcceptResults.Store(false);
+		AsyncVisionState.Reset();
+	}
 	StopTransport();
 	Super::EndPlay(EndPlayReason);
 }
@@ -288,6 +305,7 @@ void UURSTcpTransportComponent::RebuildListeners()
 	{
 		FRobotListener L;
 		L.ActorId = RobotIds[i];
+		L.Generation = ++ListenerGenerationCounter;
 		L.ListenerSocket = CreateListener(RobotBasePort + i);
 		if (L.ListenerSocket)
 		{
@@ -330,6 +348,7 @@ void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	TickStatePublish();
 	const double CameraPublishStartSec = FPlatformTime::Seconds();
 	TickCameraPublish();
+	DrainCompletedVisionPackets();
 	CameraStatsPublishSec += FPlatformTime::Seconds() - CameraPublishStartSec;
 	FlushAllWrites();
 
@@ -342,17 +361,17 @@ void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		{
 			UE_LOG(LogTemp, Log,
 				TEXT("[URS CameraStats] tick_hz=%.2f message_hz=%.2f camera_hz=%.2f ")
-				TEXT("publish_ms_per_sec=%.2f jpeg_ms_per_sec=%.2f payload_mib_per_sec=%.3f"),
+				TEXT("publish_ms_per_sec=%.2f encode_ms_per_sec=%.2f payload_mib_per_sec=%.3f"),
 				static_cast<double>(CameraStatsTickCount) / WindowSec,
 				static_cast<double>(CameraStatsMessageCount) / WindowSec,
 				static_cast<double>(CameraStatsEntryCount) / WindowSec,
 				CameraStatsPublishSec * 1000.0 / WindowSec,
-				CameraStatsJpegSec * 1000.0 / WindowSec,
+				CameraStatsEncodeSec * 1000.0 / WindowSec,
 				static_cast<double>(CameraStatsPayloadBytes) / WindowSec / (1024.0 * 1024.0));
 
 			CameraStatsWindowStartSec = Now;
 			CameraStatsPublishSec = 0.0;
-			CameraStatsJpegSec = 0.0;
+			CameraStatsEncodeSec = 0.0;
 			CameraStatsTickCount = 0;
 			CameraStatsMessageCount = 0;
 			CameraStatsEntryCount = 0;
@@ -995,9 +1014,9 @@ void UURSTcpTransportComponent::TickCameraPublish()
 		{
 			bRgbReady = bRgbReady && Core->IsCameraFrameReady(Listener.ActorId, CameraName);
 		}
-		if (bRgbReady)
+		if (bRgbReady && !Listener.bRgbEncodeInFlight)
 		{
-			TArray<FURSImageEntry> Entries;
+			TArray<FURSRawRgbImage> RawImages;
 			bool bValidRgbSet = true;
 			for (const FString& CameraName : RgbCameraNames)
 			{
@@ -1010,58 +1029,95 @@ void UURSTcpTransportComponent::TickCameraPublish()
 					break;
 				}
 
-				FURSImageEntry& Entry = Entries.AddDefaulted_GetRef();
-				Entry.CameraName = CameraName;
-				Entry.PixelFormat = URSProtocol::PixelFormat_BGRA8;
-				Entry.Width = static_cast<uint16>(Info->Width);
-				Entry.Height = static_cast<uint16>(Info->Height);
-				Entry.UncompressedBytes = static_cast<uint32>(Pixels.Num() * sizeof(FColor));
-
-				if (CameraCompress == TEXT("jpeg"))
-				{
-					const double JpegStartSec = FPlatformTime::Seconds();
-					IImageWrapperModule& Module =
-						FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-					TSharedPtr<IImageWrapper> Wrapper(Module.CreateImageWrapper(EImageFormat::JPEG));
-					if (Wrapper->SetRaw(
-						reinterpret_cast<const uint8*>(Pixels.GetData()),
-						Entry.UncompressedBytes,
-						Info->Width,
-						Info->Height,
-						ERGBFormat::BGRA,
-						8))
-					{
-						Entry.Data = Wrapper->GetCompressed(JpegQuality);
-						Entry.Codec = URSProtocol::ImageCodec_JPEG;
-					}
-					CameraStatsJpegSec += FPlatformTime::Seconds() - JpegStartSec;
-				}
-				else
-				{
-					Entry.Data.Append(
-						reinterpret_cast<const uint8*>(Pixels.GetData()),
-						Entry.UncompressedBytes);
-					Entry.Codec = URSProtocol::ImageCodec_Raw;
-				}
-				bValidRgbSet = bValidRgbSet && !Entry.Data.IsEmpty();
+				FURSRawRgbImage& Raw = RawImages.AddDefaulted_GetRef();
+				Raw.CameraName = CameraName;
+				Raw.Width = static_cast<uint16>(Info->Width);
+				Raw.Height = static_cast<uint16>(Info->Height);
+				Raw.Pixels = MoveTemp(Pixels);
 			}
 
-			if (bValidRgbSet && Entries.Num() == RgbCameraNames.Num())
+			if (bValidRgbSet && RawImages.Num() == RgbCameraNames.Num()
+				&& AsyncVisionState.IsValid() && ImageWrapperModule)
 			{
-				TArray<uint8> Packed =
-					BuildImageMessage(Listener.NextRgbSequence++, State.SimTime, Entries);
-				for (const FURSImageEntry& Entry : Entries)
-				{
-					++CameraStatsEntryCount;
-					CameraStatsPayloadBytes += Entry.Data.Num();
-				}
-				++CameraStatsMessageCount;
-				SendToClients(
-					Listener, URSProtocol::Type_RGB, Packed.GetData(), Packed.Num());
+				Listener.bRgbEncodeInFlight = true;
+				const FString ActorId = Listener.ActorId;
+				const uint64 Generation = Listener.Generation;
+				const uint32 Sequence = Listener.NextRgbSequence++;
+				const double SimTime = State.SimTime;
+				const bool bUseJpeg = CameraCompress == TEXT("jpeg");
+				const int32 Quality = JpegQuality;
+				IImageWrapperModule* WrapperModule = ImageWrapperModule;
+				TSharedPtr<FAsyncVisionState, ESPMode::ThreadSafe> AsyncState =
+					AsyncVisionState;
+
+				Async(EAsyncExecution::ThreadPool,
+					[ActorId, Generation, Sequence, SimTime, bUseJpeg, Quality,
+					 WrapperModule, AsyncState, Images = MoveTemp(RawImages)]() mutable
+					{
+						const double EncodeStartSec = FPlatformTime::Seconds();
+						FCompletedVisionPacket Completed;
+						Completed.ActorId = ActorId;
+						Completed.ListenerGeneration = Generation;
+						Completed.FrameType = URSProtocol::Type_RGB;
+
+						TArray<FURSImageEntry> Entries;
+						bool bSuccess = !Images.IsEmpty();
+						for (FURSRawRgbImage& Raw : Images)
+						{
+							FURSImageEntry& Entry = Entries.AddDefaulted_GetRef();
+							Entry.CameraName = MoveTemp(Raw.CameraName);
+							Entry.PixelFormat = URSProtocol::PixelFormat_BGRA8;
+							Entry.Width = Raw.Width;
+							Entry.Height = Raw.Height;
+							Entry.UncompressedBytes =
+								static_cast<uint32>(Raw.Pixels.Num() * sizeof(FColor));
+
+							if (bUseJpeg)
+							{
+								TSharedPtr<IImageWrapper> Wrapper(
+									WrapperModule->CreateImageWrapper(EImageFormat::JPEG));
+								if (Wrapper.IsValid() && Wrapper->SetRaw(
+									reinterpret_cast<const uint8*>(Raw.Pixels.GetData()),
+									Entry.UncompressedBytes,
+									Raw.Width,
+									Raw.Height,
+									ERGBFormat::BGRA,
+									8))
+								{
+									Entry.Data = Wrapper->GetCompressed(Quality);
+									Entry.Codec = URSProtocol::ImageCodec_JPEG;
+								}
+							}
+							else
+							{
+								Entry.Data.Append(
+									reinterpret_cast<const uint8*>(Raw.Pixels.GetData()),
+									Entry.UncompressedBytes);
+								Entry.Codec = URSProtocol::ImageCodec_Raw;
+							}
+							bSuccess = bSuccess && !Entry.Data.IsEmpty();
+							Completed.ImagePayloadBytes += Entry.Data.Num();
+						}
+
+						Completed.EntryCount = Entries.Num();
+						Completed.bSuccess = bSuccess;
+						if (bSuccess)
+						{
+							Completed.Payload =
+								BuildImageMessage(Sequence, SimTime, Entries);
+						}
+						Completed.EncodeSeconds =
+							FPlatformTime::Seconds() - EncodeStartSec;
+						if (AsyncState->bAcceptResults.Load())
+						{
+							AsyncState->CompletedPackets.Enqueue(MoveTemp(Completed));
+						}
+					});
 			}
 		}
 
 		if (VisionConfig.Mode != URSoccerLab::EURSVisionMode::Rgbd
+			|| Listener.bDepthEncodeInFlight
 			|| !Core->IsCameraFrameReady(Listener.ActorId, VisionConfig.RightCamera))
 		{
 			continue;
@@ -1077,77 +1133,174 @@ void UURSTcpTransportComponent::TickCameraPublish()
 			continue;
 		}
 
-		FURSImageEntry DepthEntry;
-		DepthEntry.CameraName = VisionConfig.LeftCamera;
-		DepthEntry.Width = static_cast<uint16>(Info->Width);
-		DepthEntry.Height = static_cast<uint16>(Info->Height);
-		if (DepthCompress == TEXT("raw_f32"))
+		if (AsyncVisionState.IsValid())
 		{
-			DepthEntry.Codec = URSProtocol::ImageCodec_Raw;
-			DepthEntry.PixelFormat = URSProtocol::PixelFormat_DepthFloat32Meters;
-			DepthEntry.UncompressedBytes =
-				static_cast<uint32>(DepthMeters.Num() * sizeof(float));
-			DepthEntry.Data.Append(
-				reinterpret_cast<const uint8*>(DepthMeters.GetData()),
-				DepthEntry.UncompressedBytes);
+			Listener.bDepthEncodeInFlight = true;
+			const FString ActorId = Listener.ActorId;
+			const uint64 Generation = Listener.Generation;
+			const uint32 Sequence = Listener.NextDepthSequence++;
+			const double SimTime = State.SimTime;
+			const FString Compression = DepthCompress;
+			const FString CameraName = VisionConfig.LeftCamera;
+			const uint16 Width = static_cast<uint16>(Info->Width);
+			const uint16 Height = static_cast<uint16>(Info->Height);
+			const double MaxDepthMeters = VisionConfig.Depth.MaxDepthMeters;
+			TSharedPtr<FAsyncVisionState, ESPMode::ThreadSafe> AsyncState =
+				AsyncVisionState;
+
+			Async(EAsyncExecution::ThreadPool,
+				[ActorId, Generation, Sequence, SimTime, Compression, CameraName,
+				 Width, Height, MaxDepthMeters, AsyncState,
+				 Depth = MoveTemp(DepthMeters)]() mutable
+				{
+					const double EncodeStartSec = FPlatformTime::Seconds();
+					FCompletedVisionPacket Completed;
+					Completed.ActorId = ActorId;
+					Completed.ListenerGeneration = Generation;
+					Completed.FrameType = URSProtocol::Type_Depth;
+					Completed.EntryCount = 1;
+
+					FURSImageEntry Entry;
+					Entry.CameraName = CameraName;
+					Entry.Width = Width;
+					Entry.Height = Height;
+					if (Compression == TEXT("raw_f32"))
+					{
+						Entry.Codec = URSProtocol::ImageCodec_Raw;
+						Entry.PixelFormat =
+							URSProtocol::PixelFormat_DepthFloat32Meters;
+						Entry.UncompressedBytes =
+							static_cast<uint32>(Depth.Num() * sizeof(float));
+						Entry.Data.Append(
+							reinterpret_cast<const uint8*>(Depth.GetData()),
+							Entry.UncompressedBytes);
+					}
+					else
+					{
+						TArray<uint8> Quantized;
+						Quantized.SetNumUninitialized(Depth.Num() * sizeof(uint16));
+						const double MaxMillimeters = MaxDepthMeters * 1000.0;
+						for (int32 Index = 0; Index < Depth.Num(); ++Index)
+						{
+							const double Millimeters = FMath::IsFinite(Depth[Index])
+								? FMath::Clamp(
+									static_cast<double>(Depth[Index]) * 1000.0,
+									0.0,
+									MaxMillimeters)
+								: 0.0;
+							const uint16 Value =
+								static_cast<uint16>(FMath::RoundToInt(Millimeters));
+							Quantized[Index * 2] =
+								static_cast<uint8>(Value & 0xff);
+							Quantized[Index * 2 + 1] =
+								static_cast<uint8>((Value >> 8) & 0xff);
+						}
+
+						Entry.PixelFormat =
+							URSProtocol::PixelFormat_DepthUint16Millimeters;
+						Entry.UncompressedBytes =
+							static_cast<uint32>(Quantized.Num());
+						if (Compression == TEXT("zlib_u16_mm"))
+						{
+							int32 CompressedSize =
+								FCompression::CompressMemoryBound(
+									NAME_Zlib, Quantized.Num());
+							Entry.Data.SetNumUninitialized(CompressedSize);
+							if (FCompression::CompressMemory(
+								NAME_Zlib,
+								Entry.Data.GetData(),
+								CompressedSize,
+								Quantized.GetData(),
+								Quantized.Num(),
+								COMPRESS_BiasSpeed))
+							{
+								Entry.Data.SetNum(
+									CompressedSize, EAllowShrinking::No);
+								Entry.Codec = URSProtocol::ImageCodec_Zlib;
+							}
+							else
+							{
+								Entry.Data = MoveTemp(Quantized);
+								Entry.Codec = URSProtocol::ImageCodec_Raw;
+							}
+						}
+						else
+						{
+							Entry.Data = MoveTemp(Quantized);
+							Entry.Codec = URSProtocol::ImageCodec_Raw;
+						}
+					}
+
+					Completed.bSuccess = !Entry.Data.IsEmpty();
+					Completed.ImagePayloadBytes = Entry.Data.Num();
+					if (Completed.bSuccess)
+					{
+						TArray<FURSImageEntry> Entries{MoveTemp(Entry)};
+						Completed.Payload =
+							BuildImageMessage(Sequence, SimTime, Entries);
+					}
+					Completed.EncodeSeconds =
+						FPlatformTime::Seconds() - EncodeStartSec;
+					if (AsyncState->bAcceptResults.Load())
+					{
+						AsyncState->CompletedPackets.Enqueue(MoveTemp(Completed));
+					}
+				});
 		}
-		else
+	}
+}
+
+void UURSTcpTransportComponent::DrainCompletedVisionPackets()
+{
+	if (!AsyncVisionState.IsValid())
+	{
+		return;
+	}
+
+	FCompletedVisionPacket Completed;
+	while (AsyncVisionState->CompletedPackets.Dequeue(Completed))
+	{
+		FRobotListener* Listener = RobotListeners.FindByPredicate(
+			[&Completed](const FRobotListener& Candidate)
+			{
+				return Candidate.ActorId == Completed.ActorId
+					&& Candidate.Generation == Completed.ListenerGeneration;
+			});
+		if (!Listener)
 		{
-			TArray<uint8> Quantized;
-			Quantized.SetNumUninitialized(DepthMeters.Num() * sizeof(uint16));
-			const double MaxMillimeters = VisionConfig.Depth.MaxDepthMeters * 1000.0;
-			for (int32 Index = 0; Index < DepthMeters.Num(); ++Index)
-			{
-				const double DepthMillimeters = FMath::IsFinite(DepthMeters[Index])
-					? FMath::Clamp(
-						static_cast<double>(DepthMeters[Index]) * 1000.0,
-						0.0,
-						MaxMillimeters)
-					: 0.0;
-				const uint16 Value = static_cast<uint16>(FMath::RoundToInt(DepthMillimeters));
-				Quantized[Index * 2] = static_cast<uint8>(Value & 0xff);
-				Quantized[Index * 2 + 1] = static_cast<uint8>((Value >> 8) & 0xff);
-			}
-
-			DepthEntry.PixelFormat = URSProtocol::PixelFormat_DepthUint16Millimeters;
-			DepthEntry.UncompressedBytes = static_cast<uint32>(Quantized.Num());
-			if (DepthCompress == TEXT("zlib_u16_mm"))
-			{
-				int32 CompressedSize =
-					FCompression::CompressMemoryBound(NAME_Zlib, Quantized.Num());
-				DepthEntry.Data.SetNumUninitialized(CompressedSize);
-				if (FCompression::CompressMemory(
-					NAME_Zlib,
-					DepthEntry.Data.GetData(),
-					CompressedSize,
-					Quantized.GetData(),
-					Quantized.Num(),
-					COMPRESS_BiasSpeed))
-				{
-					DepthEntry.Data.SetNum(CompressedSize, EAllowShrinking::No);
-					DepthEntry.Codec = URSProtocol::ImageCodec_Zlib;
-				}
-				else
-				{
-					DepthEntry.Data = MoveTemp(Quantized);
-					DepthEntry.Codec = URSProtocol::ImageCodec_Raw;
-				}
-			}
-			else
-			{
-				DepthEntry.Data = MoveTemp(Quantized);
-				DepthEntry.Codec = URSProtocol::ImageCodec_Raw;
-			}
+			continue;
 		}
 
-		TArray<FURSImageEntry> DepthEntries{MoveTemp(DepthEntry)};
-		TArray<uint8> Packed =
-			BuildImageMessage(Listener.NextDepthSequence++, State.SimTime, DepthEntries);
-		++CameraStatsEntryCount;
-		CameraStatsPayloadBytes += DepthEntries[0].Data.Num();
+		if (Completed.FrameType == URSProtocol::Type_RGB)
+		{
+			Listener->bRgbEncodeInFlight = false;
+		}
+		else if (Completed.FrameType == URSProtocol::Type_Depth)
+		{
+			Listener->bDepthEncodeInFlight = false;
+		}
+
+		CameraStatsEncodeSec += Completed.EncodeSeconds;
+		if (!Completed.bSuccess || Completed.Payload.IsEmpty())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[URS TCP] Vision encode failed for '%s' (type=0x%02x)."),
+				*Completed.ActorId,
+				Completed.FrameType);
+			continue;
+		}
+
+		CameraStatsEntryCount += Completed.EntryCount;
+		CameraStatsPayloadBytes += Completed.ImagePayloadBytes;
 		++CameraStatsMessageCount;
-		SendToClients(
-			Listener, URSProtocol::Type_Depth, Packed.GetData(), Packed.Num());
+		if (!Listener->Clients.IsEmpty())
+		{
+			SendToClients(
+				*Listener,
+				Completed.FrameType,
+				Completed.Payload.GetData(),
+				Completed.Payload.Num());
+		}
 	}
 }
 

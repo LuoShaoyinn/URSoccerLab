@@ -5,6 +5,7 @@
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
 #include "MuJoCo/Utils/MjUtils.h"
+#include "Transport/NetworkManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Misc/CommandLine.h"
@@ -70,6 +71,15 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 	{
 		OutError = TEXT("UURSSceneConfigComponent must be owned by an AAMjManager");
 		return false;
+	}
+
+	// Camera pixels are delivered by URSoccerLab's consolidated, versioned
+	// TCP transport. Keep URLab camera rendering/readback enabled, but prevent
+	// its NetworkManager from starting one raw ZMQ socket and SHM mapping per
+	// camera when the cameras register during BeginPlay.
+	if (Manager->NetworkManager)
+	{
+		Manager->NetworkManager->bEnableCameraBroadcast = false;
 	}
 
 	DestroyConfiguredRobots();
@@ -275,6 +285,20 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 	TArray<UMjCamera*> Cameras;
 	Articulation->GetComponents<UMjCamera>(Cameras);
 
+	// SpawnActor may invoke BeginPlay before returning when a scene is
+	// reloaded during play. In that case URLab may already have opened its
+	// configured ZMQ/SHM publisher. Stop the camera first so those workers
+	// and mappings are actually destroyed rather than merely ignored.
+	TSet<UMjCamera*> CamerasToRestart;
+	for (UMjCamera* Camera : Cameras)
+	{
+		if (Camera && Camera->IsStreamingActive())
+		{
+			CamerasToRestart.Add(Camera);
+			Camera->SetStreamingEnabled(false);
+		}
+	}
+
 	UMjCamera* LeftCamera = nullptr;
 	UMjCamera* RightCamera = nullptr;
 	for (UMjCamera* Camera : Cameras)
@@ -325,6 +349,12 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		{
 			continue;
 		}
+		// URSoccerLab owns camera delivery through its versioned TCP
+		// transport. Do not also launch URLab's per-camera ZMQ/SHM workers:
+		// they duplicate readback copies, consume ports, and can overwrite
+		// the same one-frame buffers that TCP is scheduling.
+		Camera->bEnableZmqBroadcast = false;
+		Camera->bEnableShmBroadcast = false;
 		if (Camera->CaptureComponent)
 		{
 			USceneCaptureComponent2D* Capture = Camera->CaptureComponent;
@@ -353,6 +383,14 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 			Camera->fovy = 90.0f;
 		}
 		Camera->Modify();
+	}
+
+	// Keep an already-running camera running, now solely as a capture source
+	// for URSoccerLab's consolidated TCP transport. Cameras configured before
+	// BeginPlay are enabled later by UURSRobotCoreComponent as usual.
+	for (UMjCamera* Camera : CamerasToRestart)
+	{
+		Camera->SetStreamingEnabled(true);
 	}
 
 	UE_LOG(LogTemp, Log,

@@ -11,6 +11,14 @@
   versioned binary messages. Scene config selects stereo RGB or aligned RGBD
   and gives RGB/depth independent rates and codecs. Packets are emitted only
   when a new GPU readback is available.
+- **Bounded asynchronous encoding**: JPEG encoding and depth
+  quantization/compression run on Unreal's worker pool. Each robot permits at
+  most one in-flight RGB job and one in-flight depth job, so slow encoding
+  drops stale opportunities instead of blocking physics or growing a queue.
+- **Single camera transport owner**: URSoccerLab leaves URLab camera rendering
+  and readback enabled but disables URLab's legacy per-camera ZMQ sockets and
+  SHM mappings. Images are published only through the consolidated TCP
+  transport described here.
 - **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. The default amount is `0.5` (a 180-degree shutter), the maximum streak is 5% of screen width, and velocity scaling follows `CameraRateHz`.
 - **Outbound write queues**: each client has a `WriteBuffer`. Frames are enqueued non-blocking and flushed every transport tick. Clients whose queue exceeds `MaxSendQueueBytes` (default 4 MB) are disconnected (back-pressure).
 - **Command watchdog**: `CommandTimeoutSec` (default 2 s). If no valid command arrives within the timeout, motors are zeroed.

@@ -239,6 +239,8 @@ def main() -> int:
 
     if not args.scene_config.exists():
         raise FileNotFoundError(args.scene_config)
+    scene_config = json.loads(args.scene_config.read_text(encoding="utf-8"))
+    expect_depth = scene_config.get("vision", {}).get("mode") == "rgbd"
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be between 1 and 100")
     run_checked([sys.executable, str(ROOT / "Tools" / "editor" / "validate_baked_assets.py")], ROOT)
@@ -259,7 +261,7 @@ def main() -> int:
         sim,
         sim_log_path,
         (
-            "[URS TCP] Transport started",
+            " listening on port 10000",
         ),
     )
 
@@ -298,6 +300,8 @@ def main() -> int:
             "--expected-codec",
             args.camera_compress,
         ]
+        if expect_depth:
+            client_cmd.append("--expect-depth")
 
         result = subprocess.run(
             client_cmd,

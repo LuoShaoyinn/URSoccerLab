@@ -11,9 +11,10 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
-from ursoccerlab.media import camera_to_rgb
+from ursoccerlab.media import camera_to_rgb, depth_to_meters
 from ursoccerlab.tcp import RobotClient
 
 
@@ -26,6 +27,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=Path("out/vision_smoke"))
     parser.add_argument("--camera-frame-count", type=int, default=1)
     parser.add_argument("--expected-codec", choices=("jpeg", "raw"))
+    parser.add_argument("--expect-depth", action="store_true")
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -37,8 +39,15 @@ def main() -> int:
     image_saved = False
     codec_counts: dict[str, int] = {}
     payload_bytes = 0
+    depth_result: dict[str, float | int | str] | None = None
 
-    while time.monotonic() < deadline and cameras_saved < args.camera_frame_count:
+    while (
+        time.monotonic() < deadline
+        and (
+            cameras_saved < args.camera_frame_count
+            or (args.expect_depth and depth_result is None)
+        )
+    ):
         for kind, payload in client.recv():
             if kind == "state" and not state_saved:
                 state = payload
@@ -62,6 +71,20 @@ def main() -> int:
                         codec_counts[codec] = codec_counts.get(codec, 0) + 1
                         payload_bytes += len(camera["data"])
                         cameras_saved += 1
+            elif kind == "depth" and depth_result is None and payload:
+                depth = payload[0]
+                meters = depth_to_meters(depth)
+                finite = meters[np.isfinite(meters)]
+                if finite.size:
+                    depth_result = {
+                        "codec": str(depth["codec"]),
+                        "pixel_format": str(depth["pixel_format"]),
+                        "width": int(depth["width"]),
+                        "height": int(depth["height"]),
+                        "payload_bytes": len(depth["data"]),
+                        "min_m": float(finite.min()),
+                        "max_m": float(finite.max()),
+                    }
 
         time.sleep(0.001)
 
@@ -70,12 +93,16 @@ def main() -> int:
     if cameras_saved == 0:
         print(f"No camera frames received for {args.robot}")
         return 1
+    if args.expect_depth and depth_result is None:
+        print(f"No depth frame received for {args.robot}")
+        return 1
 
     result = {
         "camera_frames": cameras_saved,
         "codec_counts": codec_counts,
         "payload_bytes": payload_bytes,
         "mean_payload_bytes": payload_bytes / cameras_saved,
+        "depth": depth_result,
     }
     (args.out / "transport.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n"
