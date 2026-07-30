@@ -2,6 +2,7 @@
 
 #include "EngineUtils.h"
 #include "GameFramework/SpectatorPawn.h"
+#include "Kismet/GameplayStatics.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "MuJoCo/Core/AMjManager.h"
@@ -89,6 +90,19 @@ void AURSSoccerGameMode::StartPlay()
 	if (!World)
 	{
 		return;
+	}
+
+	int32 bDisableMainViewport = FParse::Param(
+		FCommandLine::Get(), TEXT("RenderOffscreen")) ? 1 : 0;
+	FParse::Value(
+		FCommandLine::Get(), TEXT("URSDisableMainViewport="), bDisableMainViewport);
+	if (bDisableMainViewport != 0)
+	{
+		// Keep the RHI and SceneCaptureComponent2D rendering active while
+		// suppressing the unused spectator/main-view scene render.
+		UGameplayStatics::SetEnableWorldRendering(World, false);
+		UE_LOG(LogTemp, Log,
+			TEXT("URSSoccerGameMode: main viewport world rendering disabled; scene captures remain active."));
 	}
 
 	for (TActorIterator<AAMjManager> It(World); It; ++It)

@@ -8,8 +8,29 @@
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
 - **State publishing**: outbound JSON on the robot port at `StateRateHz` (default 60 Hz). Includes `sim_time`, base pose/velocity, joint qpos/qvel, actuator values, and camera metadata.
 - **Camera publishing**: outbound binary on the robot port at `CameraRateHz` (default 15 Hz). All cameras for one robot are packed into a single frame message. Packets are sent only when a new GPU readback is available — no empty-camera packets on intermediate ticks.
+- **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. The default amount is `0.5` (a 180-degree shutter), the maximum streak is 5% of screen width, and velocity scaling follows `CameraRateHz`.
 - **Outbound write queues**: each client has a `WriteBuffer`. Frames are enqueued non-blocking and flushed every transport tick. Clients whose queue exceeds `MaxSendQueueBytes` (default 4 MB) are disconnected (back-pressure).
 - **Command watchdog**: `CommandTimeoutSec` (default 2 s). If no valid command arrives within the timeout, motors are zeroed.
+
+Motion blur can be tuned per run:
+
+```text
+-URSMotionBlur=0|1
+-URSMotionBlurAmount=0.0..1.0
+-URSMotionBlurMax=0.0..100.0
+-URSMotionBlurTargetFPS=0..120
+```
+
+Target FPS `0` follows the actual render-frame rate. A fixed value is generally
+more reproducible for robotics datasets.
+
+When launched with `-RenderOffscreen`, the game mode disables rendering of the
+unused spectator/main viewport while keeping the RHI and robot
+`SceneCaptureComponent2D` views active. Override this for diagnostics with:
+
+```text
+-URSDisableMainViewport=0|1
+```
 
 ## Frame Format
 

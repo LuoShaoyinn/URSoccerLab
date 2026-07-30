@@ -7,6 +7,8 @@
 #include "MuJoCo/Utils/MjUtils.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 using namespace URSoccerLab;
 
@@ -253,6 +255,23 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		return;
 	}
 
+	int32 MotionBlurEnabled = 1;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlur="), MotionBlurEnabled);
+
+	float MotionBlurAmount = 0.5f;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurAmount="), MotionBlurAmount);
+	MotionBlurAmount = FMath::Clamp(MotionBlurAmount, 0.0f, 1.0f);
+
+	float MotionBlurMax = 5.0f;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurMax="), MotionBlurMax);
+	MotionBlurMax = FMath::Clamp(MotionBlurMax, 0.0f, 100.0f);
+
+	double CameraRateHz = 15.0;
+	FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
+	int32 MotionBlurTargetFps = FMath::Clamp(FMath::RoundToInt(CameraRateHz), 1, 120);
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurTargetFPS="), MotionBlurTargetFps);
+	MotionBlurTargetFps = FMath::Clamp(MotionBlurTargetFps, 0, 120);
+
 	TArray<UMjCamera*> Cameras;
 	Articulation->GetComponents<UMjCamera>(Cameras);
 	for (int32 CamIdx = 0; CamIdx < Cameras.Num(); ++CamIdx)
@@ -264,7 +283,20 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		}
 		if (Camera->CaptureComponent)
 		{
-			Camera->CaptureComponent->bUseRayTracingIfEnabled = true;
+			USceneCaptureComponent2D* Capture = Camera->CaptureComponent;
+			Capture->bUseRayTracingIfEnabled = true;
+			Capture->bAlwaysPersistRenderingState = true;
+			Capture->ShowFlags.SetMotionBlur(MotionBlurEnabled != 0);
+
+			FPostProcessSettings& PostProcess = Capture->PostProcessSettings;
+			PostProcess.bOverride_MotionBlurAmount = true;
+			PostProcess.MotionBlurAmount = MotionBlurEnabled != 0 ? MotionBlurAmount : 0.0f;
+			PostProcess.bOverride_MotionBlurMax = true;
+			PostProcess.MotionBlurMax = MotionBlurMax;
+			PostProcess.bOverride_MotionBlurTargetFPS = true;
+			PostProcess.MotionBlurTargetFPS = MotionBlurTargetFps;
+			PostProcess.bOverride_MotionBlurPerObjectSize = true;
+			PostProcess.MotionBlurPerObjectSize = 0.0f;
 		}
 		if (Camera->resolution.Num() < 2)
 		{
@@ -278,6 +310,14 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		}
 		Camera->Modify();
 	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[URS Camera] actor=%s motion_blur=%s amount=%.3f max=%.3f target_fps=%d."),
+		*ActorId,
+		MotionBlurEnabled != 0 ? TEXT("on") : TEXT("off"),
+		MotionBlurAmount,
+		MotionBlurMax,
+		MotionBlurTargetFps);
 }
 
 void UURSSceneConfigComponent::HideImportedFieldGeoms(AMjArticulation* Articulation)
