@@ -6,16 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-import sys
 import time
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-PY_EXAMPLE = ROOT / "py_example"
-sys.path.insert(0, str(PY_EXAMPLE))
-
-from common.tcp import FrameConn, TYPE_CAMERA, parse_camera  # noqa: E402
+from ursoccerlab.tcp import FrameConn, TYPE_CAMERA, parse_camera
 
 
 def percentile(values: list[float], fraction: float) -> float:

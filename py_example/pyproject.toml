@@ -1,12 +1,64 @@
 [project]
 name = "py-example"
 version = "0.1.0"
-description = "Add your description here"
+description = "TCP control and camera examples for URSoccerLab"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "imageio>=2.37.4",
     "imageio-ffmpeg>=0.6.0",
     "numpy>=2.5.1",
     "pillow>=10.0.0",
 ]
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "ursoccerlab"
+
+[project.optional-dependencies]
+torch_cpu = [
+    "torch>=2.10.0",
+]
+torch_rocm = [
+    "torch>=2.10.0",
+    "triton; sys_platform == 'linux'",
+]
+torch_cuda = [
+    "torch>=2.10.0",
+]
+
+[tool.uv]
+conflicts = [
+    [{ extra = "torch_cpu" }, { extra = "torch_rocm" }],
+    [{ extra = "torch_cpu" }, { extra = "torch_cuda" }],
+    [{ extra = "torch_rocm" }, { extra = "torch_cuda" }],
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "torch_cpu" },
+    { index = "pytorch-rocm", extra = "torch_rocm" },
+    { index = "pytorch-cuda", extra = "torch_cuda" },
+]
+triton = [
+    { index = "pytorch-rocm", extra = "torch_rocm" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.4/"
+format = "flat"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

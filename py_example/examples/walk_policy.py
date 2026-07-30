@@ -11,30 +11,28 @@ The policy was trained for the older mos-brain Pi dynamics. It exercises the
 runtime protocol and capture path, but it is not a validated gait for the
 current MJCF until the models are calibrated or the policy is retrained.
 
-Run with the policy environment (which provides PyTorch):
+Run with one of the optional PyTorch backends:
 
-    source py_example/.venv-walk/bin/activate
-    uv run --no-project --active python py_example/demos/walk_policy.py \
+    cd py_example
+    uv sync --extra torch_rocm
+    uv run --extra torch_rocm python examples/walk_policy.py \
         --vx 0.35 --duration 8 \
-        --video py_example/out/walker.mp4 \
-        --observer-video py_example/out/observer.mp4
+        --video out/walker.mp4 \
+        --observer-video out/observer.mp4
 """
 from __future__ import annotations
 
 import argparse
-import io
-import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
 
 EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EXAMPLE_ROOT.parent
-sys.path.insert(0, str(EXAMPLE_ROOT))
-from common.tcp import RobotClient  # noqa: E402
+from ursoccerlab.media import camera_to_rgb, write_video
+from ursoccerlab.tcp import RobotClient
 
 POLICY_PATH = REPO_ROOT / "refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt"
 
@@ -122,15 +120,6 @@ def inverse_rotate(quat_xyzw: np.ndarray, vector: np.ndarray) -> np.ndarray:
             + qvec * np.dot(qvec, vector) * 2.0)
 
 
-def world_to_body_rotation(quat_wxyz: np.ndarray) -> np.ndarray:
-    w, x, y, z = quat_wxyz
-    return np.asarray([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
-        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
-        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
-    ], dtype=np.float32).T
-
-
 def observation(state: dict, command: np.ndarray, last_action: np.ndarray) -> np.ndarray:
     base = state["base"]
     quat = np.asarray(base["quat"], dtype=np.float32)  # Runtime state is [w, x, y, z].
@@ -152,19 +141,6 @@ def observation(state: dict, command: np.ndarray, last_action: np.ndarray) -> np
     return np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def save_video(frames: list[np.ndarray], path: Path, fps: int) -> None:
-    if not frames:
-        raise RuntimeError("No camera frames received")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    import imageio.v2 as imageio
-
-    with imageio.get_writer(str(path), fps=fps, codec="libx264", quality=7,
-                            macro_block_size=1) as writer:
-        for frame in frames:
-            writer.append_data(frame)
-    print(f"[walk] wrote {path} ({len(frames)} frames at {fps} FPS)")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
@@ -175,8 +151,8 @@ def main() -> int:
     parser.add_argument("--vx", type=float, default=0.35)
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--video-fps", type=int, default=15)
-    parser.add_argument("--video", type=Path, default=Path("py_example/out/walker.mp4"))
-    parser.add_argument("--observer-video", type=Path, default=Path("py_example/out/observer.mp4"))
+    parser.add_argument("--video", type=Path, default=Path("out/walker.mp4"))
+    parser.add_argument("--observer-video", type=Path, default=Path("out/observer.mp4"))
     args = parser.parse_args()
 
     policy = load_policy(args.policy)
@@ -216,14 +192,7 @@ def main() -> int:
                     continue
                 if not camera["data"]:
                     continue
-                if camera["codec"] == "jpeg":
-                    image = Image.open(io.BytesIO(camera["data"])).convert("RGB")
-                elif camera["codec"] == "raw":
-                    image = Image.frombytes("RGBA", (camera["width"], camera["height"]), camera["data"])
-                    image = image.convert("RGB")
-                else:
-                    raise RuntimeError(f"Unsupported camera codec: {camera['codec']}")
-                frames.append(np.asarray(image))
+                frames.append(camera_to_rgb(camera))
                 last_frame_time = camera["sim_time"]
 
     def pump_observer() -> None:
@@ -236,14 +205,7 @@ def main() -> int:
                 continue
             if not camera["data"]:
                 continue
-            if camera["codec"] == "jpeg":
-                image = Image.open(io.BytesIO(camera["data"])).convert("RGB")
-            elif camera["codec"] == "raw":
-                image = Image.frombytes("RGBA", (camera["width"], camera["height"]), camera["data"])
-                image = image.convert("RGB")
-            else:
-                raise RuntimeError(f"Unsupported camera codec: {camera['codec']}")
-            observer_frames.append(np.asarray(image))
+            observer_frames.append(camera_to_rgb(camera))
             observer_last_frame_time = camera["sim_time"]
 
     try:
@@ -289,8 +251,8 @@ def main() -> int:
         pump_observer()
         end_x = latest_state["base"]["pos"][0] if latest_state else start_x
         print(f"[walk] forward displacement: {end_x - start_x:+.3f} m")
-        save_video(frames, args.video, args.video_fps)
-        save_video(observer_frames, args.observer_video, args.video_fps)
+        write_video(frames, args.video, args.video_fps)
+        write_video(observer_frames, args.observer_video, args.video_fps)
         return 0
     finally:
         client.close()

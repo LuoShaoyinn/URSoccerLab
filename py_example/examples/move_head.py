@@ -14,7 +14,7 @@ The sim must be running with
         -RenderOffscreen -URSSceneConfig=/path/to/Config/examples/two_robots_face_to_face.json
 
     cd py_example
-    uv run python demos/head_motion.py --mode sweep \
+    uv run python examples/move_head.py \
         --host 127.0.0.1 --duration 10 \
         --video0 out/head_demo_rp0.mp4 \
         --video1 out/head_demo_rp1.mp4
@@ -24,17 +24,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import struct
-import sys
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
-EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(EXAMPLE_ROOT))
-from common.tcp import FrameConn, TYPE_CAMERA, TYPE_JSON  # noqa: E402
+from ursoccerlab.media import camera_to_rgb, write_video
+from ursoccerlab.tcp import FrameConn, TYPE_CAMERA, TYPE_JSON, parse_camera
 
 
 class RobotConnection:
@@ -46,22 +42,13 @@ class RobotConnection:
         self.frames: list[np.ndarray] = []
         self.latest_z: float = 0.0
         self.latest_up: float = 0.0
-        self._stop = threading.Event()
 
     def send_command(self, cmd: dict[str, float]):
         self.conn.send_json(cmd)
 
     def pump(self):
         """Read available frames.  Learns actuator names from first state."""
-        self.conn._try_read()
-        buf = self.conn._buf
-        while len(buf) >= 5:
-            flen = struct.unpack(">I", bytes(buf[:4]))[0]
-            if len(buf) < 4 + flen:
-                break
-            ftype = buf[4]
-            payload = bytes(buf[5:4 + flen])
-            del buf[:4 + flen]
+        for ftype, payload in self.conn.receive_available():
             if ftype == TYPE_JSON:
                 st = json.loads(payload.decode("utf-8"))
                 if not self.actuator_names:
@@ -71,7 +58,6 @@ class RobotConnection:
                 q = b.get("quat", [1, 0, 0, 0])
                 self.latest_up = 1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2)
             elif ftype == TYPE_CAMERA:
-                from common.tcp import parse_camera
                 cams = parse_camera(payload)
                 if not cams:
                     continue
@@ -79,42 +65,24 @@ class RobotConnection:
                 cam0 = cams[0]
                 if not cam0["data"]:
                     continue
-                from PIL import Image
-                import io as _io
-                img = Image.open(_io.BytesIO(cam0["data"]))
-                self.frames.append(np.array(img.convert("RGB")))
+                self.frames.append(camera_to_rgb(cam0))
 
     def close(self):
-        self._stop.set()
         self.conn.close()
 
 
-def save_video(frames: list[np.ndarray], path: Path, fps: int):
-    if not frames:
-        print(f"  no frames for {path}")
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    import imageio.v2 as imageio
-    writer = imageio.get_writer(str(path), fps=fps, codec="libx264", quality=7,
-                                macro_block_size=1)
-    for f in frames:
-        writer.append_data(f)
-    writer.close()
-    print(f"  saved {path} ({len(frames)} frames)")
-
-
-def main() -> int:
+def main(default_mode: str = "sweep") -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--robot0-port", type=int, default=10000)
     ap.add_argument("--robot1-port", type=int, default=10001)
     ap.add_argument("--duration", type=float, default=10.0)
-    ap.add_argument("--mode", choices=("sweep", "static"), default="sweep",
+    ap.add_argument("--mode", choices=("sweep", "static"), default=default_mode,
                     help="sweep both robots' head joints, or capture with no motor commands")
     ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=15)
-    ap.add_argument("--video0", type=Path, default=Path("py_example/out/head_demo_rp0.mp4"))
-    ap.add_argument("--video1", type=Path, default=Path("py_example/out/head_demo_rp1.mp4"))
+    ap.add_argument("--video0", type=Path, default=Path("out/head_demo_rp0.mp4"))
+    ap.add_argument("--video1", type=Path, default=Path("out/head_demo_rp1.mp4"))
     args = ap.parse_args()
 
     rp0 = RobotConnection(args.host, args.robot0_port)
@@ -183,8 +151,8 @@ def main() -> int:
 
     print("[demo] done, saving videos ...", flush=True)
     rp0.close(); rp1.close()
-    save_video(rp0.frames, args.video0, args.video_fps)
-    save_video(rp1.frames, args.video1, args.video_fps)
+    write_video(rp0.frames, args.video0, args.video_fps)
+    write_video(rp1.frames, args.video1, args.video_fps)
     return 0
 
 

@@ -9,11 +9,24 @@ cd py_example
 uv sync
 ```
 
+The default environment uses Python 3.12 and does not install PyTorch. Choose
+exactly one PyTorch backend when running the walking-policy example:
+
+```bash
+uv sync --extra torch_cpu
+uv sync --extra torch_rocm
+uv sync --extra torch_cuda
+```
+
+The extras are mutually exclusive. The ROCm and CUDA builds are supported on
+Linux; `torch_rocm` currently selects ROCm 7.2.4 and `torch_cuda` selects
+CUDA 13.0.
+
 ## RobotClient — motor commands, state, and camera
 
 ```bash
 uv run python -c "
-from common.tcp import RobotClient
+from ursoccerlab import RobotClient
 client = RobotClient('127.0.0.1', 10000)
 client.send_command({'head_pitch_joint': 0.1})
 for kind, data in client.recv():
@@ -28,7 +41,7 @@ for kind, data in client.recv():
 ## AdminClient — set_pose, reset, lock_pose
 
 ```python
-from common.tcp import AdminClient
+from ursoccerlab import AdminClient
 admin = AdminClient('127.0.0.1', 11000)
 admin.set_pose('robot_rp0', translation_m=[0.5, 0.0, 0.3762])
 admin.reset('robot_rp0')
@@ -41,7 +54,7 @@ Start an offscreen runtime from the project root with the scene config named
 by the example:
 
 ```bash
-/home/luoshaoyinn/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor \
+"$HOME/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor" \
   "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game -RenderOffscreen \
   -DDC-ForceMemoryCache -unattended -nop4 -nosplash -NoSound \
   -URSSceneConfig="$PWD/Config/examples/two_robots_face_to_face.json"
@@ -57,7 +70,7 @@ heads sweep while the legs remain uncommanded. Both left-eye videos are
 recorded.
 
 ```bash
-uv run python demos/head_motion.py --mode sweep \
+uv run python examples/move_head.py \
   --video0 out/head_motion_rp0.mp4 --video1 out/head_motion_rp1.mp4
 ```
 
@@ -70,11 +83,11 @@ Use `Config/examples/two_robots_face_to_face.json` in the runtime command.
 and records both left-eye cameras:
 
 ```bash
-source py_example/.venv-walk/bin/activate
-uv run --no-project --active python py_example/demos/walk_policy.py \
+uv sync --extra torch_rocm
+uv run --extra torch_rocm python examples/walk_policy.py \
   --vx 0.35 --duration 8 \
-  --video py_example/out/walker.mp4 \
-  --observer-video py_example/out/observer.mp4
+  --video out/walker.mp4 \
+  --observer-video out/observer.mp4
 ```
 
 Use `Config/examples/walker_and_observer.json` in the runtime command.
@@ -90,7 +103,7 @@ The same `(-1, 0)` / `(1, 0)` scene, but neither robot receives a motor
 command. This is a two-camera standing capture, not a control test:
 
 ```bash
-uv run python demos/head_motion.py --mode static \
+uv run python examples/standing.py \
   --video0 out/standing_rp0.mp4 --video1 out/standing_rp1.mp4
 ```
 
@@ -106,6 +119,21 @@ uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
 
 Starts the simulator, connects via TCP, sends zero commands, captures camera
 frames, and validates non-blank RGB content.
+
+## Layout
+
+```text
+src/ursoccerlab/     reusable TCP, camera, and video APIs
+examples/            standing, head-motion, walking, and vision clients
+tests/               protocol and camera parser tests
+out/                 ignored local captures
+```
+
+Run the unit tests without installing another test framework:
+
+```bash
+uv run python -m unittest discover -s tests
+```
 
 ## Protocol
 

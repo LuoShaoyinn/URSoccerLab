@@ -322,7 +322,9 @@ Tools/
   runtime/                       headless TCP smoke and capture launchers
 
 py_example/
-  common/tcp.py                  shared protocol client
-  demos/head_motion.py           motor-command camera demo
-  smoke/vision.py                zero-command camera client
+  src/ursoccerlab/               reusable TCP, camera, and video APIs
+  examples/move_head.py          motor-command camera demo
+  examples/standing.py           static two-robot camera demo
+  examples/walk_policy.py        optional PyTorch policy demo
+  examples/vision_smoke.py       zero-command camera client
 ```

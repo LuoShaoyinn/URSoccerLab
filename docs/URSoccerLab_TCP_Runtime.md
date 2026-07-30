@@ -52,7 +52,7 @@ Supported commands:
 Minimal example using `py_example/common/tcp.py`:
 
 ```python
-from common.tcp import AdminClient
+from ursoccerlab import AdminClient
 
 admin = AdminClient("127.0.0.1", 11000)
 reply = admin.set_pose("robot_rp0",
@@ -66,7 +66,7 @@ admin.close()
 ## Quick Client Check
 
 ```python
-from common.tcp import RobotClient
+from ursoccerlab import RobotClient
 
 client = RobotClient("127.0.0.1", 10000)
 client.send_command({"head_pitch_joint": 0.1})

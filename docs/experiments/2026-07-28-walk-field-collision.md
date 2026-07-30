@@ -22,7 +22,7 @@ current project MJCF.
 
 1. Started Unreal offscreen with `-URSSceneConfig=Config/URS_scene.json`.
 2. Waited for `[URS TCP] Robot 'robot_rp0' listening on port 10000`.
-3. Ran `py_example/demos/walk_policy.py` in `py_example/.venv-walk`.
+3. Ran `py_example/examples/walk_policy.py` with the PyTorch ROCm extra.
 4. Recorded the left-eye stream to `py_example/out/walk_field_collision_20260728/walk_rp0.mp4`.
 
 ## Result

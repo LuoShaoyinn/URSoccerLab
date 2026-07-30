@@ -11,7 +11,7 @@ import json
 import socket
 import struct
 import time
-from typing import Generator
+from collections.abc import Generator
 
 
 TYPE_JSON = 0x00
@@ -67,6 +67,10 @@ class FrameConn:
             payload = bytes(self._buf[5 : 4 + frame_len])
             del self._buf[: 4 + frame_len]
             yield ftype, payload
+
+    def receive_available(self) -> list[tuple[int, bytes]]:
+        """Return all complete frames currently available without blocking."""
+        return list(self.recv_frames())
 
     def close(self):
         try:

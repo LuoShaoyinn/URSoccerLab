@@ -13,14 +13,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "py_example"))
-
-from common.tcp import AdminClient
+from ursoccerlab.tcp import AdminClient
 
 
 def rpc(client: AdminClient, command: str, args: dict, timeout_ms: int) -> dict:
