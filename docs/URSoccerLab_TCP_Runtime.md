@@ -19,6 +19,11 @@
   and readback enabled but disables URLab's legacy per-camera ZMQ sockets and
   SHM mappings. Images are published only through the consolidated TCP
   transport described here.
+- **Physics/render isolation**: MuJoCo steps on URLab's dedicated physics
+  thread. The game/TCP thread reads the latest coherent render snapshot rather
+  than live `mjData`; endpoint and command state is synchronized separately.
+  Rendering and compression can therefore miss camera-rate opportunities
+  without stalling or racing the integrator.
 - **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. The default amount is `0.5` (a 180-degree shutter), the maximum streak is 5% of screen width, and velocity scaling follows `CameraRateHz`.
 - **Outbound write queues**: each client has a `WriteBuffer`. Frames are enqueued non-blocking and flushed every transport tick. Clients whose queue exceeds `MaxSendQueueBytes` (default 4 MB) are disconnected (back-pressure).
 - **Command watchdog**: `CommandTimeoutSec` (default 2 s). If no valid command arrives within the timeout, motors are zeroed.
@@ -170,5 +175,35 @@ make UnrealEditor-Linux-Development ARGS="-project=$PROJ"
   -ExecCmds="Automation RunTests URSoccerLab; Quit"
 ```
 
-The runtime automation suite currently contains 9 tests. Run it after any
+The runtime automation suite currently contains 12 tests. Run it after any
 runtime C++ change, together with the TCP smoke clients in `Tools/runtime/`.
+
+### Full-match camera benchmark
+
+`benchmark_match_vision.py` launches the field, connects one client to every
+configured robot, drains every state and vision stream, checks complete
+messages, and compares MuJoCo simulation-time advance with wall time:
+
+```bash
+py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
+  --scene-config Config/examples/six_robots_rgbd.json \
+  --duration-sec 12 --output Saved/Benchmarks/six_rgbd.json
+
+py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
+  --scene-config Config/examples/six_robots_stereo_rgb.json \
+  --duration-sec 12 --output Saved/Benchmarks/six_stereo_rgb.json
+```
+
+On the RX 7900 XTX with the production sun/atmosphere, Lumen HWRT,
+hardware-ray-traced MegaLights, JPEG quality 85, and 640x480 sensors:
+
+| 3v3 mode | Delivered rate per robot | Minimum physics/wall ratio |
+| --- | --- | ---: |
+| Six aligned RGBD pairs | ~9.0 RGB/s and 7.25–7.75 depth/s | 0.983 |
+| Twelve RGB cameras | ~7.17 stereo messages/s (14.33 images/s) | 0.9997 |
+
+Every measured message was complete and there were no sequence gaps. These
+camera rates are below the configured 30/15 Hz because independent
+`SceneCaptureComponent2D` rendering is the limiting stage. The physics clock
+remains real-time; bounded vision jobs skip unavailable render/encode
+opportunities instead of accumulating latency or blocking MuJoCo.

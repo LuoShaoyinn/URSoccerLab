@@ -317,12 +317,12 @@ reflection downsample factor 2, and disabled translucency lighting volumes.
 It measured 28.5 FPS versus 29.2 FPS at defaults, so no performance gain is
 claimed from that preset.
 
-Two unrelated lifecycle defects appeared during profiling:
+Two lifecycle defects found during profiling have since been fixed:
 
-- `UURSRobotCoreComponent::ApplyCommands` can observe `RobotEndpoints` while
-  the array is being rebuilt on another thread.
-- One twenty-view run crashed during shutdown while destroying an endpoint's
-  actuator array.
+- endpoint metadata and command state are protected while the physics callback
+  and game thread access them;
+- TCP state publishing reads URLab's coherent render snapshot instead of live
+  `mjData`.
 
-Neither event occurred inside the measured steady-state interval, but both
-should be fixed before this prototype is promoted.
+The six-RGBD and twelve-RGB full-match benchmarks now shut down cleanly while
+MuJoCo continues at 0.983x and 0.9997x wall time respectively.
