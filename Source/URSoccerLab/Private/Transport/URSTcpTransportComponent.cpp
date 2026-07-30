@@ -13,6 +13,8 @@
 
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Modules/ModuleManager.h"
 
 UURSTcpTransportComponent::UURSTcpTransportComponent()
@@ -24,6 +26,42 @@ UURSTcpTransportComponent::UURSTcpTransportComponent()
 void UURSTcpTransportComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	double RequestedCameraRateHz = CameraRateHz;
+	if (FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), RequestedCameraRateHz))
+	{
+		CameraRateHz = FMath::Clamp(RequestedCameraRateHz, 1.0, 120.0);
+	}
+
+	FString RequestedCameraCompress;
+	if (FParse::Value(FCommandLine::Get(), TEXT("URSCameraCompress="), RequestedCameraCompress))
+	{
+		RequestedCameraCompress.ToLowerInline();
+		if (RequestedCameraCompress == TEXT("jpeg") || RequestedCameraCompress == TEXT("raw"))
+		{
+			CameraCompress = MoveTemp(RequestedCameraCompress);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[URS TCP] Ignoring unsupported camera codec '%s'; expected jpeg or raw."),
+				*RequestedCameraCompress);
+		}
+	}
+
+	int32 RequestedJpegQuality = JpegQuality;
+	if (FParse::Value(FCommandLine::Get(), TEXT("URSJpegQuality="), RequestedJpegQuality))
+	{
+		JpegQuality = FMath::Clamp(RequestedJpegQuality, 1, 100);
+	}
+	bLogCameraStats = FParse::Param(FCommandLine::Get(), TEXT("URSCameraStats"));
+	CameraStatsWindowStartSec = FPlatformTime::Seconds();
+	NextCameraTimeSec = CameraStatsWindowStartSec;
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[URS TCP] Camera transport: rate=%.2f Hz codec=%s jpeg_quality=%d stats=%s."),
+		CameraRateHz, *CameraCompress, JpegQuality, bLogCameraStats ? TEXT("on") : TEXT("off"));
+
 	if (bAutoStart)
 	{
 		StartTransport();
@@ -161,8 +199,37 @@ void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	ReadFromClients(AdminListener);
 
 	TickStatePublish();
+	const double CameraPublishStartSec = FPlatformTime::Seconds();
 	TickCameraPublish();
+	CameraStatsPublishSec += FPlatformTime::Seconds() - CameraPublishStartSec;
 	FlushAllWrites();
+
+	if (bLogCameraStats)
+	{
+		++CameraStatsTickCount;
+		const double Now = FPlatformTime::Seconds();
+		const double WindowSec = Now - CameraStatsWindowStartSec;
+		if (WindowSec >= 1.0)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[URS CameraStats] tick_hz=%.2f message_hz=%.2f camera_hz=%.2f ")
+				TEXT("publish_ms_per_sec=%.2f jpeg_ms_per_sec=%.2f payload_mib_per_sec=%.3f"),
+				static_cast<double>(CameraStatsTickCount) / WindowSec,
+				static_cast<double>(CameraStatsMessageCount) / WindowSec,
+				static_cast<double>(CameraStatsEntryCount) / WindowSec,
+				CameraStatsPublishSec * 1000.0 / WindowSec,
+				CameraStatsJpegSec * 1000.0 / WindowSec,
+				static_cast<double>(CameraStatsPayloadBytes) / WindowSec / (1024.0 * 1024.0));
+
+			CameraStatsWindowStartSec = Now;
+			CameraStatsPublishSec = 0.0;
+			CameraStatsJpegSec = 0.0;
+			CameraStatsTickCount = 0;
+			CameraStatsMessageCount = 0;
+			CameraStatsEntryCount = 0;
+			CameraStatsPayloadBytes = 0;
+		}
+	}
 }
 
 void UURSTcpTransportComponent::AcceptNewConnections(FRobotListener& Listener)
@@ -741,9 +808,17 @@ void UURSTcpTransportComponent::TickCameraPublish()
 	const double Now = FPlatformTime::Seconds();
 	const double Interval = CameraRateHz > 0 ? 1.0 / CameraRateHz : 0.0;
 
-	if (Interval > 0 && Now - LastCameraTimeSec >= Interval)
+	if (Interval > 0 && Now >= NextCameraTimeSec)
 	{
-		LastCameraTimeSec = Now;
+		// Keep a fixed-rate phase instead of resetting the clock to Now.
+		// Resetting here quantizes a 30 Hz sensor to alternating 2/3-frame
+		// gaps at a 60 Hz game rate, yielding only about 24 Hz.
+		do
+		{
+			NextCameraTimeSec += Interval;
+		}
+		while (NextCameraTimeSec <= Now);
+
 		for (FRobotListener& L : RobotListeners)
 		{
 			if (L.Clients.Num() == 0) continue;
@@ -779,6 +854,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 			TArray<uint8> Encoded;
 			if (bHasFrame && Codec == URSProtocol::CameraCodec_JPEG)
 			{
+				const double JpegStartSec = FPlatformTime::Seconds();
 				IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
 				TSharedPtr<IImageWrapper> Wrapper(Module.CreateImageWrapper(EImageFormat::JPEG));
 				const uint8* RawBGRA = reinterpret_cast<const uint8*>(Pixels.GetData());
@@ -786,10 +862,16 @@ void UURSTcpTransportComponent::TickCameraPublish()
 				{
 					Encoded = Wrapper->GetCompressed(JpegQuality);
 				}
+				CameraStatsJpegSec += FPlatformTime::Seconds() - JpegStartSec;
 			}
 			else if (bHasFrame)
 			{
 				Encoded.Append(reinterpret_cast<const uint8*>(Pixels.GetData()), Pixels.Num() * 4);
+			}
+			if (bHasFrame)
+			{
+				++CameraStatsEntryCount;
+				CameraStatsPayloadBytes += Encoded.Num();
 			}
 
 			Packed.Add(static_cast<uint8>(CamInfo.Width & 0xFF));
@@ -806,6 +888,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 
 		if (bAnyNewFrame)
 		{
+			++CameraStatsMessageCount;
 			SendToClients(L, URSProtocol::Type_Camera, Packed.GetData(), Packed.Num());
 		}
 	}
@@ -881,4 +964,3 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 	FJsonSerializer::Serialize(Root.ToSharedRef(), W);
 	return Json;
 }
-

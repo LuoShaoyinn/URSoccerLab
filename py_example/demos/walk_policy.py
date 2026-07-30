@@ -135,7 +135,8 @@ def observation(state: dict, command: np.ndarray, last_action: np.ndarray) -> np
     base = state["base"]
     quat = np.asarray(base["quat"], dtype=np.float32)  # Runtime state is [w, x, y, z].
     velocity = np.asarray(base.get("vel", [0.0] * 6), dtype=np.float32)
-    angular_velocity = world_to_body_rotation(quat) @ velocity[3:6]
+    # MuJoCo free-joint angular qvel is already expressed in the body frame.
+    angular_velocity = velocity[3:6]
     gravity = inverse_rotate(np.asarray([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32),
                              np.asarray([0.0, 0.0, -1.0], dtype=np.float32))
     joints = state["joints"]

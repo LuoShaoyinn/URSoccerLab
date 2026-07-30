@@ -76,8 +76,17 @@ private:
 	TArray<FRobotListener> RobotListeners;
 
 	double LastStateTimeSec = 0.0;
-	double LastCameraTimeSec = 0.0;
+	double NextCameraTimeSec = 0.0;
 	TArray<FString> LastKnownRobots;
+
+	bool bLogCameraStats = false;
+	double CameraStatsWindowStartSec = 0.0;
+	double CameraStatsPublishSec = 0.0;
+	double CameraStatsJpegSec = 0.0;
+	uint64 CameraStatsTickCount = 0;
+	uint64 CameraStatsMessageCount = 0;
+	uint64 CameraStatsEntryCount = 0;
+	uint64 CameraStatsPayloadBytes = 0;
 
 	bool StartTransport();
 	void StopTransport();

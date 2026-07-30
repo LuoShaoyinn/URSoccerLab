@@ -61,9 +61,15 @@ def migrate_robot_assets(
         asset = asset_data.get_asset()
         if not asset:
             continue
-        new_package = str(asset_data.package_path).replace(
-            dependency_path, f"{robot_path}/dependencies", 1
-        )
+        if isinstance(asset, unreal.StaticMesh):
+            new_package = f"{robot_path}/Meshes"
+        elif isinstance(asset, unreal.MaterialInterface):
+            new_package = f"{robot_path}/Materials"
+        elif isinstance(asset, unreal.Texture):
+            new_package = f"{robot_path}/Textures"
+        else:
+            relative_path = str(asset_data.package_path).replace(dependency_path, "", 1)
+            new_package = f"{robot_path}/Dependencies{relative_path}"
         rename_data.append(unreal.AssetRenameData(asset, new_package, str(asset_data.asset_name)))
 
     if not unreal.AssetToolsHelpers.get_asset_tools().rename_assets(rename_data):
@@ -79,6 +85,26 @@ def remove_existing_robot_assets(robot_path: str) -> None:
             raise RuntimeError(f"could not remove existing robot assets at {robot_path}")
 
 
+def remove_import_staging_assets() -> None:
+    """Remove the temporary import tree after all assets have been migrated."""
+    if unreal.EditorAssetLibrary.does_directory_exist(IMPORT_TMP_PATH):
+        if not unreal.EditorAssetLibrary.delete_directory(IMPORT_TMP_PATH):
+            raise RuntimeError(f"could not remove import staging assets at {IMPORT_TMP_PATH}")
+
+    # Asset moves can leave empty physical directories that the Asset Registry
+    # no longer sees. Remove only empty directories; an unexpected file makes
+    # rmdir fail instead of deleting data.
+    staging_dir = ROOT / "Content" / "MuJoCoImports"
+    if staging_dir.exists():
+        for directory in sorted(
+            (path for path in staging_dir.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        ):
+            directory.rmdir()
+        staging_dir.rmdir()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--xml", type=Path, default=DEFAULT_XML)
@@ -90,11 +116,14 @@ def main() -> None:
 
     import_mjcf(args.xml, args.name)
 
-    old_assets = f"{IMPORT_TMP_PATH}/{args.name}_ue_Assets"
+    # Frame-convention robots are imported directly from the authoritative
+    # XML, so their dependency directory uses the source stem without `_ue`.
+    old_assets = f"{IMPORT_TMP_PATH}/{args.name}_Assets"
     new_prefix = f"/Game/URSoccerLab/Robots/{args.name}"
 
     remove_existing_robot_assets(new_prefix)
     migrate_robot_assets(f"{IMPORT_TMP_PATH}/{args.name}", old_assets, new_prefix, args.name)
+    remove_import_staging_assets()
 
     bp_path = f"{new_prefix}/{args.name}.{args.name}"
     if not unreal.EditorAssetLibrary.does_asset_exist(bp_path):

@@ -322,9 +322,6 @@ void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 
 void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 {
-	AAMjManager* ManagerPtr = Manager.Get();
-	if (!ManagerPtr || !ManagerPtr->PhysicsEngine) return;
-
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
 		if (!Ep.PoseLock.bActive) continue;
@@ -332,8 +329,6 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 		if (!Articulation) continue;
 
 		FQposLayout Layout = DiscoverQposLayout(Articulation, Model);
-
-		FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
 
 		if (!Layout.RootSlots.IsEmpty())
 		{
@@ -401,6 +396,19 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 		Result.Message = FString::Printf(TEXT("Robot '%s' not found"), *ActorId);
 		return Result;
 	}
+
+	AAMjManager* ManagerPtr = Manager.Get();
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine)
+	{
+		Result.Error = TEXT("not_ready");
+		Result.Message = TEXT("Physics engine is not ready");
+		return Result;
+	}
+
+	// ApplyPoseLocks is itself called while the worker owns CallbackMutex.
+	// Serialize the game-thread update here instead of recursively taking
+	// the non-recursive mutex inside the physics callback.
+	FScopeLock Lock(&ManagerPtr->PhysicsEngine->CallbackMutex);
 	if (bLock)
 	{
 		Ep->PoseLock.bActive = true;

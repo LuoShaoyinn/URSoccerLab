@@ -33,7 +33,6 @@ Makefile
 # Project-generated URLab/import artifacts
 /Content/MuJoCoImports/
 /Assets/Robots/**/*_ue.xml
-/Assets/Robots/**/*.glb
 /Assets/Scenes/SoccerField/physics/*_ue.xml
 /Saved/URLab/
 
