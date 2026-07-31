@@ -27,7 +27,7 @@ enum class EURSDepthCompression : uint8
 
 struct URSOCCERLAB_API FURSRgbStreamConfig
 {
-	double RateHz = 15.0;
+	double RateHz = 30.0;
 	EURSRgbCompression Compression = EURSRgbCompression::Jpeg;
 	int32 JpegQuality = 85;
 };

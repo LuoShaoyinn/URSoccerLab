@@ -4,32 +4,13 @@
 #include "Components/ActorComponent.h"
 #include "Containers/Queue.h"
 #include "Scene/URSSceneConfig.h"
+#include "Transport/URSTcpProtocol.h"
 #include "URSTcpTransportComponent.generated.h"
 
 class UURSRobotCoreComponent;
 class UURSDisplayClusterCameraBinderComponent;
 class FSocket;
 class IImageWrapperModule;
-
-namespace URSProtocol
-{
-	static constexpr uint8 Type_JSON = 0x00;
-	static constexpr uint8 Type_RGB = 0x01;
-	static constexpr uint8 Type_Depth = 0x02;
-
-	static constexpr uint8 ImageMessageVersion = 0x02;
-
-	static constexpr uint8 ImageCodec_Raw = 0x00;
-	static constexpr uint8 ImageCodec_JPEG = 0x01;
-	static constexpr uint8 ImageCodec_Zlib = 0x02;
-
-	static constexpr uint8 PixelFormat_BGRA8 = 0x00;
-	static constexpr uint8 PixelFormat_DepthFloat32Meters = 0x01;
-	static constexpr uint8 PixelFormat_DepthUint16Millimeters = 0x02;
-
-	static constexpr int32 DefaultRobotBasePort = 10000;
-	static constexpr int32 DefaultAdminPort = 11000;
-}
 
 UCLASS(ClassGroup = (URSoccerLab), meta = (BlueprintSpawnableComponent))
 class URSOCCERLAB_API UURSTcpTransportComponent : public UActorComponent
@@ -43,16 +24,16 @@ public:
 	bool bAutoStart = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1024", ClampMax = "65535"))
-	int32 RobotBasePort = URSProtocol::DefaultRobotBasePort;
+	int32 RobotBasePort = URSoccerLab::TcpProtocol::DefaultRobotBasePort;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1024", ClampMax = "65535"))
-	int32 AdminPort = URSProtocol::DefaultAdminPort;
+	int32 AdminPort = URSoccerLab::TcpProtocol::DefaultAdminPort;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1.0", ClampMax = "1000.0"))
 	double StateRateHz = 60.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab", meta = (ClampMin = "1.0", ClampMax = "120.0"))
-	double CameraRateHz = 15.0;
+	double CameraRateHz = 30.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "URSoccerLab")
 	FString CameraCompress = TEXT("jpeg");

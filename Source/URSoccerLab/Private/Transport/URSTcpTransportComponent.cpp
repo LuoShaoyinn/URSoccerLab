@@ -26,8 +26,8 @@ namespace
 struct FURSImageEntry
 {
 	FString CameraName;
-	uint8 Codec = URSProtocol::ImageCodec_Raw;
-	uint8 PixelFormat = URSProtocol::PixelFormat_BGRA8;
+	uint8 Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
+	uint8 PixelFormat = URSoccerLab::TcpProtocol::PixelFormatBgra8;
 	uint16 Width = 0;
 	uint16 Height = 0;
 	uint32 UncompressedBytes = 0;
@@ -70,7 +70,7 @@ TArray<uint8> BuildImageMessage(
 	const TArray<FURSImageEntry>& Entries)
 {
 	TArray<uint8> Packed;
-	Packed.Add(URSProtocol::ImageMessageVersion);
+	Packed.Add(URSoccerLab::TcpProtocol::ImageMessageVersion);
 	Packed.Add(static_cast<uint8>(FMath::Min(Entries.Num(), 255)));
 	AppendU16Le(Packed, 0); // reserved flags
 	AppendU32Le(Packed, Sequence);
@@ -276,6 +276,14 @@ void UURSTcpTransportComponent::RebuildListeners()
 
 	TArray<FString> RobotIds = Core->GetRobotIds();
 	LastKnownRobots = RobotIds;
+	if (!URSoccerLab::TcpProtocol::IsValidPortLayout(
+		RobotBasePort, RobotIds.Num(), AdminPort))
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[URS TCP] Invalid port layout: robot range starts at %d for %d robot(s), admin=%d."),
+			RobotBasePort, RobotIds.Num(), AdminPort);
+		return;
+	}
 
 	ISocketSubsystem* SSS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 
@@ -460,7 +468,7 @@ void UURSTcpTransportComponent::ReadFromClients(FRobotListener& Listener)
 			const int32 PayloadSize = FrameLen - 1;
 			const uint8* PayloadData = PayloadSize > 0 ? Client.ReadBuffer.GetData() + 5 : nullptr;
 
-			if (FrameType == URSProtocol::Type_JSON && PayloadSize > 0)
+			if (FrameType == URSoccerLab::TcpProtocol::TypeJson && PayloadSize > 0)
 			{
 				FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(PayloadData), PayloadSize);
 				FString JsonStr(Converter.Length(), Converter.Get());
@@ -517,7 +525,7 @@ void UURSTcpTransportComponent::ProcessAdminRequest(FTcpClient& Client, const FS
 		FJsonSerializer::Serialize(ReplyObj.ToSharedRef(), W);
 
 		FTCHARToUTF8 Utf8(*ReplyStr);
-		EnqueueFrame(Client, URSProtocol::Type_JSON,
+		EnqueueFrame(Client, URSoccerLab::TcpProtocol::TypeJson,
 			reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 	};
 
@@ -866,7 +874,7 @@ void UURSTcpTransportComponent::TickStatePublish()
 
 		FString Json = BuildStateJson(L.ActorId);
 		FTCHARToUTF8 Utf8(*Json);
-		SendToClients(L, URSProtocol::Type_JSON, reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+		SendToClients(L, URSoccerLab::TcpProtocol::TypeJson, reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
 	}
 }
 
@@ -1114,7 +1122,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 						FCompletedVisionPacket Completed;
 						Completed.ActorId = ActorId;
 						Completed.ListenerGeneration = Generation;
-						Completed.FrameType = URSProtocol::Type_RGB;
+						Completed.FrameType = URSoccerLab::TcpProtocol::TypeRgb;
 
 						TArray<FURSImageEntry> Entries;
 						bool bSuccess = !Images.IsEmpty();
@@ -1122,7 +1130,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 						{
 							FURSImageEntry& Entry = Entries.AddDefaulted_GetRef();
 							Entry.CameraName = MoveTemp(Raw.CameraName);
-							Entry.PixelFormat = URSProtocol::PixelFormat_BGRA8;
+							Entry.PixelFormat = URSoccerLab::TcpProtocol::PixelFormatBgra8;
 							Entry.Width = Raw.Width;
 							Entry.Height = Raw.Height;
 							Entry.UncompressedBytes =
@@ -1141,7 +1149,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 									8))
 								{
 									Entry.Data = Wrapper->GetCompressed(Quality);
-									Entry.Codec = URSProtocol::ImageCodec_JPEG;
+									Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecJpeg;
 								}
 							}
 							else
@@ -1149,7 +1157,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 								Entry.Data.Append(
 									reinterpret_cast<const uint8*>(Raw.Pixels.GetData()),
 									Entry.UncompressedBytes);
-								Entry.Codec = URSProtocol::ImageCodec_Raw;
+								Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
 							}
 							bSuccess = bSuccess && !Entry.Data.IsEmpty();
 							Completed.ImagePayloadBytes += Entry.Data.Num();
@@ -1213,7 +1221,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 					FCompletedVisionPacket Completed;
 					Completed.ActorId = ActorId;
 					Completed.ListenerGeneration = Generation;
-					Completed.FrameType = URSProtocol::Type_Depth;
+					Completed.FrameType = URSoccerLab::TcpProtocol::TypeDepth;
 					Completed.EntryCount = 1;
 
 					FURSImageEntry Entry;
@@ -1222,9 +1230,9 @@ void UURSTcpTransportComponent::TickCameraPublish()
 					Entry.Height = Height;
 					if (Compression == TEXT("raw_f32"))
 					{
-						Entry.Codec = URSProtocol::ImageCodec_Raw;
+						Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
 						Entry.PixelFormat =
-							URSProtocol::PixelFormat_DepthFloat32Meters;
+							URSoccerLab::TcpProtocol::PixelFormatDepthFloat32Meters;
 						Entry.UncompressedBytes =
 							static_cast<uint32>(Depth.Num() * sizeof(float));
 						Entry.Data.Append(
@@ -1253,7 +1261,7 @@ void UURSTcpTransportComponent::TickCameraPublish()
 						}
 
 						Entry.PixelFormat =
-							URSProtocol::PixelFormat_DepthUint16Millimeters;
+							URSoccerLab::TcpProtocol::PixelFormatDepthUint16Millimeters;
 						Entry.UncompressedBytes =
 							static_cast<uint32>(Quantized.Num());
 						if (Compression == TEXT("zlib_u16_mm"))
@@ -1272,18 +1280,18 @@ void UURSTcpTransportComponent::TickCameraPublish()
 							{
 								Entry.Data.SetNum(
 									CompressedSize, EAllowShrinking::No);
-								Entry.Codec = URSProtocol::ImageCodec_Zlib;
+								Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecZlib;
 							}
 							else
 							{
 								Entry.Data = MoveTemp(Quantized);
-								Entry.Codec = URSProtocol::ImageCodec_Raw;
+								Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
 							}
 						}
 						else
 						{
 							Entry.Data = MoveTemp(Quantized);
-							Entry.Codec = URSProtocol::ImageCodec_Raw;
+							Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
 						}
 					}
 
@@ -1327,11 +1335,11 @@ void UURSTcpTransportComponent::DrainCompletedVisionPackets()
 			continue;
 		}
 
-		if (Completed.FrameType == URSProtocol::Type_RGB)
+		if (Completed.FrameType == URSoccerLab::TcpProtocol::TypeRgb)
 		{
 			Listener->bRgbEncodeInFlight = false;
 		}
-		else if (Completed.FrameType == URSProtocol::Type_Depth)
+		else if (Completed.FrameType == URSoccerLab::TcpProtocol::TypeDepth)
 		{
 			Listener->bDepthEncodeInFlight = false;
 		}

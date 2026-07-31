@@ -40,6 +40,12 @@ for kind, data in client.recv():
 - Depth: independent versioned messages with float32 metres or
   raw/zlib-compressed uint16 millimetres
 
+Commands, state, RGB, and depth share this one bidirectional TCP connection.
+Their rates are independent: the default publishes state at 60 Hz and two
+JPEG-compressed RGB cameras at 30 Hz. Worker threads encode images, then queue
+completed frames back to the game thread; only the game thread writes the
+socket.
+
 ## AdminClient — set_pose, reset, lock_pose
 
 ```python
@@ -63,7 +69,9 @@ by the example:
 ```
 
 Each client uses TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port
-`10001`. Output files go under `py_example/out/` and are ignored by Git.
+`10001`. Port `11000` is one optional global administration connection, not a
+second per-robot stream. Output files go under `py_example/out/` and are ignored
+by Git.
 
 ## 1. Head Motion
 
@@ -80,14 +88,14 @@ Use `Config/examples/two_robots_face_to_face.json` in the runtime command.
 
 ## 2. Walker And Observer
 
-`robot_rp0` starts at `(0, 0)` and walks along `+X`. `robot_rp1` stands at
+`robot_rp0` starts at `(-1, 0)` and walks along `+X`. `robot_rp1` stands at
 `(0, 3)` facing the walker. The policy sends motor commands only to `robot_rp0`
 and records both left-eye cameras:
 
 ```bash
 uv sync --extra torch_rocm
 uv run --extra torch_rocm python examples/walk_policy.py \
-  --vx 0.35 --duration 8 \
+  --vx 0.35 --duration 15 \
   --video out/walker.mp4 \
   --observer-video out/observer.mp4
 ```

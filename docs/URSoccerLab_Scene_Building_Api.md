@@ -1,43 +1,35 @@
-# URSoccerLab Scene Building API
+# Scene Building and Configuration
 
-Describes how the soccer scene is assembled at runtime: field-only
-`.umap`, JSON scene config, robot type registry, and the GameMode
-bootstrap that spawns robots before URLab compiles the MuJoCo model.
+URSoccerLab keeps the authored Unreal environment separate from the runtime
+MuJoCo scene. The production level contains the background, lighting, manager,
+and project components. A JSON file selects the robots, dynamic objects, poses,
+and camera transport settings for each run.
 
-## Architecture
+## Startup flow
 
+```text
+/Game/Levels/URS_SoccerField.umap
+        + Config/URS_scene.json
+                    |
+                    v
+AURSSoccerGameMode::InitGame
+        |
+        +-> register robot and object types
+        +-> apply JSON and spawn baked AMjArticulation Blueprints
+        +-> disable URLab legacy network transports
+                    |
+                    v
+AAMjManager::BeginPlay -> compile one MuJoCo model -> physics thread
+                    |
+                    v
+UURSTcpTransportComponent::BeginPlay -> robot/admin listeners
 ```
-/Game/Levels/URS_SoccerField.umap        (baked: field + sky + manager + components)
-Config/URS_scene.json                    (runtime: robot list, types, poses)
-Assets/Robots/pi_plus/pi_plus.xml         (source MJCF for each robot type)
-/Game/URSoccerLab/Robots/pi_plus/pi_plus  (baked Blueprint, tracked with Git LFS)
-```
 
-At simulator startup:
+`InitGame` runs before `BeginPlay`, so every configured articulation exists
+before URLab compiles the MuJoCo model. Robots and dynamic objects must not be
+baked into the level.
 
-1. Engine loads `URS_SoccerField.umap`. Level actors (field meshes,
-   skylight, `AAMjManager` with `UURSSceneConfigComponent`) go through
-   `PreInitializeComponents` → `InitializeComponent` → `PostInitializeComponents`.
-2. `AURSSoccerGameMode::InitGame` runs (before any `BeginPlay`).
-3. It finds `UURSSceneConfigComponent`, calls `ApplyConfig`.
-4. `ApplyConfig` reads `Config/URS_scene.json`, resolves robot types via
-   `FURSRobotTypeRegistry`, and spawns `AMjArticulation` actors via
-   `World->SpawnActor` + `LoadClass`.
-5. Each spawned robot configures its own cameras (resolution, FOV,
-   ray tracing) and hides imported field geoms.
-6. `World->BeginPlay` fires. `AAMjManager::BeginPlay` compiles the MuJoCo
-   model — the dynamically-spawned robots are discovered via
-   `TActorIterator<AMjArticulation>` and enter `mjModel`.
-7. `UURSTcpTransportComponent` (auto-created by `AURSSoccerGameMode`)
-   starts TCP listeners for robot commands, state, camera, and admin RPC.
-
-The key ordering guarantee: **robots exist in the world before
-`AAMjManager::BeginPlay` compiles**, because `InitGame` runs before
-`BeginPlay`.
-
-## Config file format
-
-For example, `Config/examples/two_robots_face_to_face.json`:
+## Scene JSON
 
 ```json
 {
@@ -46,11 +38,7 @@ For example, `Config/examples/two_robots_face_to_face.json`:
     "mode": "stereo_rgb",
     "left_camera": "left_eye",
     "right_camera": "right_eye",
-    "rgb": {
-      "rate_hz": 30,
-      "compression": "jpeg",
-      "jpeg_quality": 85
-    },
+    "rgb": {"rate_hz": 30, "compression": "jpeg", "jpeg_quality": 85},
     "depth": {
       "rate_hz": 15,
       "compression": "zlib_u16_mm",
@@ -63,311 +51,119 @@ For example, `Config/examples/two_robots_face_to_face.json`:
       "type": "pi_plus",
       "translation_m": [-1.0, 0.0, 0.3762],
       "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
-    },
+    }
+  ],
+  "objects": [
     {
-      "actor_id": "robot_rp1",
-      "type": "pi_plus",
-      "translation_m": [1.0, 0.0, 0.3762],
-      "rotation_quat_xyzw": [0.0, 0.0, 1.0, 0.0]
+      "actor_id": "ball",
+      "type": "soccer_ball",
+      "translation_m": [0.0, 0.0, 0.075],
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
     }
   ]
 }
 ```
 
-| Field | Type | Required | Default if absent |
-| --- | --- | :---: | --- |
-| `version` | string | yes | — (must be `"urs_scene_v1"`) |
-| `vision.mode` | `"stereo_rgb"` or `"rgbd"` | no | `"stereo_rgb"` |
-| `vision.left_camera` | camera name | no | `"left_eye"` |
-| `vision.right_camera` | camera name | no | `"right_eye"` |
-| `vision.rgb.rate_hz` | number in `(0, 240]` | no | `15` |
-| `vision.rgb.compression` | `"raw"` or `"jpeg"` | no | `"jpeg"` |
-| `vision.rgb.jpeg_quality` | integer in `[1, 100]` | no | `85` |
-| `vision.depth.rate_hz` | number in `(0, 240]` | no | `15` |
-| `vision.depth.compression` | `"raw_f32"`, `"raw_u16_mm"`, or `"zlib_u16_mm"` | no | `"zlib_u16_mm"` |
-| `vision.depth.max_depth_m` | number in `(0, 65.535]` | no | `65.535` |
-| `robots` | array | yes | — |
-| `robots[].actor_id` | string | yes | — (must be unique) |
-| `robots[].type` | string | yes | — (must exist in the registry) |
-| `robots[].translation_m` | `[x, y, z]` meters (MuJoCo frame) | no | `[0, 0, Type.DefaultBaseHeightM]` |
-| `robots[].rotation_quat_xyzw` | `[x, y, z, w]` | no | `[0, 0, 0, 1]` (identity) |
-| `robots[].joint_positions_rad` | object: non-root joint name to radians | no | MuJoCo native zero qpos |
+The runtime accepts `-URSSceneConfig=<path>`. Relative paths are resolved from
+the project directory; absolute paths are useful for generated experiments.
 
-When `joint_positions_rad` is present, it must contain every non-root joint of
-the spawned robot and no unknown names. This makes a policy-specific standing
-posture explicit in the scene configuration; it is not baked into runtime C++.
+### Fields and defaults
 
-### Vision modes and compression
+| Field | Required | Default |
+| --- | :---: | --- |
+| `version` | yes | must be `urs_scene_v1` |
+| `vision.mode` | no | `stereo_rgb`; alternative: `rgbd` |
+| `vision.left_camera` | no | `left_eye` |
+| `vision.right_camera` | no | `right_eye` |
+| `vision.rgb.rate_hz` | no | `30` |
+| `vision.rgb.compression` | no | `jpeg`; alternative: `raw` |
+| `vision.rgb.jpeg_quality` | no | `85` |
+| `vision.depth.rate_hz` | no | `15` |
+| `vision.depth.compression` | no | `zlib_u16_mm`; alternatives: `raw_f32`, `raw_u16_mm` |
+| `vision.depth.max_depth_m` | no | `65.535` |
+| `robots` | yes | array, possibly empty |
+| `objects` | no | empty array |
+| `robots[].actor_id`, `robots[].type` | yes | unique ID and registered type |
+| `objects[].actor_id`, `objects[].type` | yes | unique ID and registered type |
+| `translation_m` | no | type-specific base height at X/Y zero |
+| `rotation_quat_xyzw` | no | `[0, 0, 0, 1]` |
 
-`stereo_rgb` publishes RGB from both named cameras. `rgbd` publishes RGB and
-aligned depth from the left-eye viewpoint; `right_camera` names the camera
-component that the runtime repurposes as the aligned depth capture.
+`robots[].joint_positions_rad` may provide an explicit initial posture. When
+present, it must contain every non-root joint and no unknown names. This keeps
+policy-specific poses in configuration instead of runtime C++.
 
-RGB and depth have independent publication rates. JPEG is the practical RGB
-default. Depth is never JPEG-compressed: `raw_f32` preserves the render
-target's floating-point values, `raw_u16_mm` quantizes to millimetres, and
-`zlib_u16_mm` losslessly compresses that quantized buffer. The latter is the
-network-oriented default because smooth depth images compress well and use
-half the bytes even before zlib.
+`stereo_rgb` publishes both named RGB cameras in one synchronized message.
+`rgbd` publishes left-eye RGB plus independently scheduled depth aligned with
+that viewpoint. JPEG is the practical RGB default; depth remains numeric and
+uses raw float, raw millimetres, or lossless zlib-compressed millimetres.
 
-The maintained match examples are:
+## Coordinates
 
-- `Config/examples/six_robots_stereo_rgb.json`: 3v3, 12 RGB streams.
-- `Config/examples/six_robots_rgbd.json`: 3v3, 6 RGB plus 6 depth streams.
-- `Config/examples/ten_robots_twenty_cameras.json`: 5v5, 20 RGB streams.
-
-### Coordinate frame
-
-All values are in the MuJoCo/robot frame (`+X` forward, `+Y` left,
-`+Z` up), in meters. URLab converts to UE centimeters + handedness flip
-internally — project code never adds another Y flip.
-
-### Quaternion convention
-
-Wire order is `[x, y, z, w]`. MuJoCo internally stores free-joint qpos as
-`[x, y, z, qw, qx, qy, qz]`; the admin API and scene config handle the
-repack — config writers always use `xyzw`.
-
-### Rotation examples
+Configuration uses the MuJoCo robot frame in metres: +X forward, +Y left, +Z
+up. Quaternion wire order is `[x, y, z, w]`. URLab performs the Unreal
+centimetre and handedness conversion; project code must not apply another Y
+flip.
 
 | Facing direction | `rotation_quat_xyzw` |
 | --- | --- |
-| Identity (+X forward) | `[0, 0, 0, 1]` |
-| 180° yaw (face -X) | `[0, 0, 1, 0]` |
-| 90° yaw left (face +Y) | `[0, 0, 0.7071, 0.7071]` |
-| 90° yaw right (face -Y) | `[0, 0, -0.7071, 0.7071]` |
+| +X | `[0, 0, 0, 1]` |
+| -X | `[0, 0, 1, 0]` |
+| +Y | `[0, 0, 0.7071, 0.7071]` |
+| -Y | `[0, 0, -0.7071, 0.7071]` |
 
-## Robot type registry
+## Type registries
 
-`FURSRobotTypeRegistry` is a singleton that maps short type names to
-Blueprint asset paths. Adding a new robot type is one line in
-`FURSoccerLabModule::StartupModule`.
+Registries map the short JSON `type` to a baked Unreal Blueprint and a default
+base height. Defaults are registered in `FURSoccerLabModule::StartupModule`.
 
-### Registered types
+| Kind | Type | Blueprint | Base height |
+| --- | --- | --- | ---: |
+| robot | `pi_plus` | `/Game/URSoccerLab/Robots/pi_plus/pi_plus` | 0.3762 m |
+| object | `soccer_ball` | `/Game/URSoccerLab/Objects/soccer_ball/soccer_ball` | 0.075 m |
 
-| Name | Blueprint | Default base height |
-| --- | --- | ---: |
-| `pi_plus` | `/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus` | 0.3762 m |
+Adding a type requires an authoritative asset directory under `Assets`, a
+baked Blueprint under `/Game/URSoccerLab`, and one registry entry. Robot names,
+joint names, actuator names, and camera names form part of the external API.
 
-### C++ API
+## Source and baked assets
 
-```cpp
-namespace URSoccerLab
-{
-struct FURSRobotType
-{
-    FString Name;               // "pi_plus"
-    FString BlueprintAssetPath; // "/Game/URSoccerLab/Robots/..."
-    double DefaultBaseHeightM = 0.0;
-};
+```text
+Assets/                              editable source of truth
+  Robots/pi_plus/pi_plus.xml         robot physics, names, cameras, visual frames
+  Robots/pi_plus/meshes/*.glb        Unreal-only robot visuals
+  Objects/soccer_ball/*.xml|meshes/  dynamic ball physics and visual
+  Scenes/SoccerField/physics/*.xml   flat MuJoCo field collision
 
-class FURSRobotTypeRegistry
-{
-public:
-    static FURSRobotTypeRegistry& Get();
-    void Register(const FURSRobotType& Type);
-    void RegisterDefaultTypes();             // idempotent
-    const FURSRobotType* Find(const FString& Name) const;
-    TArray<FString> GetRegisteredNames() const;
-};
-}
+Content/                             Unreal-generated, tracked with Git LFS
+  Levels/URS_SoccerField.umap        complete authored background and lighting
+  URSoccerLab/Robots/...             baked robot Blueprint and meshes
+  URSoccerLab/Objects/...            baked object Blueprint and meshes
+  URSoccerLab/Scenes/...             background assets referenced by the level
 ```
 
-### Registering a new robot type
+The original background GLB is intentionally not retained: the `.umap` and its
+referenced Content assets are the authoritative visual scene. MuJoCo sees only
+the flat field plane plus configured articulations.
 
-In `Source/URSoccerLab/URSoccerLab.cpp`:
+Robot and object GLBs are not passed to MuJoCo. Empty MJCF frames named
+`visual__<mesh-name>` preserve the body-relative visual transform while the
+editor import tools attach the matching GLB to the baked Blueprint. See the
+[robot](../Assets/Robots/README.md) and
+[object](../Assets/Objects/README.md) conventions.
 
-```cpp
-void FURSoccerLabModule::StartupModule()
-{
-    URSoccerLab::FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+## Rebuilding and validation
 
-    // Add a new type:
-    URSoccerLab::FURSRobotType K1;
-    K1.Name = TEXT("k1");
-    K1.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/example/example.example");
-    K1.DefaultBaseHeightM = 0.35;
-    URSoccerLab::FURSRobotTypeRegistry::Get().Register(K1);
-}
-```
-
-Then reference it in the config:
-
-```json
-{ "actor_id": "robot_rp0", "type": "k1", "translation_m": [0, 0, 0.35] }
-```
-
-## Scene config component
-
-`UURSSceneConfigComponent` lives on `AAMjManager`. It owns the config
-file path, the spawn logic, and the initial-pose stash used by the admin
-`reset` RPC.
-
-### UPROPERTIES
-
-| Property | Type | Default | Purpose |
-| --- | --- | --- | --- |
-| `ConfigPath` | `FString` | `"Config/URS_scene.json"` | Project-relative path to the JSON config |
-| `bAutoApplyOnBeginPlay` | `bool` | `false` | If true, auto-applies on component BeginPlay. Off by default because the GameMode owns the ordering. |
-
-### Blueprint-callable functions
-
-| Function | Returns | Description |
-| --- | --- | --- |
-| `ApplyConfig(OutError)` | `bool` | Reload config from disk, destroy stale actors, spawn robots, fire `OnSceneConfigApplied`. |
-| `ReloadConfig(OutError)` | `bool` | Reload config from disk into `ActiveConfig` without spawning. |
-| `GetInitialPose(ActorId, OutTrans, OutRot)` | `bool` | Look up the spawn translation + rotation for a robot. Used by admin `reset`. |
-
-### C++-only accessors
-
-```cpp
-const TMap<FString, FURSSpawnedRobotInfo>& GetSpawnedRobots() const;
-const URSoccerLab::FURSSceneConfig& GetActiveConfig() const;
-const TSet<FString>& GetKnownActorIds() const;
-```
-
-### Delegate
-
-```cpp
-// Fires after ApplyConfig completes successfully. The TCP transport
-// listens to this to rebuild robot listeners for the new robot list.
-FOnSceneConfigApplied OnSceneConfigApplied;
-```
-
-### ApplyConfig behavior
-
-1. `ReloadConfig` — parse JSON, validate (unique actor_ids, known types,
-   finite translations).
-2. Destroy actors whose `ActorId` is in the new config (idempotent
-   re-spawn) or was spawned previously but is now absent from the config
-   (stale cleanup across reloads).
-3. For each robot in config:
-   - Resolve type via `FURSRobotTypeRegistry::Find`.
-   - Compute final translation (explicit or `[0, 0, DefaultBaseHeightM]`).
-   - `LoadClass<AActor>(BlueprintAssetPath + "_C")`.
-   - `World->SpawnActor<AMjArticulation>` with MJ→UE converted transform.
-   - Set `ActorId`, rename actor, set label.
-   - `ConfigureRobotCameras` — resolution, FOV, ray tracing.
-   - `HideImportedFieldGeoms` — hide `floor`/`vision_floor`/`vision_marker` geoms.
-   - Stash initial pose for admin `reset`.
-4. Broadcast `OnSceneConfigApplied`.
-
-## GameMode bootstrap
-
-`AURSSoccerGameMode` is set as `WorldSettings::DefaultGameMode` in the
-baked field level. Its `InitGame` override is the sole caller of
-`ApplyConfig` at simulator startup.
-
-```cpp
-class AURSSoccerGameMode : public AGameModeBase
-{
-public:
-    AURSSoccerGameMode();          // sets DefaultPawnClass = ASpectatorPawn
-
-    virtual void InitGame(
-        const FString& MapName, const FString& Options,
-        FString& ErrorMessage) override;
-};
-```
-
-The constructor sets `DefaultPawnClass = ASpectatorPawn` to suppress
-UE's default `ADefaultPawn`, which spawns a visible Sphere mesh
-(`/Engine/BasicShapes/Sphere`) at world origin with a null material.
-In a headless simulator (`-game`) there is no human player, so the
-default pawn would appear as an unwanted object in robot camera output.
-
-### InitGame sequence
-
-```
-Super::InitGame                         // standard UE init
-→ RegisterDefaultTypes()                // populate robot type registry
-→ Find AAMjManager in world
-→ Find UURSSceneConfigComponent on manager
-→ SceneComp->ApplyConfig(Error)        // spawn robots
-   ← fires OnSceneConfigApplied
-   ← TCP transport rebuilds its robot listeners
-// ... later, World->BeginPlay fires ...
-// AAMjManager::BeginPlay → Compile() discovers all articulations
-// UURSTcpTransportComponent::BeginPlay → StartTransport()
-```
-
-## What goes in the `.umap`
-
-Only static, non-robot content:
-
-| Content | Source |
-| --- | --- |
-| Field geometry (static meshes) | `Assets/Scenes/SoccerField/source/field.glb` |
-| Skylight | `Tools/editor/bake_soccer_field.py` |
-| `AAMjManager` | with `UURSSceneConfigComponent` |
-| `WorldSettings` | `DefaultGameMode = AURSSoccerGameMode` |
-
-No `AMjArticulation` actors are baked. Robot Blueprints are imported and
-tracked separately, then resolved with `LoadClass` at runtime.
-
-## Rebuilding the field
-
-The field geometry is baked from `Assets/Scenes/SoccerField/source/field.glb`
-into `/Game/Levels/URS_SoccerField.umap` by the bake script
-`Tools/editor/bake_soccer_field.py` (executed inside UE Editor).
+Editor scripts and exact commands are documented in [Tools](../Tools/README.md).
+The common checks are:
 
 ```bash
-# Re-import field meshes from the GLB and rebuild the level
-python3 Tools/editor/create_soccer_field_scene.py --nullrhi
+python3 Tools/editor/validate_baked_assets.py
 
-# Then validate the baked assets and capture a camera frame.
-UV_CACHE_DIR=/tmp/uv-cache uv run --project py_example python Tools/runtime/run_vision_smoke_test.py --out py_example/out/vision_smoke
+uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
+
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config Config/examples/six_robots_stereo_rgb.json
 ```
 
-The Interchange glTF importer (`bBakeMeshes = true` by default) bakes
-each glTF scene-node's full transform — translation, rotation, scale,
-and the 100x m-to-cm conversion — directly into mesh vertices. The bake
-script therefore spawns every mesh actor at the origin with identity
-rotation and unit scale so the node transform is not double-applied.
-
-`run_vision_smoke_test.py` validates the tracked baked assets, then launches
-directly on the existing map with the requested scene config.
-
-## File layout
-
-```
-Config/
-  URS_scene.json                 default one-robot scene config
-  examples/
-    two_robots_face_to_face.json two standing robots at (-1, 0) and (1, 0)
-    walker_and_observer.json     walker at (0, 0), observer at (0, 3)
-  DefaultEngine.ini              GlobalDefaultGameMode = AURSSoccerGameMode
-
-Assets/
-  Robots/
-    pi_plus/
-      pi_plus.xml                source MJCF (floating-base root freejoint)
-  Scenes/
-    SoccerField/
-      source/field.glb           field geometry
-
-Source/URSoccerLab/
-  Public/
-    URSSoccerGameMode.h
-    Scene/
-      URSSceneConfig.h
-      URSSceneConfigComponent.h
-      URSRobotTypeRegistry.h
-  Private/
-    URSSoccerGameMode.cpp
-    Scene/
-      URSSceneConfig.cpp
-      URSSceneConfigComponent.cpp
-      URSRobotTypeRegistry.cpp
-
-Tools/
-  editor/                        UE Python asset import and field bake scripts
-  runtime/                       headless TCP smoke and capture launchers
-
-py_example/
-  src/ursoccerlab/               reusable TCP, camera, and video APIs
-  examples/move_head.py          motor-command camera demo
-  examples/standing.py           static two-robot camera demo
-  examples/walk_policy.py        optional PyTorch policy demo
-  examples/vision_smoke.py       zero-command camera client
-```
+Maintained match configurations include six-robot stereo RGB, six-robot RGBD,
+and ten-robot/twenty-camera stereo RGB under `Config/examples/`.

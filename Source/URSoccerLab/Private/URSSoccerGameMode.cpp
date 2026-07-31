@@ -43,6 +43,11 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 		return;
 	}
 
+	// URSoccerLab owns one consolidated bidirectional TCP connection per
+	// robot. Keep URLab's in-process physics/render bridge, but do not open its
+	// redundant ZMQ, SHM, or RPC transports during AAMjManager::BeginPlay.
+	Manager->bEnableNetworkTransports = false;
+
 	UURSSceneConfigComponent* SceneComp = Manager->FindComponentByClass<UURSSceneConfigComponent>();
 	if (!SceneComp)
 	{

@@ -1,55 +1,10 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Runtime/URSAdminProtocol.h"
-#include "Runtime/URSRobotProtocol.h"
 
 #include "Misc/AutomationTest.h"
 
 using namespace URSoccerLab;
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSAdminPortAssignmentTest,
-	"URSoccerLab.Admin.Protocol.PortAssignment",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FURSAdminPortAssignmentTest::RunTest(const FString& Parameters)
-{
-	FRobotRuntimeConfig Config;
-	TArray<FRobotPortAssignment> Assignments;
-	TestTrue(TEXT("default port assignment builds"), FRobotProtocol::BuildPortAssignments(Config, Assignments));
-	TestEqual(TEXT("default robot count"), Assignments.Num(), 14);
-
-	TestEqual(TEXT("first admin port"), Assignments[0].AdminPort, 11000);
-	TestEqual(TEXT("last admin port"), Assignments.Last().AdminPort, 11013);
-	TestEqual(TEXT("first command port unchanged"), Assignments[0].CommandPort, 10000);
-	TestEqual(TEXT("last command port unchanged"), Assignments.Last().CommandPort, 10013);
-
-	TestFalse(TEXT("admin base below 11000 rejected"),
-		FRobotProtocol::IsValidAdminBasePort(10999, 14));
-
-	TestTrue(TEXT("admin base at 11000 accepted"),
-		FRobotProtocol::IsValidAdminBasePort(11000, 14));
-
-	TestTrue(TEXT("admin defaults do not collide"),
-		!FRobotProtocol::AdminPortsCollideWithCore(11000, 14, 10000, 14, 10100, 10101));
-
-	TestTrue(TEXT("admin base 10100 collides with state port"),
-		FRobotProtocol::AdminPortsCollideWithCore(10100, 14, 10000, 14, 10100, 10101));
-
-	TestTrue(TEXT("admin base 10010 collides with command range"),
-		FRobotProtocol::AdminPortsCollideWithCore(10010, 14, 10000, 14, 10100, 10101));
-
-	TestTrue(TEXT("admin base 10101 collides with meta port"),
-		FRobotProtocol::AdminPortsCollideWithCore(10101, 14, 10000, 14, 10100, 10101));
-
-	Config.AdminBasePort = 10999;
-	TestFalse(TEXT("build rejects low admin base"),
-		FRobotProtocol::BuildPortAssignments(Config, Assignments));
-
-	Config.AdminBasePort = 10100;
-	TestFalse(TEXT("build rejects admin base colliding with state port"),
-		FRobotProtocol::BuildPortAssignments(Config, Assignments));
-	return true;
-}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSAdminRequestParseTest,
 	"URSoccerLab.Admin.Protocol.RequestParse",

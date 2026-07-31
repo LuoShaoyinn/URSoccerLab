@@ -16,7 +16,7 @@ Run with one of the optional PyTorch backends:
     cd py_example
     uv sync --extra torch_rocm
     uv run --extra torch_rocm python examples/walk_policy.py \
-        --vx 0.35 --duration 8 \
+        --vx 0.35 --duration 15 \
         --video out/walker.mp4 \
         --observer-video out/observer.mp4
 """
@@ -148,10 +148,10 @@ def main() -> int:
     parser.add_argument("--robot-port", type=int, default=10000)
     parser.add_argument("--observer-port", type=int, default=10001)
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
-    parser.add_argument("--duration", type=float, default=8.0)
+    parser.add_argument("--duration", type=float, default=15.0)
     parser.add_argument("--vx", type=float, default=0.35)
     parser.add_argument("--policy-hz", type=float, default=50.0)
-    parser.add_argument("--video-fps", type=int, default=15)
+    parser.add_argument("--video-fps", type=int, default=30)
     parser.add_argument("--video", type=Path, default=Path("out/walker.mp4"))
     parser.add_argument("--observer-video", type=Path, default=Path("out/observer.mp4"))
     args = parser.parse_args()

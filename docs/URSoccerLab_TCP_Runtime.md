@@ -1,4 +1,4 @@
-# URSoccerLab TCP Runtime Validation
+# TCP Runtime
 
 ## Implemented
 
@@ -11,14 +11,15 @@
   versioned binary messages. Scene config selects stereo RGB or aligned RGBD
   and gives RGB/depth independent rates and codecs. Packets are emitted only
   when a new GPU readback is available.
+- **Default camera stream**: stereo 640x480 RGB at 30 Hz, JPEG quality 85.
 - **Bounded asynchronous encoding**: JPEG encoding and depth
   quantization/compression run on Unreal's worker pool. Each robot permits at
   most one in-flight RGB job and one in-flight depth job, so slow encoding
   drops stale opportunities instead of blocking physics or growing a queue.
-- **Single camera transport owner**: URSoccerLab leaves URLab camera rendering
-  and readback enabled but disables URLab's legacy per-camera ZMQ sockets and
-  SHM mappings. Images are published only through the consolidated TCP
-  transport described here.
+- **Single network owner**: URSoccerLab leaves URLab camera rendering and
+  readback enabled but disables URLab's legacy ZMQ, shared-memory, and RPC
+  transports. Project messages are published only through the consolidated
+  TCP transport described here.
 - **Physics/render isolation**: MuJoCo steps on URLab's dedicated physics
   thread. The game/TCP thread reads the latest coherent render snapshot rather
   than live `mjData`; endpoint and command state is synchronized separately.
@@ -103,7 +104,7 @@ Supported commands:
 - **reset** — return the robot to its initial spawn pose.
 - **lock_pose / unlock_pose** — hold a robot at a fixed pose (overrides physics).
 
-Minimal example using `py_example/common/tcp.py`:
+Minimal example using `py_example/src/ursoccerlab/tcp.py`:
 
 ```python
 from ursoccerlab import AdminClient
@@ -131,9 +132,9 @@ for kind, data in client.recv():
 ## Dynamic Scene Config
 
 `AURSSoccerGameMode::InitGame` reads `Config/URS_scene.json` before
-`AAMjManager::BeginPlay` and spawns the listed robots via the registered types. The registered type
-is `pi_plus` (floating base, spawn Z=0.3762) against
-`/Game/URSoccerLab/Robots/pi_plus/pi_plus`.
+`AAMjManager::BeginPlay` and spawns the listed robots and dynamic objects via
+their type registries. The registered robot type is `pi_plus`; the registered
+object type is `soccer_ball`.
 
 The runtime accepts `-URSSceneConfig=<path>` to override the scene JSON. A
 relative path is resolved from the project directory; an absolute path may be
@@ -175,10 +176,10 @@ make UnrealEditor-Linux-Development ARGS="-project=$PROJ"
   -ExecCmds="Automation RunTests URSoccerLab; Quit"
 ```
 
-The runtime automation suite currently contains 12 tests. Run it after any
-runtime C++ change, together with the TCP smoke clients in `Tools/runtime/`.
+Run the complete runtime automation suite after any C++ change, together with
+the TCP smoke clients in `Tools/runtime/`.
 
-### Full-match camera benchmark
+## Full-match camera benchmark
 
 `benchmark_match_vision.py` launches the field, connects one client to every
 configured robot, drains every state and vision stream, checks complete

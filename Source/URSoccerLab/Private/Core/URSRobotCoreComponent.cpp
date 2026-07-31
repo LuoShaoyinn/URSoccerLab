@@ -2,7 +2,7 @@
 
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
-#include "Runtime/URSRobotProtocol.h"
+#include "Runtime/URSRobotNames.h"
 #include "MuJoCo/Components/Actuators/MjActuator.h"
 #include "MuJoCo/Components/Joints/MjJoint.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
@@ -317,7 +317,7 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 
 		for (UMjActuator* Actuator : Actuators)
 		{
-			FString CleanName = URSoccerLab::FRobotProtocol::NormalizeRobotComponentName(Actuator->GetMjName(), ActorId);
+			FString CleanName = URSoccerLab::FRobotNames::NormalizeRobotComponentName(Actuator->GetMjName(), ActorId);
 			FActuatorInfo Info;
 			Info.Actuator = Actuator;
 			Info.Name = CleanName;
@@ -333,7 +333,7 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 
 		for (UMjJoint* Joint : Joints)
 		{
-			FString CleanName = URSoccerLab::FRobotProtocol::NormalizeRobotComponentName(Joint->GetMjName(), ActorId);
+			FString CleanName = URSoccerLab::FRobotNames::NormalizeRobotComponentName(Joint->GetMjName(), ActorId);
 			FJointInfo Info;
 			Info.Joint = Joint;
 			Info.Name = CleanName;

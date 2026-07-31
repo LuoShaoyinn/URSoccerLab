@@ -53,7 +53,7 @@ bool FURSSceneConfigDefaultTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("default rotation set"), Config.Robots[0].RotationQuatXyzw.IsSet());
 	TestTrue(TEXT("default vision is stereo RGB"), Config.Vision.Mode == EURSVisionMode::StereoRgb);
 	TestTrue(TEXT("default RGB compression is JPEG"), Config.Vision.Rgb.Compression == EURSRgbCompression::Jpeg);
-	TestEqual(TEXT("default RGB rate"), Config.Vision.Rgb.RateHz, 15.0);
+	TestEqual(TEXT("default RGB rate"), Config.Vision.Rgb.RateHz, 30.0);
 	TestTrue(TEXT("default depth compression is lossless zlib uint16"),
 		Config.Vision.Depth.Compression == EURSDepthCompression::ZlibUint16Millimeters);
 

@@ -132,14 +132,16 @@ URLab owns:
 - MuJoCo-to-Unreal position and rotation conversion.
 - Physics stepping and imported articulation/component sync.
 - `UMjCamera` render target creation and optical-frame conversion.
-- Builtin camera streaming registration through `UMjNetworkManager`.
+- Optional builtin ZMQ, shared-memory, and RPC transports. URSoccerLab disables
+  these before `AAMjManager::BeginPlay` and keeps URLab's camera rendering and
+  readback path enabled.
 
 URSoccerLab owns:
 
 - Project scene assets and saved field level.
 - Project robot fixtures under `Assets/Robots`.
 - The external robot command/state protocol.
-- Per-robot port assignment and metadata.
+- Consolidated per-robot TCP transport, port assignment, and metadata.
 - Editor smoke fixtures that assemble a test map from URLab imports.
 
 When behavior looks wrong, first check the MJCF/asset frame and URLab import
