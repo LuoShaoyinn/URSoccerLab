@@ -347,16 +347,72 @@ atlas results below supersede their camera-throughput figures.
 
 ### Production atlas delivery
 
-The production readback and TCP path was validated on the RX 7900 XTX with
-the tracked sun/atmosphere, volumetric clouds disabled, Lumen HWRT, MegaLights
-HWRT, JPEG quality 85, and 640x480 sensors:
+The production readback and TCP path was revalidated on the RX 7900 XTX after
+removing the complete outdoor lighting stack from the tracked level. Lumen
+HWRT, MegaLights HWRT, motion blur, JPEG quality 85, and 640x480 sensors remain
+enabled:
 
 | 3v3 mode | Delivered rate per sensor | Minimum physics/wall ratio |
 | --- | ---: | ---: |
-| 12 RGB views | 15.5 RGB/s | 0.9999 |
-| 6 RGBD pairs | 24.2 RGB/s, 5.1 depth/s | 0.9997 |
+| 12 RGB views | 26.7 RGB/s | 0.9998 |
 
 All messages were complete and had zero sequence gaps. The 12-RGB rate
 matched the raw 12-view render cadence, showing that atlas readback, JPEG, and
 TCP no longer reduce render throughput. The remaining 12-view limit is the
-production render workload itself.
+production render workload itself. The preceding cloud-disabled outdoor level
+delivered 15.5 RGB/s, so persisting the indoor-only lighting design improved
+throughput by about 72%.
+
+A 240-frame CSV/GPU capture of the indoor-only 12-view atlas measured a 37.1 ms
+mean frame, 33.8 ms GPU time, and 37.1 ms render-thread time. The largest GPU
+categories were ray-tracing-scene construction (5.55 ms), Lumen screen-probe
+gather (5.00 ms), Lumen scene lighting (3.99 ms), MegaLights (3.25 ms), Nanite
+visibility (2.83 ms), TSR (1.95 ms), and Lumen reflections (1.48 ms). This is a
+slight render-thread limit with the GPU close behind; transport is not the
+next optimization target.
+
+### Render-thread follow-up
+
+The live 12-view process was checked before adding renderer overrides. Unreal
+5.7 already uses its optimized paths here:
+
+```text
+r.RDG.ParallelExecute=2
+r.RDG.ParallelCompile=1
+r.RDG.AsyncSetupQueue=1
+r.RHICmdBypass=0
+r.RHICmd.ParallelTranslate.Enable=1
+r.MeshDrawCommands.UseCachedCommands=1
+r.MeshDrawCommands.DynamicInstancing=1
+r.RHIThread.Enable=1
+```
+
+Two quality-neutral scheduling experiments did not produce a repeatable gain.
+Changing the RHI from its dedicated thread to task threads delivered 26.6 Hz
+instead of 26.2--26.4 Hz in a short matched run, which is within run-to-run
+noise. Increasing `r.RDG.ParallelExecute.PassMax` from 32 to 64 delivered
+26.2 Hz. Neither override is part of the production configuration.
+
+A level audit also ruled out a conventional draw-submission content problem:
+the saved indoor level contains 50 actors, 22 static-mesh components, 22
+unique meshes, and 22 material slots. There are no repeated static meshes to
+convert to HISM and no material-section explosion. The emissive lamp mesh is
+already excluded from shadow casting; the remaining shadow casters are the
+room, field, and goals.
+
+The measured `RDG_CollectResources`, RDG, and lighting CPU work therefore
+comes primarily from constructing and retiring render resources and passes
+for twelve independent views. The optimization order is:
+
+1. Make the packaged Development nDisplay launch the profiling baseline; an
+   editor executable is useful for iteration but not a shipping-performance
+   target.
+2. Prefer the ten-view RGB-D design and reuse each RGB view's depth attachment.
+   Do not render depth through another SceneCapture or another full view.
+3. If twenty simultaneous RGB images remain mandatory, partition ten views
+   per renderer/GPU. The existing 10-view result is about 29 Hz, while one
+   20-view renderer crosses a memory and view-state cliff.
+4. Only build a custom multiview renderer if one GPU and twenty simultaneous
+   RGB views are both hard requirements. nDisplay 5.7 does not implement the
+   render-family merge needed to remove the repeated deferred/Lumen pass
+   setup; another CVar cannot provide that batching.

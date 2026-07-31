@@ -203,18 +203,17 @@ py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
 
 The benchmark uses the production nDisplay atlas by default. Pass
 `--scene-capture` only to compare the legacy independent-capture backend.
-On the RX 7900 XTX with the production sun/atmosphere, volumetric clouds
-disabled, Lumen HWRT, hardware-ray-traced MegaLights, JPEG quality 85, and
-640x480 sensors:
+On the RX 7900 XTX with the indoor-only production level, Lumen HWRT,
+hardware-ray-traced MegaLights, JPEG quality 85, and 640x480 sensors:
 
 | 3v3 mode | Delivered rate per robot | Minimum physics/wall ratio |
 | --- | --- | ---: |
-| Six aligned RGBD pairs | ~24.2 RGB/s and 5.1 depth/s | 0.9997 |
-| Twelve RGB cameras | ~15.5 stereo messages/s (31.0 images/s) | 0.9999 |
+| Twelve RGB cameras | ~26.7 stereo messages/s (53.3 images/s) | 0.9998 |
 
-Every measured message was complete and there were no sequence gaps. These
-camera rates are below the configured 30/15 Hz because rendering is the
-limiting stage. The 12-RGB delivery rate matches the raw nDisplay render rate;
-atlas readback, JPEG, and TCP add no further frame-rate loss. The physics
-clock remains real-time; bounded vision jobs skip unavailable render/encode
-opportunities instead of accumulating latency or blocking MuJoCo.
+Every measured message was complete and there were no sequence gaps. Removing
+the Directional Light, Sky Light, Sky Atmosphere, fog, and cloud actors from
+the level improved 12-view delivery from 15.5 to 26.7 Hz. Rendering remains
+the limiting stage. Atlas readback, asynchronous JPEG, and TCP do not create a
+second throughput limit, and the physics clock remains real-time; bounded
+vision jobs skip unavailable render/encode opportunities instead of
+accumulating latency or blocking MuJoCo.

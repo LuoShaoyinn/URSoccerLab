@@ -32,19 +32,22 @@ UnrealEditor-Cmd URSoccerLab.uproject \
   -NullRHI -unattended
 ```
 
-Apply the project’s overcast sky, fog, cloud, and sun defaults:
+The production field is indoor-only: its illumination comes from the movable
+lamp lights and emissive lamp materials. Remove the complete outdoor stack
+(Directional Light, Sky Light, Sky Atmosphere, Exponential Height Fog, and
+Volumetric Cloud) and save that choice into the level with:
 
 ```bash
 UnrealEditor-Cmd URSoccerLab.uproject \
-  -run=PythonScript \
-  -Script=Tools/editor/tune_environment_lighting.py \
+  -ExecutePythonScript=Tools/editor/configure_indoor_production.py \
   -NullRHI -unattended
 ```
 
-Both operations are idempotent. Their tunable defaults live at the top of each
-script, and their reports are written under the ignored
-`Saved/Diagnostics/` directory. The resulting map, imported environment assets,
-and cloud material are tracked with Git LFS.
+The cleanup and lamp-conversion operations are idempotent. Their reports are
+written under the ignored `Saved/Diagnostics/` directory. The old
+`tune_environment_lighting.py` tool is retained as a historical tuning
+reference. It expects an atmospheric sun to already exist and is not the
+inverse of the indoor cleanup tool.
 
 ## Runtime diagnostics
 
