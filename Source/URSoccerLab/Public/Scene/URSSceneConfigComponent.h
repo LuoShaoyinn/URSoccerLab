@@ -25,6 +25,24 @@ struct FURSSpawnedRobotInfo
 	FQuat InitialRotationXyzw = FQuat::Identity;
 };
 
+USTRUCT(BlueprintType)
+struct FURSSpawnedObjectInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab|Scene")
+	FString ActorId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab|Scene")
+	FString TypeName;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab|Scene")
+	FVector InitialTranslationMeters = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab|Scene")
+	FQuat InitialRotationXyzw = FQuat::Identity;
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSceneConfigApplied);
 
 UCLASS(ClassGroup = (URSoccerLab), meta = (BlueprintSpawnableComponent))
@@ -56,6 +74,7 @@ public:
 	bool GetInitialPose(const FString& ActorId, FVector& OutTranslationMeters, FQuat& OutRotationXyzw) const;
 
 	const TMap<FString, FURSSpawnedRobotInfo>& GetSpawnedRobots() const { return SpawnedRobots; }
+	const TMap<FString, FURSSpawnedObjectInfo>& GetSpawnedObjects() const { return SpawnedObjects; }
 	const URSoccerLab::FURSSceneConfig& GetActiveConfig() const { return ActiveConfig; }
 
 	/** Returns the actor_ids this component has spawned at some point and
@@ -68,11 +87,13 @@ public:
 private:
 	URSoccerLab::FURSSceneConfig ActiveConfig;
 	TMap<FString, FURSSpawnedRobotInfo> SpawnedRobots;
+	TMap<FString, FURSSpawnedObjectInfo> SpawnedObjects;
 	TSet<FString> KnownActorIds;
 
-	void DestroyConfiguredRobots();
+	void DestroyConfiguredArticulations();
 	void DestroyActorsWithIds(const TSet<FString>& ActorIds);
 	bool SpawnOneRobot(AAMjManager* Manager, const URSoccerLab::FURSRobotSpawn& Spawn, FString& OutError);
+	bool SpawnOneObject(AAMjManager* Manager, const URSoccerLab::FURSObjectSpawn& Spawn, FString& OutError);
 	void ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId);
 	void HideImportedFieldGeoms(AMjArticulation* Articulation);
 };

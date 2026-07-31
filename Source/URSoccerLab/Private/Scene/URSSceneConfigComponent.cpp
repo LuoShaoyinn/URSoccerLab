@@ -10,6 +10,7 @@
 #include "EngineUtils.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "Scene/URSObjectTypeRegistry.h"
 
 using namespace URSoccerLab;
 
@@ -82,11 +83,15 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		Manager->NetworkManager->bEnableCameraBroadcast = false;
 	}
 
-	DestroyConfiguredRobots();
+	DestroyConfiguredArticulations();
 
 	TSet<FString> NewActorIds;
-	NewActorIds.Reserve(ActiveConfig.Robots.Num());
+	NewActorIds.Reserve(ActiveConfig.Robots.Num() + ActiveConfig.Objects.Num());
 	for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
+	{
+		NewActorIds.Add(Spawn.ActorId);
+	}
+	for (const URSoccerLab::FURSObjectSpawn& Spawn : ActiveConfig.Objects)
 	{
 		NewActorIds.Add(Spawn.ActorId);
 	}
@@ -103,6 +108,7 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 			{
 				KnownActorIds.Remove(Id);
 				SpawnedRobots.Remove(Id);
+				SpawnedObjects.Remove(Id);
 			}
 		}
 	}
@@ -121,6 +127,26 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 			{
 				KnownActorIds.Remove(Id);
 				SpawnedRobots.Remove(Id);
+				SpawnedObjects.Remove(Id);
+			}
+			return false;
+		}
+		KnownActorIds.Add(Spawn.ActorId);
+		SpawnedInThisCall.Add(Spawn.ActorId);
+	}
+	for (const URSoccerLab::FURSObjectSpawn& Spawn : ActiveConfig.Objects)
+	{
+		if (!SpawnOneObject(Manager, Spawn, OutError))
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("URSoccerLab scene config: object spawn failed for '%s', rolling back %d articulation(s)."),
+				*Spawn.ActorId, SpawnedInThisCall.Num());
+			DestroyActorsWithIds(TSet<FString>(SpawnedInThisCall));
+			for (const FString& Id : SpawnedInThisCall)
+			{
+				KnownActorIds.Remove(Id);
+				SpawnedRobots.Remove(Id);
+				SpawnedObjects.Remove(Id);
 			}
 			return false;
 		}
@@ -128,15 +154,20 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		SpawnedInThisCall.Add(Spawn.ActorId);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s)."), SpawnedRobots.Num());
+	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s), %d object(s)."),
+		SpawnedRobots.Num(), SpawnedObjects.Num());
 	OnSceneConfigApplied.Broadcast();
 	return true;
 }
 
-void UURSSceneConfigComponent::DestroyConfiguredRobots()
+void UURSSceneConfigComponent::DestroyConfiguredArticulations()
 {
 	TSet<FString> IdsToDestroy;
 	for (const URSoccerLab::FURSRobotSpawn& Spawn : ActiveConfig.Robots)
+	{
+		IdsToDestroy.Add(Spawn.ActorId);
+	}
+	for (const URSoccerLab::FURSObjectSpawn& Spawn : ActiveConfig.Objects)
 	{
 		IdsToDestroy.Add(Spawn.ActorId);
 	}
@@ -145,6 +176,60 @@ void UURSSceneConfigComponent::DestroyConfiguredRobots()
 		return;
 	}
 	DestroyActorsWithIds(IdsToDestroy);
+}
+
+bool UURSSceneConfigComponent::SpawnOneObject(
+	AAMjManager* Manager,
+	const URSoccerLab::FURSObjectSpawn& Spawn,
+	FString& OutError)
+{
+	const URSoccerLab::FURSObjectType* Type =
+		URSoccerLab::FURSObjectTypeRegistry::Get().Find(Spawn.Type);
+	if (!Type)
+	{
+		OutError = FString::Printf(TEXT("unknown object type '%s'"), *Spawn.Type);
+		return false;
+	}
+
+	const FString GeneratedClassPath = Type->BlueprintAssetPath + TEXT("_C");
+	TSubclassOf<AActor> BlueprintClass = LoadClass<AActor>(nullptr, *GeneratedClassPath);
+	if (!BlueprintClass)
+	{
+		OutError = FString::Printf(TEXT("failed to load object blueprint class %s"), *GeneratedClassPath);
+		return false;
+	}
+
+	const FVector TranslationMeters = Spawn.TranslationMeters.Get(
+		FVector(0.0, 0.0, Type->DefaultBaseHeightM));
+	const FQuat RotationXyzw = Spawn.RotationQuatXyzw.Get(FQuat::Identity);
+	double MjPos[3] = {TranslationMeters.X, TranslationMeters.Y, TranslationMeters.Z};
+	const FVector UELocation = MjUtils::MjToUEPosition(MjPos);
+	double MjQuatWxyz[4] = {RotationXyzw.W, RotationXyzw.X, RotationXyzw.Y, RotationXyzw.Z};
+	const FRotator UERotation = MjUtils::MjToUERotation(MjQuatWxyz).Rotator();
+
+	FActorSpawnParameters Params;
+	Params.Name = FName(*Spawn.ActorId);
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AMjArticulation* Articulation = Manager->GetWorld()->SpawnActor<AMjArticulation>(
+		BlueprintClass, UELocation, UERotation, Params);
+	if (!Articulation)
+	{
+		OutError = FString::Printf(TEXT("SpawnActor returned null for object '%s'"), *Spawn.ActorId);
+		return false;
+	}
+
+	Articulation->ActorId = Spawn.ActorId;
+#if WITH_EDITOR
+	Articulation->SetActorLabel(Spawn.ActorId);
+#endif
+
+	FURSSpawnedObjectInfo Info;
+	Info.ActorId = Spawn.ActorId;
+	Info.TypeName = Spawn.Type;
+	Info.InitialTranslationMeters = TranslationMeters;
+	Info.InitialRotationXyzw = RotationXyzw;
+	SpawnedObjects.Add(Spawn.ActorId, MoveTemp(Info));
+	return true;
 }
 
 void UURSSceneConfigComponent::DestroyActorsWithIds(const TSet<FString>& ActorIds)

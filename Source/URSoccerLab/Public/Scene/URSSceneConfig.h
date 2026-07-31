@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Scene/URSObjectTypeRegistry.h"
 #include "Scene/URSRobotTypeRegistry.h"
 
 namespace URSoccerLab
@@ -58,11 +59,20 @@ struct URSOCCERLAB_API FURSRobotSpawn
 	TOptional<TMap<FString, float>> JointPositionsRad;
 };
 
+struct URSOCCERLAB_API FURSObjectSpawn
+{
+	FString ActorId;
+	FString Type;
+	TOptional<FVector> TranslationMeters;
+	TOptional<FQuat> RotationQuatXyzw;
+};
+
 struct URSOCCERLAB_API FURSSceneConfig
 {
 	FString Version = TEXT("urs_scene_v1");
 	FURSVisionConfig Vision;
 	TArray<FURSRobotSpawn> Robots;
+	TArray<FURSObjectSpawn> Objects;
 };
 
 struct URSOCCERLAB_API FURSSceneConfigValidationResult

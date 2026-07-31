@@ -325,6 +325,57 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 		Out.Robots.Add(MoveTemp(Spawn));
 	}
 
+	const TArray<TSharedPtr<FJsonValue>>* ObjectsArr = nullptr;
+	if (Root->TryGetArrayField(TEXT("objects"), ObjectsArr))
+	{
+		for (const TSharedPtr<FJsonValue>& ObjectVal : *ObjectsArr)
+		{
+			const TSharedPtr<FJsonObject>* ObjectObj;
+			if (!ObjectVal.IsValid() || !ObjectVal->TryGetObject(ObjectObj) || !ObjectObj->IsValid())
+			{
+				OutError = TEXT("scene config: every object entry must be a JSON object");
+				return false;
+			}
+
+			FURSObjectSpawn Spawn;
+			if (!(*ObjectObj)->TryGetStringField(TEXT("actor_id"), Spawn.ActorId) || Spawn.ActorId.IsEmpty())
+			{
+				OutError = TEXT("scene config: object entry missing non-empty 'actor_id'");
+				return false;
+			}
+			if (!(*ObjectObj)->TryGetStringField(TEXT("type"), Spawn.Type) || Spawn.Type.IsEmpty())
+			{
+				OutError = FString::Printf(TEXT("scene config: object '%s' missing non-empty 'type'"), *Spawn.ActorId);
+				return false;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>>* TransArr = nullptr;
+			if ((*ObjectObj)->TryGetArrayField(TEXT("translation_m"), TransArr))
+			{
+				FVector Trans;
+				if (!ReadVec3(TransArr, Trans))
+				{
+					OutError = FString::Printf(TEXT("scene config: object '%s' has invalid 'translation_m' (need 3 finite numbers)"), *Spawn.ActorId);
+					return false;
+				}
+				Spawn.TranslationMeters = Trans;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>>* RotArr = nullptr;
+			if ((*ObjectObj)->TryGetArrayField(TEXT("rotation_quat_xyzw"), RotArr))
+			{
+				FQuat Rot;
+				if (!ReadQuatXyzw(RotArr, Rot))
+				{
+					OutError = FString::Printf(TEXT("scene config: object '%s' has invalid 'rotation_quat_xyzw' (need 4 finite numbers)"), *Spawn.ActorId);
+					return false;
+				}
+				Spawn.RotationQuatXyzw = Rot;
+			}
+			Out.Objects.Add(MoveTemp(Spawn));
+		}
+	}
+
 	return true;
 }
 
@@ -395,6 +446,33 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 	}
 	Root->SetArrayField(TEXT("robots"), RobotsJson);
 
+	TArray<TSharedPtr<FJsonValue>> ObjectsJson;
+	for (const FURSObjectSpawn& Spawn : In.Objects)
+	{
+		TSharedPtr<FJsonObject> ObjectObj = MakeShared<FJsonObject>();
+		ObjectObj->SetStringField(TEXT("actor_id"), Spawn.ActorId);
+		ObjectObj->SetStringField(TEXT("type"), Spawn.Type);
+		if (Spawn.TranslationMeters.IsSet())
+		{
+			const FVector& Trans = Spawn.TranslationMeters.GetValue();
+			ObjectObj->SetArrayField(TEXT("translation_m"), {
+				MakeShared<FJsonValueNumber>(Trans.X),
+				MakeShared<FJsonValueNumber>(Trans.Y),
+				MakeShared<FJsonValueNumber>(Trans.Z)});
+		}
+		if (Spawn.RotationQuatXyzw.IsSet())
+		{
+			const FQuat& Quat = Spawn.RotationQuatXyzw.GetValue();
+			ObjectObj->SetArrayField(TEXT("rotation_quat_xyzw"), {
+				MakeShared<FJsonValueNumber>(Quat.X),
+				MakeShared<FJsonValueNumber>(Quat.Y),
+				MakeShared<FJsonValueNumber>(Quat.Z),
+				MakeShared<FJsonValueNumber>(Quat.W)});
+		}
+		ObjectsJson.Add(MakeShared<FJsonValueObject>(ObjectObj));
+	}
+	Root->SetArrayField(TEXT("objects"), ObjectsJson);
+
 	FString JsonStr;
 	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
 		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&JsonStr);
@@ -418,8 +496,13 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 	FURSRobotSpawn& Robot = Config.Robots.AddDefaulted_GetRef();
 	Robot.ActorId = TEXT("robot_rp0");
 	Robot.Type = TEXT("pi_plus");
-	Robot.TranslationMeters = FVector(0.0, 0.0, 0.3762);
+	Robot.TranslationMeters = FVector(-1.0, 0.0, 0.3762);
 	Robot.RotationQuatXyzw = FQuat::Identity;
+	FURSObjectSpawn& Ball = Config.Objects.AddDefaulted_GetRef();
+	Ball.ActorId = TEXT("ball");
+	Ball.Type = TEXT("soccer_ball");
+	Ball.TranslationMeters = FVector(0.0, 0.0, 0.075);
+	Ball.RotationQuatXyzw = FQuat::Identity;
 	return Config;
 }
 
@@ -521,6 +604,37 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 					break;
 				}
 			}
+		}
+	}
+
+	for (const FURSObjectSpawn& Spawn : Config.Objects)
+	{
+		if (Spawn.ActorId.IsEmpty())
+		{
+			Result.bOk = false;
+			Result.Errors.Add(TEXT("object entry has empty actor_id"));
+			continue;
+		}
+		if (SeenActorIds.Contains(Spawn.ActorId))
+		{
+			Result.bOk = false;
+			Result.Errors.Add(FString::Printf(TEXT("duplicate actor_id '%s'"), *Spawn.ActorId));
+		}
+		SeenActorIds.Add(Spawn.ActorId);
+		if (Spawn.Type.IsEmpty() || !FURSObjectTypeRegistry::Get().Find(Spawn.Type))
+		{
+			Result.bOk = false;
+			Result.Errors.Add(FString::Printf(TEXT("object '%s' references unknown type '%s'"), *Spawn.ActorId, *Spawn.Type));
+		}
+		if (Spawn.TranslationMeters.IsSet() && !IsFiniteVec(Spawn.TranslationMeters.GetValue()))
+		{
+			Result.bOk = false;
+			Result.Errors.Add(FString::Printf(TEXT("object '%s' has non-finite translation"), *Spawn.ActorId));
+		}
+		if (Spawn.RotationQuatXyzw.IsSet() && !IsValidQuat(Spawn.RotationQuatXyzw.GetValue()))
+		{
+			Result.bOk = false;
+			Result.Errors.Add(FString::Printf(TEXT("object '%s' has invalid rotation quaternion"), *Spawn.ActorId));
 		}
 	}
 	return Result;

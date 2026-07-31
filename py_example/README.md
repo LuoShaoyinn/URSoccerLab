@@ -67,7 +67,7 @@ Each client uses TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port
 
 ## 1. Head Motion
 
-Two standing robots are at `(-1, 0)` and `(1, 0)`, facing one another. Both
+Two standing robots are at `(-1, -0.5)` and `(1, -0.5)`, facing one another. Both
 heads sweep while the legs remain uncommanded. Both left-eye videos are
 recorded.
 

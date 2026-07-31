@@ -2,8 +2,10 @@
 """Launch URS_SoccerField offscreen and capture one camera frame from each robot.
 
 Robots are placed by Config/examples/two_robots_face_to_face.json:
-  robot_rp0 at (-1, 0, 0.3762) facing +X (toward robot_rp1)
-  robot_rp1 at ( 1, 0, 0.3762) facing -X (toward robot_rp0)
+  robot_rp0 at (-1, -0.5, 0.3762) facing +X (toward robot_rp1)
+  robot_rp1 at ( 1, -0.5, 0.3762) facing -X (toward robot_rp0)
+
+The ball remains at field origin, offset 0.5 m to the side of their sightline.
 
 Output PNGs:
   py_example/out/two_robot_facing/robot_rp0_camera.png

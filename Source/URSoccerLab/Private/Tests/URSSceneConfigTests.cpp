@@ -1,6 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Scene/URSRobotTypeRegistry.h"
+#include "Scene/URSObjectTypeRegistry.h"
 #include "Scene/URSSceneConfig.h"
 
 #include "Misc/AutomationTest.h"
@@ -38,11 +39,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSSceneConfigDefaultTest,
 bool FURSSceneConfigDefaultTest::RunTest(const FString& Parameters)
 {
 	FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+	FURSObjectTypeRegistry::Get().RegisterDefaultTypes();
 
 	const FURSSceneConfig Config = FURSSceneConfigIo::MakeDefault();
 	TestEqual(TEXT("default has one robot"), Config.Robots.Num(), 1);
 	TestEqual(TEXT("default actor_id"), Config.Robots[0].ActorId, FString(TEXT("robot_rp0")));
 	TestEqual(TEXT("default type"), Config.Robots[0].Type, FString(TEXT("pi_plus")));
+	TestEqual(TEXT("default has one object"), Config.Objects.Num(), 1);
+	TestEqual(TEXT("default object actor_id"), Config.Objects[0].ActorId, FString(TEXT("ball")));
+	TestEqual(TEXT("default object type"), Config.Objects[0].Type, FString(TEXT("soccer_ball")));
 	TestTrue(TEXT("default translation set"), Config.Robots[0].TranslationMeters.IsSet());
 	TestEqual(TEXT("default translation Z"), Config.Robots[0].TranslationMeters.GetValue().Z, 0.3762);
 	TestTrue(TEXT("default rotation set"), Config.Robots[0].RotationQuatXyzw.IsSet());
@@ -64,6 +69,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSSceneConfigRoundTripTest,
 bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 {
 	FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+	FURSObjectTypeRegistry::Get().RegisterDefaultTypes();
 
 	FURSSceneConfig Original = FURSSceneConfigIo::MakeDefault();
 	Original.Vision.Mode = EURSVisionMode::Rgbd;
@@ -81,6 +87,10 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("load error empty"), Error.IsEmpty());
 
 	TestEqual(TEXT("round-trip robot count"), Loaded.Robots.Num(), Original.Robots.Num());
+	TestEqual(TEXT("round-trip object count"), Loaded.Objects.Num(), Original.Objects.Num());
+	TestEqual(TEXT("round-trip object actor_id"), Loaded.Objects[0].ActorId, Original.Objects[0].ActorId);
+	TestTrue(TEXT("round-trip object translation present"), Loaded.Objects[0].TranslationMeters.IsSet());
+	TestEqual(TEXT("round-trip object translation Z"), Loaded.Objects[0].TranslationMeters.GetValue().Z, 0.075);
 	TestEqual(TEXT("round-trip actor_id"), Loaded.Robots[0].ActorId, Original.Robots[0].ActorId);
 	TestEqual(TEXT("round-trip type"), Loaded.Robots[0].Type, Original.Robots[0].Type);
 	TestTrue(TEXT("round-trip translation present"), Loaded.Robots[0].TranslationMeters.IsSet());
@@ -162,6 +172,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSSceneConfigValidateTest,
 bool FURSSceneConfigValidateTest::RunTest(const FString& Parameters)
 {
 	FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+	FURSObjectTypeRegistry::Get().RegisterDefaultTypes();
 
 	FURSSceneConfig Config;
 	FURSRobotSpawn& A = Config.Robots.	AddDefaulted_GetRef();
@@ -201,6 +212,16 @@ bool FURSSceneConfigValidateTest::RunTest(const FString& Parameters)
 		Result.Errors.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("rgb.rate_hz")); }));
 	TestTrue(TEXT("maximum depth error reported"),
 		Result.Errors.ContainsByPredicate([](const FString& E) { return E.Contains(TEXT("max_depth_m")); }));
+
+	Config = FURSSceneConfigIo::MakeDefault();
+	Config.Objects[0].ActorId = Config.Robots[0].ActorId;
+	Result = FURSSceneConfigIo::Validate(Config);
+	TestFalse(TEXT("object/robot duplicate actor_id invalid"), Result.bOk);
+
+	Config = FURSSceneConfigIo::MakeDefault();
+	Config.Objects[0].Type = TEXT("does_not_exist");
+	Result = FURSSceneConfigIo::Validate(Config);
+	TestFalse(TEXT("unknown object type invalid"), Result.bOk);
 	return true;
 }
 
@@ -223,6 +244,24 @@ bool FURSRobotTypeRegistryTest::RunTest(const FString& Parameters)
 	Reg.RegisterDefaultTypes();
 	const FURSRobotType* PiPlusAgain = Reg.Find(TEXT("pi_plus"));
 	TestNotNull(TEXT("pi_plus still registered after re-register"), PiPlusAgain);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSObjectTypeRegistryTest,
+	"URSoccerLab.Scene.Registry.DefaultObjectTypesRegistered",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FURSObjectTypeRegistryTest::RunTest(const FString& Parameters)
+{
+	FURSObjectTypeRegistry& Reg = FURSObjectTypeRegistry::Get();
+	Reg.RegisterDefaultTypes();
+
+	const FURSObjectType* Ball = Reg.Find(TEXT("soccer_ball"));
+	TestNotNull(TEXT("soccer_ball registered"), Ball);
+	TestTrue(TEXT("soccer_ball blueprint path set"), !Ball->BlueprintAssetPath.IsEmpty());
+	TestEqual(TEXT("soccer_ball default base height"), Ball->DefaultBaseHeightM, 0.075);
+
+	TestNull(TEXT("unknown object type returns null"), Reg.Find(TEXT("nope")));
 	return true;
 }
 

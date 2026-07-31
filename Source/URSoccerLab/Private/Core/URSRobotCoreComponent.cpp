@@ -175,6 +175,7 @@ void UURSRobotCoreComponent::TryInitializeCompiledScene()
 	}
 
 	InitializeConfiguredRobotPoses();
+	InitializeConfiguredObjectPoses();
 	OnRobotsChanged.Broadcast();
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized %d compiled robot endpoint(s)."), EndpointCount);
 }
@@ -201,6 +202,84 @@ void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
 			UE_LOG(LogTemp, Warning, TEXT("[URS Core] Failed to initialize '%s' from scene config: %s"),
 				*ActorId, *PoseResult.Error);
 		}
+	}
+}
+
+void UURSRobotCoreComponent::InitializeConfiguredObjectPoses()
+{
+	AAMjManager* ManagerPtr = Manager.Get();
+	UURSSceneConfigComponent* SceneComp =
+		Cast<UURSSceneConfigComponent>(SceneConfigComp.Get());
+	if (!ManagerPtr || !ManagerPtr->PhysicsEngine || !SceneComp)
+	{
+		return;
+	}
+
+	mjModel* Model = ManagerPtr->PhysicsEngine->GetModel();
+	mjData* Data = ManagerPtr->PhysicsEngine->GetData();
+	if (!Model || !Data)
+	{
+		return;
+	}
+
+	TMap<FString, AMjArticulation*> Articulations;
+	for (AMjArticulation* Articulation : ManagerPtr->GetAllArticulations())
+	{
+		if (Articulation && !Articulation->ActorId.IsEmpty())
+		{
+			Articulations.Add(Articulation->ActorId, Articulation);
+		}
+	}
+
+	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+	bool bChanged = false;
+	for (const TPair<FString, FURSSpawnedObjectInfo>& Pair : SceneComp->GetSpawnedObjects())
+	{
+		AMjArticulation* const* Found = Articulations.Find(Pair.Key);
+		if (!Found || !*Found)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[URS Core] Object '%s' not found in compiled scene."), *Pair.Key);
+			continue;
+		}
+
+		int32 FreeJointId = -1;
+		for (UMjJoint* Joint : (*Found)->GetJoints())
+		{
+			const int32 JointId = Joint ? Joint->GetMjID() : -1;
+			if (JointId >= 0 && JointId < Model->njnt
+				&& Model->jnt_type[JointId] == mjJNT_FREE)
+			{
+				FreeJointId = JointId;
+				break;
+			}
+		}
+		if (FreeJointId < 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[URS Core] Object '%s' has no free root joint."), *Pair.Key);
+			continue;
+		}
+
+		const FURSSpawnedObjectInfo& Info = Pair.Value;
+		FQuat Rotation = Info.InitialRotationXyzw;
+		Rotation.Normalize();
+		const int32 QposAdr = Model->jnt_qposadr[FreeJointId];
+		Data->qpos[QposAdr + 0] = Info.InitialTranslationMeters.X;
+		Data->qpos[QposAdr + 1] = Info.InitialTranslationMeters.Y;
+		Data->qpos[QposAdr + 2] = Info.InitialTranslationMeters.Z;
+		Data->qpos[QposAdr + 3] = Rotation.W;
+		Data->qpos[QposAdr + 4] = Rotation.X;
+		Data->qpos[QposAdr + 5] = Rotation.Y;
+		Data->qpos[QposAdr + 6] = Rotation.Z;
+		const int32 DofAdr = Model->jnt_dofadr[FreeJointId];
+		for (int32 Index = 0; Index < 6; ++Index)
+		{
+			Data->qvel[DofAdr + Index] = 0.0;
+		}
+		bChanged = true;
+	}
+	if (bChanged)
+	{
+		mj_forward(Model, Data);
 	}
 }
 

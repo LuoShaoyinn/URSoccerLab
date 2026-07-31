@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 EXPECTED_ASSETS = [
     ("Blueprint", "Content/URSoccerLab/Robots/pi_plus/pi_plus.uasset"),
+    ("Soccer ball", "Content/URSoccerLab/Objects/soccer_ball/soccer_ball.uasset"),
     ("Level", "Content/Levels/URS_SoccerField.umap"),
     ("Field mesh", "Content/URSoccerLab/Scenes/SoccerField/Field/StaticMeshes/Plane.uasset"),
     ("Environment mesh", "Content/URSoccerLab/Scenes/SoccerField/Environment/StaticMeshes/Material2.uasset"),
@@ -26,11 +27,13 @@ EXPECTED_ASSETS = [
 
 EXPECTED_UE_PATHS = [
     "/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus",
+    "/Game/URSoccerLab/Objects/soccer_ball/soccer_ball.soccer_ball",
     "/Game/Levels/URS_SoccerField",
     "/Game/URSoccerLab/Scenes/SoccerField/Physics/field_physics.field_physics",
 ]
 
 ROBOT_SOURCE = ROOT / "Assets/Robots/pi_plus/pi_plus.xml"
+BALL_SOURCE = ROOT / "Assets/Objects/soccer_ball/soccer_ball.xml"
 
 
 def check_files() -> list[str]:
@@ -97,6 +100,26 @@ def check_robot_source() -> list[str]:
     return errors
 
 
+def check_ball_source() -> list[str]:
+    errors = []
+    if not BALL_SOURCE.is_file():
+        return [f"Ball MJCF: file not found at {BALL_SOURCE.relative_to(ROOT)}"]
+    root = ET.parse(BALL_SOURCE).getroot()
+    frames = [
+        frame.get("name", "") for frame in root.iter("frame")
+        if frame.get("name", "").startswith("visual__")
+    ]
+    if frames != ["visual__soccer_ball"]:
+        errors.append(f"Ball MJCF has unexpected visual frames: {frames}")
+    visual = BALL_SOURCE.parent / "meshes/soccer_ball.glb"
+    if not visual.is_file():
+        errors.append(f"Ball visual: file not found at {visual.relative_to(ROOT)}")
+    geoms = [geom for geom in root.iter("geom") if geom.get("name") == "ball"]
+    if len(geoms) != 1 or geoms[0].get("type") != "sphere" or geoms[0].get("size") != "0.075":
+        errors.append("Ball collision must be one sphere with radius 0.075 m")
+    return errors
+
+
 def check_ue_assets() -> list[str]:
     try:
         import unreal
@@ -111,7 +134,7 @@ def check_ue_assets() -> list[str]:
 
 
 def main() -> int:
-    errors = check_files() + check_robot_source() + check_ue_assets()
+    errors = check_files() + check_robot_source() + check_ball_source() + check_ue_assets()
 
     if errors:
         for e in errors:

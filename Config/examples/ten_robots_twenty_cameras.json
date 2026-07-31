@@ -18,5 +18,8 @@
     {"actor_id":"robot_rp07","type":"pi_plus","translation_m":[0.0,2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,1.0,0.0]},
     {"actor_id":"robot_rp08","type":"pi_plus","translation_m":[1.0,2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,1.0,0.0]},
     {"actor_id":"robot_rp09","type":"pi_plus","translation_m":[2.0,2.0,0.3762],"rotation_quat_xyzw":[0.0,0.0,1.0,0.0]}
+  ],
+  "objects": [
+    {"actor_id":"ball","type":"soccer_ball","translation_m":[0.0,0.0,0.075],"rotation_quat_xyzw":[0.0,0.0,0.0,1.0]}
   ]
 }

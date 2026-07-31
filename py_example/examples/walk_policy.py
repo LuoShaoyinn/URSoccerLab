@@ -3,7 +3,7 @@
 
 The simulator must be running with
 ``Config/examples/walker_and_observer.json``. Robot ``robot_rp0`` walks from
-``(0, 0)`` along ``+X``; ``robot_rp1`` stands at ``(0, 3)`` facing ``-Y``.
+``(-1, 0)`` along ``+X``; ``robot_rp1`` stands at ``(0, 3)`` facing ``-Y``.
 This external client reads TCP state, sends named motor position targets only
 to the walker, and does not use the admin pose API.
 

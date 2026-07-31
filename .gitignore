@@ -98,5 +98,7 @@ env/
 # Baked robot assets (tracked with Git LFS)
 !/Content/URSoccerLab/Robots/
 !/Content/URSoccerLab/Robots/**
+!/Content/URSoccerLab/Objects/
+!/Content/URSoccerLab/Objects/**
 
 refs/

@@ -7,6 +7,7 @@
 #include "Misc/Parse.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "Scene/URSSceneConfigComponent.h"
+#include "Scene/URSObjectTypeRegistry.h"
 #include "Scene/URSRobotTypeRegistry.h"
 #include "Core/URSRobotCoreComponent.h"
 #include "Transport/URSTcpTransportComponent.h"
@@ -22,6 +23,7 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	Super::InitGame(MapName, Options, ErrorMessage);
 
 	URSoccerLab::FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+	URSoccerLab::FURSObjectTypeRegistry::Get().RegisterDefaultTypes();
 
 	UWorld* World = GetWorld();
 	if (!World)
@@ -57,8 +59,8 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 			*SceneConfigOverride);
 	}
 
-	// Spawn robots BEFORE any BeginPlay. AAMjManager::BeginPlay compiles the
-	// MuJoCo model; if the robots exist in the world at that point, they are
+	// Spawn robots and dynamic objects BEFORE any BeginPlay. AAMjManager::BeginPlay compiles the
+	// MuJoCo model; if the articulations exist in the world at that point, they are
 	// discovered via TActorIterator and enter the compiled mjModel.
 	FString ApplyError;
 	if (!SceneComp->ApplyConfig(ApplyError))
@@ -67,8 +69,9 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("URSoccerGameMode: spawned %d robot(s) from scene config before BeginPlay."),
-			SceneComp->GetSpawnedRobots().Num());
+		UE_LOG(LogTemp, Log,
+			TEXT("URSoccerGameMode: spawned %d robot(s) and %d object(s) from scene config before BeginPlay."),
+			SceneComp->GetSpawnedRobots().Num(), SceneComp->GetSpawnedObjects().Num());
 	}
 
 	if (!Manager->FindComponentByClass<UURSRobotCoreComponent>())

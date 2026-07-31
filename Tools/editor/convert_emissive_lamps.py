@@ -9,8 +9,9 @@ mesh volume.
 
 Run inside Unreal Editor:
 
-    UnrealEditor-Cmd URSoccerLab.uproject -run=PythonScript \
-      -Script=Tools/editor/convert_emissive_lamps.py -NullRHI -unattended
+    UnrealEditor-Cmd URSoccerLab.uproject \
+      -ExecutePythonScript="$PWD/Tools/editor/convert_emissive_lamps.py" \
+      -NullRHI -unattended
 
 The operation is idempotent: previously generated actors are removed first.
 """

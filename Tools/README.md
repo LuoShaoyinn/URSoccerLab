@@ -27,8 +27,7 @@ volume and save the field level:
 
 ```bash
 UnrealEditor-Cmd URSoccerLab.uproject \
-  -run=PythonScript \
-  -Script=Tools/editor/convert_emissive_lamps.py \
+  -ExecutePythonScript="$PWD/Tools/editor/convert_emissive_lamps.py" \
   -NullRHI -unattended
 ```
 
@@ -100,7 +99,7 @@ Import or refresh the baked Unreal assets with:
 
 ```bash
 UnrealEditor-Cmd URSoccerLab.uproject \
-  -ExecutePythonScript=Tools/editor/import_robot.py \
+  -ExecutePythonScript="$PWD/Tools/editor/import_robot.py" \
   -NullRHI -Unattended -NoSplash -DDC-ForceMemoryCache
 ```
 
@@ -111,3 +110,19 @@ The importer places the generated Blueprint at
 ```bash
 python3 Tools/editor/validate_baked_assets.py
 ```
+
+## Dynamic object assets
+
+Dynamic non-robot articulations follow `Assets/Objects/README.md`. Refresh the
+soccer-ball Blueprint and its embedded GLB materials with:
+
+```bash
+UnrealEditor-Cmd URSoccerLab.uproject \
+  -ExecutePythonScript="$PWD/Tools/editor/import_object.py" \
+  -NullRHI -Unattended -NoSplash -DDC-ForceMemoryCache
+```
+
+The object bake is intentionally clean-only. Before rebuilding an existing
+object, move `Content/URSoccerLab/Objects/<object-type>/` outside the project
+(for example into `/tmp`), then launch the command. This avoids Unreal's unsafe
+in-process deletion of a loaded Blueprint and leaves a recoverable backup.
