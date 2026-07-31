@@ -139,3 +139,14 @@ Start with [the documentation index](docs/README.md). Asset-specific
 conventions live beside their sources in
 [Assets/Robots/README.md](Assets/Robots/README.md) and
 [Assets/Objects/README.md](Assets/Objects/README.md).
+
+## License
+
+Original URSoccerLab work is available under the
+[Apache License, Version 2.0](LICENSE). Please retain the attribution in
+[NOTICE](NOTICE) when redistributing it.
+
+Unreal Engine, the forked UnrealRoboticsLab plugin, bundled libraries, and
+imported assets may have separate terms. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the license files shipped
+with those components.
