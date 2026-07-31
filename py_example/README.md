@@ -179,8 +179,10 @@ This inspection example uses ONNX Runtime on CPU; the deployment code under
 The vision-control example centers the ball with the head, then runs the
 walking policy while continuously tracking the ball from the left eye. It
 uses lateral velocity to remove horizontal ball displacement and reserves a
-smaller yaw correction for heading. Camera inference runs on a
-latest-frame-only worker, independent of the 50 Hz policy loop:
+closed-loop PID for world-yaw control. The PID consumes the simulated IMU
+orientation and angular velocity and defaults to a zero-radian heading. Camera
+inference runs on a latest-frame-only worker, independent of the 50 Hz policy
+loop:
 
 ```bash
 uv sync --extra vision --extra torch_rocm

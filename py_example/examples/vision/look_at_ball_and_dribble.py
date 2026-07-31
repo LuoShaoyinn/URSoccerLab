@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import queue
 import sys
@@ -60,6 +61,12 @@ class VisionResult:
     sim_time: float
     detections: list[dict[str, object]]
     inference_ms: float
+
+
+def yaw_from_wxyz(quaternion: list[float]) -> float:
+    """Return world-frame yaw from the simulator's ``[w, x, y, z]`` IMU pose."""
+    w, x, y, z = (float(value) for value in quaternion)
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 class VisionWorker:
@@ -210,22 +217,21 @@ def main() -> int:
     parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--seek-timeout", type=float, default=8.0)
     parser.add_argument("--duration", type=float, default=1.0, help="dribbling duration")
-    parser.add_argument("--vx", type=float, default=0.25)
+    parser.add_argument("--vx", type=float, default=0.3)
     parser.add_argument(
         "--vy-kp",
         type=float,
-        default=0.35,
+        default=0.55,
         help="lateral velocity gain for horizontal ball displacement",
     )
-    parser.add_argument("--max-vy", type=float, default=0.2, help="maximum |vy| in m/s")
+    parser.add_argument("--max-vy", type=float, default=0.4, help="maximum |vy| in m/s")
+    parser.add_argument("--yaw-target", type=float, default=0.0, help="world yaw in rad")
+    parser.add_argument("--yaw-kp", type=float, default=1.2)
+    parser.add_argument("--yaw-ki", type=float, default=0.08)
+    parser.add_argument("--yaw-kd", type=float, default=0.15)
+    parser.add_argument("--yaw-integral-limit", type=float, default=0.5)
     parser.add_argument(
-        "--yaw-kp",
-        type=float,
-        default=0.15,
-        help="body yaw-rate gain after lateral correction",
-    )
-    parser.add_argument(
-        "--max-yaw-rate", type=float, default=0.15, help="maximum body |yaw rate|"
+        "--max-yaw-rate", type=float, default=0.5, help="maximum body |yaw rate|"
     )
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--head-kp", type=float, default=0.8)
@@ -269,6 +275,9 @@ def main() -> int:
     inference_ms_total = 0.0
     last_vision_sim_time: float | None = None
     latest_command = np.zeros(3, dtype=np.float32)
+    latest_base_yaw = 0.0
+    latest_yaw_error = 0.0
+    yaw_integral = 0.0
 
     def pump(capture: bool = True) -> None:
         nonlocal latest_state, body_actuators, head_yaw_actuator, head_pitch_actuator
@@ -406,6 +415,9 @@ def main() -> int:
                     "head_yaw": head_yaw,
                     "head_pitch": head_pitch,
                     "command": latest_command.tolist(),
+                    "base_yaw": latest_base_yaw,
+                    "yaw_error": latest_yaw_error,
+                    "base_pos": latest_state["base"]["pos"] if latest_state else None,
                     "ball": ball,
                 }
             )
@@ -505,6 +517,7 @@ def main() -> int:
             raise RuntimeError("ball was not centered before --seek-timeout")
 
         next_policy = time.monotonic()
+        last_policy_time = next_policy
         while time.monotonic() - dribble_started < args.duration:
             pump()
             pump_observer()
@@ -518,25 +531,45 @@ def main() -> int:
                     print(f"[control] stopping on fall guard: z={base['pos'][2]:.2f} up={up:.2f}")
                     break
             if latest_state is not None and now >= next_policy:
+                policy_dt = float(np.clip(now - last_policy_time, 1.0 / 200.0, 0.1))
+                last_policy_time = now
                 ball_recent = now - latest_ball_time < 0.75
                 # Horizontal image error alone approaches zero once the head
                 # tracks the ball. Include head yaw to retain the actual body-
                 # relative direction, and correct it primarily with lateral
                 # motion instead of forcing the robot to turn in place.
                 steering_error = ball_error_x - head_yaw
+                base = latest_state["base"]
+                latest_base_yaw = yaw_from_wxyz(base["quat"])
+                latest_yaw_error = math.atan2(
+                    math.sin(args.yaw_target - latest_base_yaw),
+                    math.cos(args.yaw_target - latest_base_yaw),
+                )
+                yaw_integral = float(
+                    np.clip(
+                        yaw_integral + latest_yaw_error * policy_dt,
+                        -args.yaw_integral_limit,
+                        args.yaw_integral_limit,
+                    )
+                )
+                angular_velocity = base.get("vel", [0.0] * 6)
+                measured_yaw_rate = float(angular_velocity[5])
+                yaw_command = np.clip(
+                    args.yaw_kp * latest_yaw_error
+                    + args.yaw_ki * yaw_integral
+                    - args.yaw_kd * measured_yaw_rate,
+                    -args.max_yaw_rate,
+                    args.max_yaw_rate,
+                )
                 command = np.asarray(
                     [
                         args.vx if ball_recent else 0.0,
+                        # The locomotion policy uses +Y to move left. Camera-
+                        # right is a positive image error, hence the minus.
                         np.clip(-args.vy_kp * steering_error, -args.max_vy, args.max_vy)
                         if ball_recent
                         else 0.0,
-                        np.clip(
-                            -args.yaw_kp * steering_error,
-                            -args.max_yaw_rate,
-                            args.max_yaw_rate,
-                        )
-                        if ball_recent
-                        else 0.0,
+                        yaw_command,
                     ],
                     dtype=np.float32,
                 )
@@ -564,6 +597,10 @@ def main() -> int:
         end_x = float(latest_state["base"]["pos"][0]) if latest_state else start_x
         mean_ms = inference_ms_total / inference_count if inference_count else float("nan")
         print(f"[control] forward displacement: {end_x - start_x:+.3f} m")
+        print(
+            f"[control] final yaw: {math.degrees(latest_base_yaw):+.2f} deg "
+            f"(error {math.degrees(latest_yaw_error):+.2f} deg)"
+        )
         print(f"[vision] {inference_count} frames, mean inference {mean_ms:.2f} ms")
         write_video(raw_frames, args.video, args.video_fps)
         write_video(annotated_frames, args.annotated_video, args.video_fps)
