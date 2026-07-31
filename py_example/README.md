@@ -150,11 +150,63 @@ The launcher uses Unreal's persistent Zen derived-data cache by default so
 compiled shaders are reused. `--force-memory-ddc` is available only as a
 recovery option; it discards compiled shader data when Unreal exits.
 
+## YOLO Left-Eye Inference
+
+Install the optional CPU ONNX runtime, start a scene, and run the trained
+YOLO26 checkpoint on camera index 0 (the robot's left eye):
+
+```bash
+uv sync --extra vision
+uv run --extra vision python examples/vision/yolo_left_eye.py \
+  --port 10000 --out out/yolo_left_eye
+```
+
+For repeatable inference on an existing capture:
+
+```bash
+uv run --extra vision python examples/vision/yolo_left_eye.py \
+  --image out/vision_smoke/camera.png --out out/yolo_saved_frame
+```
+
+The example defaults to `refs/vision/models/yolo26/yolo26s_best.onnx` and
+writes `left_eye.png`, `annotated.png`, and `detections.json`. Use
+`--model ../refs/vision/models/yolo26/yolo26n_best.onnx` for the nano model.
+This inspection example uses ONNX Runtime on CPU; the deployment code under
+`refs/vision` converts the same checkpoint to TensorRT.
+
+### Look at the ball and dribble
+
+The vision-control example centers the ball with the head, then runs the
+walking policy while continuously tracking the ball from the left eye. Camera
+inference runs on a latest-frame-only worker, independent of the 50 Hz policy
+loop:
+
+```bash
+uv sync --extra vision --extra torch_rocm
+uv run --extra vision --extra torch_rocm \
+  python examples/vision/look_at_ball_and_dribble.py \
+  --vision-backend auto --duration 1
+```
+
+Use `Config/examples/walker_and_observer.json`. On ROCm, `auto` uses the
+temporary fixed-resolution TorchScript cache at
+`out/models/yolo26n_best_736x1280.torchscript.pt`; otherwise it falls back to
+the nano ONNX checkpoint on CPU. This cache was traced from the fixed ONNX
+graph and is intentionally replaceable when the original training `.pt`
+checkpoint becomes available. The example writes raw and annotated videos plus
+a JSON detection/control trace under `out/dribble/`.
+
+The included walking policy was trained against older Pi dynamics. The default
+dribble interval is deliberately short and the example stops on a base-height
+or tilt guard; longer vision tracking works, but longer gait runs should wait
+for a policy matched to the current MJCF.
+
 ## Layout
 
 ```text
 src/ursoccerlab/     reusable TCP, camera, and video APIs
 examples/            standing, head-motion, walking, and vision clients
+examples/vision/     trained-checkpoint inference examples
 tests/               protocol and camera parser tests
 out/                 ignored local captures
 ```

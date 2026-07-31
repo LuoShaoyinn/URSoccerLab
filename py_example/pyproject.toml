@@ -19,6 +19,9 @@ build-backend = "uv_build"
 module-name = "ursoccerlab"
 
 [project.optional-dependencies]
+vision = [
+    "onnxruntime>=1.24.0",
+]
 torch_cpu = [
     "torch>=2.10.0",
 ]
