@@ -76,6 +76,16 @@ uv run --project py_example python \
   --expected-cameras 2 --duration 15
 ```
 
+Launch a complete scene with the production nDisplay atlas backend:
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config Config/examples/six_robots_stereo_rgb.json
+```
+
+Use `benchmark_match_vision.py` for an end-to-end multi-robot measurement. It
+uses the same generated nDisplay atlas and connects one client per robot.
+
 ## Robot assets
 
 The source-of-truth robot layout and MJCF naming rules are documented in

@@ -31,6 +31,7 @@ from ursoccerlab.tcp import (  # noqa: E402
     TYPE_RGB,
     parse_image_message,
 )
+from ndisplay_config import write_ndisplay_config
 
 
 DEFAULT_UE = Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
@@ -156,6 +157,11 @@ def main() -> int:
     parser.add_argument("--timeout-sec", type=float, default=60.0)
     parser.add_argument("--min-physics-realtime-ratio", type=float, default=0.90)
     parser.add_argument(
+        "--scene-capture",
+        action="store_true",
+        help="Use the legacy independent SceneCapture backend instead of production nDisplay.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=ROOT / "Saved/Benchmarks/match_vision.json",
@@ -174,19 +180,46 @@ def main() -> int:
     mode = config.get("vision", {}).get("mode", "stereo_rgb")
     expected_rgb_entries = 2 if mode == "stereo_rgb" else 1
     expect_depth = mode == "rgbd"
+    rgb_view_count = len(robots) * expected_rgb_entries
 
     log_path = ROOT / "Saved/Logs/URS_MatchVisionBenchmark.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     ready = threading.Event()
+    render_args: list[str]
+    if args.scene_capture:
+        render_args = ["-ForceRes", "-ResX=64", "-ResY=64"]
+    else:
+        ndisplay_path = (
+            ROOT / "Saved/Generated/NDisplay"
+            / f"match_{rgb_view_count}_rgb.ndisplay"
+        )
+        atlas_width, atlas_height = write_ndisplay_config(
+            rgb_view_count, ndisplay_path
+        )
+        render_args = [
+            "-ForceRes",
+            f"-ResX={atlas_width}",
+            f"-ResY={atlas_height}",
+            "-dc_cluster",
+            "-dc_dev_mono",
+            f"-dc_cfg={ndisplay_path}",
+            "-dc_node=node_0",
+            "-URSNDisplayCameras",
+            f"-URSNDisplayCameraCount={rgb_view_count}",
+            "-ExecCmds=MjCamera.AutoReadback 0",
+        ]
+        if mode == "rgbd":
+            render_args.append(
+                f"-URSNDisplayCameraName={config['vision'].get('left_camera', 'left_eye')}"
+            )
+
     command = [
         str(args.ue),
         str(PROJECT),
         MAP_PATH,
         "-game",
         "-RenderOffscreen",
-        "-ForceRes",
-        "-ResX=64",
-        "-ResY=64",
+        *render_args,
         "-unattended",
         "-nop4",
         "-nosplash",
@@ -263,6 +296,7 @@ def main() -> int:
         result = {
             "scene_config": str(scene_path),
             "mode": mode,
+            "render_backend": "scene_capture" if args.scene_capture else "ndisplay",
             "robot_count": len(robots),
             "rgb_stream_count": len(robots) * expected_rgb_entries,
             "depth_stream_count": len(robots) if expect_depth else 0,

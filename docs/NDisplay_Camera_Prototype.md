@@ -1,8 +1,8 @@
-# nDisplay camera atlas prototype
+# nDisplay camera atlas renderer
 
-This profiling branch contains an opt-in nDisplay backend for four URLab
-MuJoCo cameras. It renders the cameras into one 2x2, 1280x960 application
-atlas and disables their duplicate `SceneCaptureComponent2D` updates.
+URSoccerLab's production RGB backend renders URLab MuJoCo cameras into one
+nDisplay atlas and disables their duplicate `SceneCaptureComponent2D`
+updates. A four-camera configuration remains useful for profiling.
 
 The adapter belongs to URSoccerLab rather than URLab. URLab owns generic
 robot-camera transforms and capture APIs; nDisplay is a heavyweight,
@@ -43,9 +43,26 @@ not Isaac Sim-style single-view-family batching: UE 5.7 marks nDisplay's
 `RenderFamilyGroup` viewport merge mode as not implemented. nDisplay still
 renders the four viewports independently and composites them into one output.
 
-The prototype does not yet route atlas pixels into the URSoccerLab TCP camera
-protocol. Its purpose is to validate rendering behavior and performance before
-designing atlas readback, GPU compression, and per-camera packet metadata.
+The production binder converts the composited atlas to BGRA8, queues one
+bounded asynchronous GPU readback, and slices the completed atlas by viewport
+rectangle. The TCP transport packages those named slices using the normal
+versioned RGB message. It never waits for a GPU fence.
+
+Launch a normal production scene with:
+
+```bash
+py_example/.venv/bin/python Tools/runtime/run_scene.py \
+  --scene-config Config/examples/six_robots_stereo_rgb.json
+```
+
+The launcher and `benchmark_match_vision.py` generate the required atlas under
+`Saved/Generated/NDisplay` from the robot count and vision mode. The benchmark
+offers `--scene-capture` only for a legacy comparison.
+
+In stereo-RGB mode, both eyes are nDisplay viewports. In RGBD mode, the left
+RGB eye is an nDisplay viewport and the right depth sensor remains an
+independently scheduled depth-only SceneCapture. This avoids rendering a
+second lit RGB view solely to obtain depth.
 
 ## Temporal upscaling experiment
 
@@ -324,5 +341,22 @@ Two lifecycle defects found during profiling have since been fixed:
 - TCP state publishing reads URLab's coherent render snapshot instead of live
   `mjData`.
 
-The six-RGBD and twelve-RGB full-match benchmarks now shut down cleanly while
-MuJoCo continues at 0.983x and 0.9997x wall time respectively.
+The earlier independent-SceneCapture benchmarks shut down cleanly while
+MuJoCo continued at 0.983x and 0.9997x wall time respectively; the production
+atlas results below supersede their camera-throughput figures.
+
+### Production atlas delivery
+
+The production readback and TCP path was validated on the RX 7900 XTX with
+the tracked sun/atmosphere, Lumen HWRT, MegaLights HWRT, JPEG quality 85, and
+640x480 sensors:
+
+| 3v3 mode | Delivered rate per sensor | Minimum physics/wall ratio |
+| --- | ---: | ---: |
+| 12 RGB views | 13.6 RGB/s | 0.9997 |
+| 6 RGBD pairs | 21.5 RGB/s, 5.0 depth/s | 0.9996 |
+
+All messages were complete and had zero sequence gaps. The 12-RGB rate exactly
+matched the raw 12-view render cadence, showing that atlas readback, JPEG, and
+TCP no longer reduce render throughput. The remaining 12-view limit is the
+production render workload itself.

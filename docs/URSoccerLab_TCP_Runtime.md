@@ -184,6 +184,13 @@ runtime C++ change, together with the TCP smoke clients in `Tools/runtime/`.
 configured robot, drains every state and vision stream, checks complete
 messages, and compares MuJoCo simulation-time advance with wall time:
 
+For a normal production run without the benchmark clients:
+
+```bash
+py_example/.venv/bin/python Tools/runtime/run_scene.py \
+  --scene-config Config/examples/six_robots_stereo_rgb.json
+```
+
 ```bash
 py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_rgbd.json \
@@ -194,16 +201,19 @@ py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
   --duration-sec 12 --output Saved/Benchmarks/six_stereo_rgb.json
 ```
 
+The benchmark uses the production nDisplay atlas by default. Pass
+`--scene-capture` only to compare the legacy independent-capture backend.
 On the RX 7900 XTX with the production sun/atmosphere, Lumen HWRT,
 hardware-ray-traced MegaLights, JPEG quality 85, and 640x480 sensors:
 
 | 3v3 mode | Delivered rate per robot | Minimum physics/wall ratio |
 | --- | --- | ---: |
-| Six aligned RGBD pairs | ~9.0 RGB/s and 7.25–7.75 depth/s | 0.983 |
-| Twelve RGB cameras | ~7.17 stereo messages/s (14.33 images/s) | 0.9997 |
+| Six aligned RGBD pairs | ~21.5 RGB/s and 5.0 depth/s | 0.9996 |
+| Twelve RGB cameras | ~13.6 stereo messages/s (27.2 images/s) | 0.9997 |
 
 Every measured message was complete and there were no sequence gaps. These
-camera rates are below the configured 30/15 Hz because independent
-`SceneCaptureComponent2D` rendering is the limiting stage. The physics clock
-remains real-time; bounded vision jobs skip unavailable render/encode
+camera rates are below the configured 30/15 Hz because rendering is the
+limiting stage. The 12-RGB delivery rate matches the raw nDisplay render rate;
+atlas readback, JPEG, and TCP add no further frame-rate loss. The physics
+clock remains real-time; bounded vision jobs skip unavailable render/encode
 opportunities instead of accumulating latency or blocking MuJoCo.

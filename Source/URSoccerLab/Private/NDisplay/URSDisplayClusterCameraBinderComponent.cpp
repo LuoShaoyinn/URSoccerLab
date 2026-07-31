@@ -3,7 +3,10 @@
 #include "Camera/CameraComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Containers/DisplayClusterProjectionCameraPolicySettings.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "EngineUtils.h"
+#include "Framework/Application/SlateApplication.h"
 #include "IDisplayCluster.h"
 #include "IDisplayClusterProjection.h"
 #include "Misc/CommandLine.h"
@@ -14,8 +17,26 @@
 #include "Render/IDisplayClusterRenderManager.h"
 #include "Render/Viewport/IDisplayClusterViewport.h"
 #include "Render/Viewport/IDisplayClusterViewportManager.h"
+#include "RenderGraphBuilder.h"
+#include "RenderGraphUtils.h"
+#include "RHIGPUReadback.h"
+#include "Scene/URSSceneConfigComponent.h"
+#include "Rendering/SlateRenderer.h"
+#include "Shader.h"
 #include "TimerManager.h"
 #include "UnrealClient.h"
+
+struct UURSDisplayClusterCameraBinderComponent::FReadbackSlot
+{
+	explicit FReadbackSlot(const FName& Name)
+		: Readback(MakeUnique<FRHIGPUTextureReadback>(Name))
+	{
+	}
+
+	TUniquePtr<FRHIGPUTextureReadback> Readback;
+	FIntPoint Size = FIntPoint::ZeroValue;
+	bool bInFlight = false;
+};
 
 UURSDisplayClusterCameraBinderComponent::UURSDisplayClusterCameraBinderComponent()
 {
@@ -23,18 +44,63 @@ UURSDisplayClusterCameraBinderComponent::UURSDisplayClusterCameraBinderComponent
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 }
 
+UURSDisplayClusterCameraBinderComponent::~UURSDisplayClusterCameraBinderComponent() = default;
+
 void UURSDisplayClusterCameraBinderComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	FParse::Value(
+
+	if (const UURSSceneConfigComponent* SceneConfig =
+		GetOwner() ? GetOwner()->FindComponentByClass<UURSSceneConfigComponent>() : nullptr)
+	{
+		const URSoccerLab::FURSSceneConfig& Config = SceneConfig->GetActiveConfig();
+		if (Config.Vision.Mode == URSoccerLab::EURSVisionMode::Rgbd)
+		{
+			RequestedCameraCount = Config.Robots.Num();
+			RequestedCameraName = Config.Vision.LeftCamera;
+		}
+		else
+		{
+			RequestedCameraCount = Config.Robots.Num() * 2;
+		}
+	}
+
+	int32 CommandLineCameraCount = 0;
+	if (FParse::Value(
 		FCommandLine::Get(),
 		TEXT("URSNDisplayCameraCount="),
-		RequestedCameraCount);
+		CommandLineCameraCount))
+	{
+		RequestedCameraCount = CommandLineCameraCount;
+	}
 	RequestedCameraCount = FMath::Clamp(RequestedCameraCount, 1, 20);
 	FParse::Value(
 		FCommandLine::Get(),
 		TEXT("URSNDisplayCameraName="),
 		RequestedCameraName);
+
+	ReadbackSlots.Reserve(4);
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		ReadbackSlots.Add(MakeShared<FReadbackSlot, ESPMode::ThreadSafe>(
+			*FString::Printf(TEXT("URSAtlasReadback_%d"), Index)));
+	}
+}
+
+void UURSDisplayClusterCameraBinderComponent::EndPlay(
+	const EEndPlayReason::Type EndPlayReason)
+{
+	bReadbackRequested.Store(false);
+	if (BackBufferDelegateHandle.IsValid() && FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().GetRenderer()
+			->OnAddBackBufferReadyToPresentPass()
+			.Remove(BackBufferDelegateHandle);
+		BackBufferDelegateHandle.Reset();
+	}
+	FlushRenderingCommands();
+	ReadbackSlots.Reset();
+	Super::EndPlay(EndPlayReason);
 }
 
 void UURSDisplayClusterCameraBinderComponent::TickComponent(
@@ -46,11 +112,8 @@ void UURSDisplayClusterCameraBinderComponent::TickComponent(
 	if (!bBound)
 	{
 		bBound = TryBindCameras();
-		if (bBound)
-		{
-			SetComponentTickEnabled(false);
-		}
 	}
+	DrainCompletedAtlases();
 }
 
 bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
@@ -109,12 +172,13 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 		Viewports.Add(Viewport);
 	}
 
-	// nDisplay owns camera rendering while this adapter is active. Disable
-	// every URLab SceneCapture, including cameras omitted from a partial-view
-	// profiling run, so they cannot silently skew its cost.
+	// nDisplay owns RGB rendering while this adapter is active. Keep depth
+	// SceneCaptures alive in RGBD mode; depth is still produced independently
+	// until it can be extracted from an nDisplay view attachment.
 	for (UMjCamera* Camera : AllCameras)
 	{
-		if (Camera && Camera->CaptureComponent)
+		if (Camera && Camera->CaptureComponent
+			&& Camera->CaptureMode != EMjCameraMode::Depth)
 		{
 			Camera->CaptureComponent->bCaptureEveryFrame = false;
 			Camera->CaptureComponent->bCaptureOnMovement = false;
@@ -157,6 +221,9 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 			return false;
 		}
 		CameraProxies.Add(Proxy);
+		CameraRects.Add(
+			CameraKey(Owner->GetName(), Source->MjName),
+			Viewports[Index]->GetRenderSettings().Rect);
 
 		UE_LOG(LogTemp, Log,
 			TEXT("[URS nDisplay] viewport '%s' bound to '%s/%s'."),
@@ -164,11 +231,26 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 	}
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[URS nDisplay] bound %d cameras%s; independent SceneCapture rendering disabled."),
+		TEXT("[URS nDisplay] bound %d RGB cameras%s; duplicate RGB SceneCaptures disabled."),
 		CameraProxies.Num(),
 		RequestedCameraName.IsEmpty()
 			? TEXT("")
 			: *FString::Printf(TEXT(" named '%s'"), *RequestedCameraName));
+
+	if (FSlateApplication::IsInitialized())
+	{
+		BackBufferDelegateHandle = FSlateApplication::Get().GetRenderer()
+			->OnAddBackBufferReadyToPresentPass()
+			.AddUObject(
+				this,
+				&UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("[URS nDisplay] Slate is unavailable; production atlas readback cannot start."));
+		return false;
+	}
 
 	if (FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayScreenshot")))
 	{
@@ -201,4 +283,149 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 			false);
 	}
 	return true;
+}
+
+bool UURSDisplayClusterCameraBinderComponent::RequestRgbFrame()
+{
+	if (!bBound || OutstandingReadbacks.Load() >= ReadbackSlots.Num())
+	{
+		return false;
+	}
+	bool bExpected = false;
+	return bReadbackRequested.CompareExchange(bExpected, true);
+}
+
+FString UURSDisplayClusterCameraBinderComponent::CameraKey(
+	const FString& ActorId,
+	const FString& CameraName)
+{
+	return ActorId + TEXT("/") + CameraName;
+}
+
+bool UURSDisplayClusterCameraBinderComponent::CopyRgbFrame(
+	const FString& ActorId,
+	const FString& CameraName,
+	const uint64 MinimumSequence,
+	TArray<FColor>& OutPixels,
+	int32& OutWidth,
+	int32& OutHeight,
+	uint64& OutSequence) const
+{
+	if (LatestAtlasSequence <= MinimumSequence || LatestAtlasPixels.IsEmpty())
+	{
+		return false;
+	}
+	const FIntRect* Rect = CameraRects.Find(CameraKey(ActorId, CameraName));
+	if (!Rect || Rect->Min.X < 0 || Rect->Min.Y < 0
+		|| Rect->Max.X > LatestAtlasSize.X || Rect->Max.Y > LatestAtlasSize.Y
+		|| Rect->Width() <= 0 || Rect->Height() <= 0)
+	{
+		return false;
+	}
+
+	OutWidth = Rect->Width();
+	OutHeight = Rect->Height();
+	OutPixels.SetNumUninitialized(OutWidth * OutHeight);
+	for (int32 Row = 0; Row < OutHeight; ++Row)
+	{
+		const FColor* Source =
+			LatestAtlasPixels.GetData()
+			+ (Rect->Min.Y + Row) * LatestAtlasSize.X
+			+ Rect->Min.X;
+		FColor* Destination = OutPixels.GetData() + Row * OutWidth;
+		FMemory::Memcpy(Destination, Source, OutWidth * sizeof(FColor));
+	}
+	OutSequence = LatestAtlasSequence;
+	return true;
+}
+
+void UURSDisplayClusterCameraBinderComponent::DrainCompletedAtlases()
+{
+	FCompletedAtlas Completed;
+	while (CompletedAtlases.Dequeue(Completed))
+	{
+		if (Completed.Pixels.Num() == Completed.Size.X * Completed.Size.Y)
+		{
+			LatestAtlasSize = Completed.Size;
+			LatestAtlasPixels = MoveTemp(Completed.Pixels);
+			++LatestAtlasSequence;
+		}
+	}
+}
+
+void UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread(
+	FRDGBuilder& GraphBuilder,
+	SWindow& Window,
+	FRDGTexture* BackBuffer)
+{
+	check(IsInRenderingThread());
+
+	for (TSharedPtr<FReadbackSlot, ESPMode::ThreadSafe>& Slot : ReadbackSlots)
+	{
+		if (!Slot->bInFlight || !Slot->Readback->IsReady())
+		{
+			continue;
+		}
+
+		int32 RowPitchPixels = 0;
+		int32 BufferHeight = 0;
+		const FColor* Source = static_cast<const FColor*>(
+			Slot->Readback->Lock(RowPitchPixels, &BufferHeight));
+		if (Source && RowPitchPixels >= Slot->Size.X && BufferHeight >= Slot->Size.Y)
+		{
+			FCompletedAtlas Completed;
+			Completed.Size = Slot->Size;
+			Completed.Pixels.SetNumUninitialized(Slot->Size.X * Slot->Size.Y);
+			for (int32 Row = 0; Row < Slot->Size.Y; ++Row)
+			{
+				FMemory::Memcpy(
+					Completed.Pixels.GetData() + Row * Slot->Size.X,
+					Source + Row * RowPitchPixels,
+					Slot->Size.X * sizeof(FColor));
+			}
+			CompletedAtlases.Enqueue(MoveTemp(Completed));
+		}
+		Slot->Readback->Unlock();
+		Slot->bInFlight = false;
+		--OutstandingReadbacks;
+	}
+
+	if (!BackBuffer || !bReadbackRequested.Exchange(false))
+	{
+		return;
+	}
+
+	FReadbackSlot* FreeSlot = nullptr;
+	for (TSharedPtr<FReadbackSlot, ESPMode::ThreadSafe>& Slot : ReadbackSlots)
+	{
+		if (!Slot->bInFlight)
+		{
+			FreeSlot = Slot.Get();
+			break;
+		}
+	}
+	if (!FreeSlot)
+	{
+		return;
+	}
+
+	const FIntPoint Extent = BackBuffer->Desc.Extent;
+	const FRDGTextureDesc ConvertedDesc = FRDGTextureDesc::Create2D(
+		Extent,
+		PF_B8G8R8A8,
+		FClearValueBinding::None,
+		TexCreate_ShaderResource | TexCreate_RenderTargetable);
+	FRDGTextureRef Converted = GraphBuilder.CreateTexture(
+		ConvertedDesc,
+		TEXT("URS_nDisplayAtlasBGRA8"));
+	AddDrawTexturePass(
+		GraphBuilder,
+		GetGlobalShaderMap(GMaxRHIFeatureLevel),
+		BackBuffer,
+		Converted,
+		FRDGDrawTextureInfo());
+	AddEnqueueCopyPass(GraphBuilder, FreeSlot->Readback.Get(), Converted);
+	FreeSlot->Size = Extent;
+	FreeSlot->bInFlight = true;
+	++OutstandingReadbacks;
 }

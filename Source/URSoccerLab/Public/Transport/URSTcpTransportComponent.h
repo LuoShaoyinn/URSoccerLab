@@ -7,6 +7,7 @@
 #include "URSTcpTransportComponent.generated.h"
 
 class UURSRobotCoreComponent;
+class UURSDisplayClusterCameraBinderComponent;
 class FSocket;
 class IImageWrapperModule;
 
@@ -88,6 +89,7 @@ private:
 		uint32 NextRgbSequence = 0;
 		uint32 NextDepthSequence = 0;
 		uint64 Generation = 0;
+		uint64 LastNDisplayRgbSequence = 0;
 		bool bRgbEncodeInFlight = false;
 		bool bDepthEncodeInFlight = false;
 	};
@@ -111,6 +113,7 @@ private:
 	};
 
 	TWeakObjectPtr<UURSRobotCoreComponent> Core;
+	TWeakObjectPtr<UURSDisplayClusterCameraBinderComponent> NDisplayBinder;
 
 	FRobotListener AdminListener;
 	TArray<FRobotListener> RobotListeners;

@@ -1,5 +1,6 @@
 #include "Transport/URSTcpTransportComponent.h"
 #include "Core/URSRobotCoreComponent.h"
+#include "NDisplay/URSDisplayClusterCameraBinderComponent.h"
 #include "Scene/URSSceneConfigComponent.h"
 
 #include "Sockets.h"
@@ -225,6 +226,8 @@ bool UURSTcpTransportComponent::StartTransport()
 	if (AActor* Owner = GetOwner())
 	{
 		Core = Owner->FindComponentByClass<UURSRobotCoreComponent>();
+		NDisplayBinder =
+			Owner->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
 	}
 
 	if (!Core.IsValid())
@@ -330,6 +333,11 @@ void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	{
 		return;
 	}
+	if (!NDisplayBinder.IsValid() && GetOwner())
+	{
+		NDisplayBinder =
+			GetOwner()->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
+	}
 
 	TArray<FString> CurrentRobots = Core->GetRobotIds();
 	if (CurrentRobots != LastKnownRobots)
@@ -347,6 +355,10 @@ void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 	TickStatePublish();
 	const double CameraPublishStartSec = FPlatformTime::Seconds();
+	// Clear completed bounded jobs before deciding whether this render tick
+	// can accept another frame. Draining afterwards artificially limits a
+	// fast encoder to every second game frame.
+	DrainCompletedVisionPackets();
 	TickCameraPublish();
 	DrainCompletedVisionPackets();
 	CameraStatsPublishSec += FPlatformTime::Seconds() - CameraPublishStartSec;
@@ -975,13 +987,24 @@ void UURSTcpTransportComponent::TickCameraPublish()
 	const bool bRequestDepth =
 		VisionConfig.Mode == URSoccerLab::EURSVisionMode::Rgbd
 		&& AdvanceClock(NextDepthTimeSec, DepthRateHz);
+	const bool bUseNDisplay =
+		NDisplayBinder.IsValid() && NDisplayBinder->IsReady();
+	const bool bAnyVisionClient = RobotListeners.ContainsByPredicate(
+		[](const FRobotListener& Listener)
+		{
+			return !Listener.Clients.IsEmpty();
+		});
 
 	if (bRequestRgb || bRequestDepth)
 	{
+		if (bRequestRgb && bUseNDisplay && bAnyVisionClient)
+		{
+			NDisplayBinder->RequestRgbFrame();
+		}
 		for (FRobotListener& Listener : RobotListeners)
 		{
 			if (Listener.Clients.IsEmpty()) continue;
-			if (bRequestRgb)
+			if (bRequestRgb && !bUseNDisplay)
 			{
 				Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.LeftCamera);
 				if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
@@ -1009,36 +1032,69 @@ void UURSTcpTransportComponent::TickCameraPublish()
 			RgbCameraNames.Add(VisionConfig.RightCamera);
 		}
 
-		bool bRgbReady = true;
-		for (const FString& CameraName : RgbCameraNames)
+		const uint64 NDisplaySequence = bUseNDisplay
+			? NDisplayBinder->GetLatestRgbFrameSequence()
+			: 0;
+		bool bRgbReady = bUseNDisplay
+			? NDisplaySequence > Listener.LastNDisplayRgbSequence
+			: true;
+		if (!bUseNDisplay)
 		{
-			bRgbReady = bRgbReady && Core->IsCameraFrameReady(Listener.ActorId, CameraName);
+			for (const FString& CameraName : RgbCameraNames)
+			{
+				bRgbReady =
+					bRgbReady
+					&& Core->IsCameraFrameReady(Listener.ActorId, CameraName);
+			}
 		}
 		if (bRgbReady && !Listener.bRgbEncodeInFlight)
 		{
 			TArray<FURSRawRgbImage> RawImages;
 			bool bValidRgbSet = true;
+			uint64 CopiedNDisplaySequence = 0;
 			for (const FString& CameraName : RgbCameraNames)
 			{
 				const FURSCameraInfo* Info = FindCameraInfo(State, CameraName);
 				TArray<FColor> Pixels;
-				if (!Info || !Core->ConsumeCameraFrame(Listener.ActorId, CameraName, Pixels)
-					|| Pixels.Num() != Info->Width * Info->Height)
+				int32 Width = Info ? Info->Width : 0;
+				int32 Height = Info ? Info->Height : 0;
+				uint64 ImageNDisplaySequence = 0;
+				const bool bGotPixels = bUseNDisplay
+					? NDisplayBinder->CopyRgbFrame(
+						Listener.ActorId,
+						CameraName,
+						Listener.LastNDisplayRgbSequence,
+						Pixels,
+						Width,
+						Height,
+						ImageNDisplaySequence)
+					: Core->ConsumeCameraFrame(
+						Listener.ActorId,
+						CameraName,
+						Pixels);
+				if (!Info || !bGotPixels || Pixels.Num() != Width * Height
+					|| (bUseNDisplay && CopiedNDisplaySequence != 0
+						&& CopiedNDisplaySequence != ImageNDisplaySequence))
 				{
 					bValidRgbSet = false;
 					break;
 				}
+				CopiedNDisplaySequence = ImageNDisplaySequence;
 
 				FURSRawRgbImage& Raw = RawImages.AddDefaulted_GetRef();
 				Raw.CameraName = CameraName;
-				Raw.Width = static_cast<uint16>(Info->Width);
-				Raw.Height = static_cast<uint16>(Info->Height);
+				Raw.Width = static_cast<uint16>(Width);
+				Raw.Height = static_cast<uint16>(Height);
 				Raw.Pixels = MoveTemp(Pixels);
 			}
 
 			if (bValidRgbSet && RawImages.Num() == RgbCameraNames.Num()
 				&& AsyncVisionState.IsValid() && ImageWrapperModule)
 			{
+				if (bUseNDisplay)
+				{
+					Listener.LastNDisplayRgbSequence = CopiedNDisplaySequence;
+				}
 				Listener.bRgbEncodeInFlight = true;
 				const FString ActorId = Listener.ActorId;
 				const uint64 Generation = Listener.Generation;

@@ -17,7 +17,11 @@ public class URSoccerLab : ModuleRules
 			"Sockets",
 			"ImageWrapper",
 			"DisplayCluster",
-			"DisplayClusterProjection"
+			"DisplayClusterProjection",
+			"RenderCore",
+			"RHI",
+			"Slate",
+			"SlateCore"
 		});
 
 		// Uncomment if you are using Slate UI

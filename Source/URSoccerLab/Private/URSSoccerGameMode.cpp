@@ -81,7 +81,8 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 		UURSTcpTransportComponent* Transport = NewObject<UURSTcpTransportComponent>(Manager, TEXT("URSTcpTransport"));
 		Transport->RegisterComponent();
 	}
-	if (FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras"))
+	if ((FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras"))
+			|| FParse::Param(FCommandLine::Get(), TEXT("dc_cluster")))
 		&& !Manager->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>())
 	{
 		UURSDisplayClusterCameraBinderComponent* Binder =
