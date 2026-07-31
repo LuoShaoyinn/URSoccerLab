@@ -5,9 +5,8 @@
 #include "URSDisplayClusterCameraBinderComponent.generated.h"
 
 class UCameraComponent;
-class FRDGBuilder;
-class FRDGTexture;
-class SWindow;
+class FRHICommandListImmediate;
+class FViewport;
 
 /**
  * Production adapter that binds URLab MuJoCo cameras to nDisplay camera-policy
@@ -52,10 +51,9 @@ private:
 	};
 
 	bool TryBindCameras();
-	void OnBackBufferReady_RenderThread(
-		FRDGBuilder& GraphBuilder,
-		SWindow& Window,
-		FRDGTexture* BackBuffer);
+	void OnDisplayClusterBackBufferReady_RenderThread(
+		FRHICommandListImmediate& RHICmdList,
+		FViewport* Viewport);
 	void DrainCompletedAtlases();
 	static FString CameraKey(const FString& ActorId, const FString& CameraName);
 

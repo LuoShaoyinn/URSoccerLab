@@ -6,8 +6,8 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "EngineUtils.h"
-#include "Framework/Application/SlateApplication.h"
 #include "IDisplayCluster.h"
+#include "IDisplayClusterCallbacks.h"
 #include "IDisplayClusterProjection.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -19,9 +19,9 @@
 #include "Render/Viewport/IDisplayClusterViewportManager.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
+#include "RHICommandList.h"
 #include "RHIGPUReadback.h"
 #include "Scene/URSSceneConfigComponent.h"
-#include "Rendering/SlateRenderer.h"
 #include "Shader.h"
 #include "TimerManager.h"
 #include "UnrealClient.h"
@@ -91,10 +91,10 @@ void UURSDisplayClusterCameraBinderComponent::EndPlay(
 	const EEndPlayReason::Type EndPlayReason)
 {
 	bReadbackRequested.Store(false);
-	if (BackBufferDelegateHandle.IsValid() && FSlateApplication::IsInitialized())
+	if (BackBufferDelegateHandle.IsValid())
 	{
-		FSlateApplication::Get().GetRenderer()
-			->OnAddBackBufferReadyToPresentPass()
+		IDisplayCluster::Get().GetCallbacks()
+			.OnDisplayClusterPostBackbufferUpdated_RenderThread()
 			.Remove(BackBufferDelegateHandle);
 		BackBufferDelegateHandle.Reset();
 	}
@@ -237,20 +237,15 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 			? TEXT("")
 			: *FString::Printf(TEXT(" named '%s'"), *RequestedCameraName));
 
-	if (FSlateApplication::IsInitialized())
-	{
-		BackBufferDelegateHandle = FSlateApplication::Get().GetRenderer()
-			->OnAddBackBufferReadyToPresentPass()
-			.AddUObject(
-				this,
-				&UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[URS nDisplay] Slate is unavailable; production atlas readback cannot start."));
-		return false;
-	}
+	// nDisplay resolves its atlas into the output backbuffer after Slate has
+	// constructed its ready-to-present RDG passes. Reading from Slate's earlier
+	// callback therefore captures the still-cleared (black) buffer. Epic's node
+	// media capture uses this post-nDisplay callback for the same reason.
+	BackBufferDelegateHandle = IDisplayCluster::Get().GetCallbacks()
+		.OnDisplayClusterPostBackbufferUpdated_RenderThread()
+		.AddUObject(
+			this,
+			&UURSDisplayClusterCameraBinderComponent::OnDisplayClusterBackBufferReady_RenderThread);
 
 	if (FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayScreenshot")))
 	{
@@ -353,10 +348,9 @@ void UURSDisplayClusterCameraBinderComponent::DrainCompletedAtlases()
 	}
 }
 
-void UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread(
-	FRDGBuilder& GraphBuilder,
-	SWindow& Window,
-	FRDGTexture* BackBuffer)
+void UURSDisplayClusterCameraBinderComponent::OnDisplayClusterBackBufferReady_RenderThread(
+	FRHICommandListImmediate& RHICmdList,
+	FViewport* Viewport)
 {
 	check(IsInRenderingThread());
 
@@ -390,6 +384,7 @@ void UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread(
 		--OutstandingReadbacks;
 	}
 
+	FRHITexture* BackBuffer = Viewport ? Viewport->GetRenderTargetTexture() : nullptr;
 	if (!BackBuffer || !bReadbackRequested.Exchange(false))
 	{
 		return;
@@ -409,7 +404,12 @@ void UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread(
 		return;
 	}
 
-	const FIntPoint Extent = BackBuffer->Desc.Extent;
+	const FIntPoint Extent = BackBuffer->GetSizeXY();
+	// nDisplay commonly presents through a 10-bit swapchain. Convert it before
+	// readback so the CPU-side FColor/JPEG path always receives 8-bit BGRA.
+	FRDGBuilder GraphBuilder(RHICmdList);
+	FRDGTextureRef Source = GraphBuilder.RegisterExternalTexture(
+		CreateRenderTarget(BackBuffer, TEXT("URS_nDisplayBackBuffer")));
 	const FRDGTextureDesc ConvertedDesc = FRDGTextureDesc::Create2D(
 		Extent,
 		PF_B8G8R8A8,
@@ -421,10 +421,11 @@ void UURSDisplayClusterCameraBinderComponent::OnBackBufferReady_RenderThread(
 	AddDrawTexturePass(
 		GraphBuilder,
 		GetGlobalShaderMap(GMaxRHIFeatureLevel),
-		BackBuffer,
+		Source,
 		Converted,
 		FRDGDrawTextureInfo());
 	AddEnqueueCopyPass(GraphBuilder, FreeSlot->Readback.Get(), Converted);
+	GraphBuilder.Execute();
 	FreeSlot->Size = Extent;
 	FreeSlot->bInFlight = true;
 	++OutstandingReadbacks;

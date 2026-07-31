@@ -177,9 +177,10 @@ This inspection example uses ONNX Runtime on CPU; the deployment code under
 ### Look at the ball and dribble
 
 The vision-control example centers the ball with the head, then runs the
-walking policy while continuously tracking the ball from the left eye. Camera
-inference runs on a latest-frame-only worker, independent of the 50 Hz policy
-loop:
+walking policy while continuously tracking the ball from the left eye. It
+uses lateral velocity to remove horizontal ball displacement and reserves a
+smaller yaw correction for heading. Camera inference runs on a
+latest-frame-only worker, independent of the 50 Hz policy loop:
 
 ```bash
 uv sync --extra vision --extra torch_rocm
@@ -193,11 +194,11 @@ temporary fixed-resolution TorchScript cache at
 `out/models/yolo26n_best_736x1280.torchscript.pt`; otherwise it falls back to
 the nano ONNX checkpoint on CPU. This cache was traced from the fixed ONNX
 graph and is intentionally replaceable when the original training `.pt`
-checkpoint becomes available. At startup, the example resets `robot_rp0`
-through the admin endpoint so model warm-up cannot leave the robot fallen; pass
-`--no-reset-at-start` to preserve the live pose. The example writes raw and
-annotated videos plus an external observer video and JSON detection/control
-trace under `out/dribble/`.
+checkpoint becomes available. At startup, the example resets `robot_rp0` and
+the ball through the admin endpoint so model warm-up cannot leave stale scene
+state; pass `--no-reset-at-start` to preserve the live poses. The example
+writes raw and annotated videos plus an external observer video and JSON
+detection/control trace under `out/dribble/`.
 
 The included walking policy was trained against older Pi dynamics. The default
 dribble interval is deliberately short and the example stops on a base-height

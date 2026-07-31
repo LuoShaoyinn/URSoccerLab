@@ -1217,6 +1217,109 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 {
 	UURSSceneConfigComponent* SceneComp = Cast<UURSSceneConfigComponent>(SceneConfigComp.Get());
+	FURSPoseResult Result;
+	Result.bOk = false;
+	if (!SceneComp)
+	{
+		Result.Error = TEXT("not_ready");
+		Result.Message = TEXT("scene config is unavailable");
+		return Result;
+	}
+
+	const URSoccerLab::FURSRobotSpawn* Spawn =
+		SceneComp->GetActiveConfig().Robots.FindByPredicate(
+			[&ActorId](const URSoccerLab::FURSRobotSpawn& Candidate)
+			{
+				return Candidate.ActorId == ActorId;
+			});
+	if (!Spawn)
+	{
+		// Scene objects are MuJoCo articulations too, but intentionally are not
+		// robot command/state endpoints. Let the same admin reset operation put
+		// movable objects such as the ball back at their configured pose.
+		const FURSSpawnedObjectInfo* ObjectInfo =
+			SceneComp->GetSpawnedObjects().Find(ActorId);
+		AAMjManager* ManagerPtr = Manager.Get();
+		if (!ObjectInfo || !ManagerPtr || !ManagerPtr->PhysicsEngine)
+		{
+			Result.Error = ObjectInfo ? TEXT("not_ready") : TEXT("not_found");
+			Result.Message = FString::Printf(
+				TEXT("scene actor '%s' is unavailable"), *ActorId);
+			return Result;
+		}
+
+		AMjArticulation* ObjectArticulation = nullptr;
+		for (AMjArticulation* Articulation : ManagerPtr->GetAllArticulations())
+		{
+			if (Articulation
+				&& (Articulation->ActorId == ActorId || Articulation->GetName() == ActorId))
+			{
+				ObjectArticulation = Articulation;
+				break;
+			}
+		}
+		if (!ObjectArticulation)
+		{
+			Result.Error = TEXT("not_ready");
+			Result.Message = FString::Printf(
+				TEXT("scene object '%s' is not compiled"), *ActorId);
+			return Result;
+		}
+
+		FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
+		mjModel* Model = ManagerPtr->PhysicsEngine->GetModel();
+		mjData* Data = ManagerPtr->PhysicsEngine->GetData();
+		if (!Model || !Data)
+		{
+			Result.Error = TEXT("not_ready");
+			Result.Message = TEXT("mjModel/mjData missing");
+			return Result;
+		}
+
+		int32 FreeJointId = -1;
+		for (UMjJoint* Joint : ObjectArticulation->GetJoints())
+		{
+			const int32 JointId = Joint ? Joint->GetMjID() : -1;
+			if (JointId >= 0 && JointId < Model->njnt
+				&& Model->jnt_type[JointId] == mjJNT_FREE)
+			{
+				FreeJointId = JointId;
+				break;
+			}
+		}
+		if (FreeJointId < 0)
+		{
+			Result.Error = TEXT("fixed_base");
+			Result.Message = FString::Printf(
+				TEXT("scene object '%s' has no free root joint"), *ActorId);
+			return Result;
+		}
+
+		FQuat Rotation = ObjectInfo->InitialRotationXyzw;
+		Rotation.Normalize();
+		const FVector Translation = ObjectInfo->InitialTranslationMeters;
+		const int32 QposAdr = Model->jnt_qposadr[FreeJointId];
+		Data->qpos[QposAdr + 0] = Translation.X;
+		Data->qpos[QposAdr + 1] = Translation.Y;
+		Data->qpos[QposAdr + 2] = Translation.Z;
+		Data->qpos[QposAdr + 3] = Rotation.W;
+		Data->qpos[QposAdr + 4] = Rotation.X;
+		Data->qpos[QposAdr + 5] = Rotation.Y;
+		Data->qpos[QposAdr + 6] = Rotation.Z;
+		const int32 DofAdr = Model->jnt_dofadr[FreeJointId];
+		for (int32 Index = 0; Index < 6; ++Index)
+		{
+			Data->qvel[DofAdr + Index] = 0.0;
+		}
+		mj_forward(Model, Data);
+
+		Result.bOk = true;
+		Result.AppliedTranslation = Translation;
+		Result.AppliedRotation = Rotation;
+		Result.SimTime = Data->time;
+		return Result;
+	}
+
 	bool bHasEndpoint = false;
 	TArray<FString> NonRootJointNames;
 	{
@@ -1235,21 +1338,10 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 		}
 	}
 
-	FURSPoseResult Result;
-	Result.bOk = false;
-	if (!SceneComp || !bHasEndpoint)
+	if (!bHasEndpoint)
 	{
 		Result.Error = TEXT("not_ready");
-		Result.Message = TEXT("scene config or robot endpoint is unavailable");
-		return Result;
-	}
-
-	const URSoccerLab::FURSRobotSpawn* Spawn = SceneComp->GetActiveConfig().Robots.FindByPredicate(
-		[&ActorId](const URSoccerLab::FURSRobotSpawn& Candidate) { return Candidate.ActorId == ActorId; });
-	if (!Spawn)
-	{
-		Result.Error = TEXT("missing_scene_robot");
-		Result.Message = FString::Printf(TEXT("robot '%s' is absent from the active scene config"), *ActorId);
+		Result.Message = TEXT("robot endpoint is unavailable");
 		return Result;
 	}
 

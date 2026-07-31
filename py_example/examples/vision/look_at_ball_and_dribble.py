@@ -195,11 +195,12 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=10000)
     parser.add_argument("--observer-port", type=int, default=10001)
     parser.add_argument("--admin-port", type=int, default=11000)
+    parser.add_argument("--ball-actor", default="ball")
     parser.add_argument(
         "--reset-at-start",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="reset robot_rp0 through the admin endpoint before control",
+        help="reset robot_rp0 and --ball-actor through the admin endpoint before control",
     )
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
     parser.add_argument("--onnx", type=Path, default=DEFAULT_ONNX)
@@ -210,6 +211,22 @@ def main() -> int:
     parser.add_argument("--seek-timeout", type=float, default=8.0)
     parser.add_argument("--duration", type=float, default=1.0, help="dribbling duration")
     parser.add_argument("--vx", type=float, default=0.25)
+    parser.add_argument(
+        "--vy-kp",
+        type=float,
+        default=0.35,
+        help="lateral velocity gain for horizontal ball displacement",
+    )
+    parser.add_argument("--max-vy", type=float, default=0.2, help="maximum |vy| in m/s")
+    parser.add_argument(
+        "--yaw-kp",
+        type=float,
+        default=0.15,
+        help="body yaw-rate gain after lateral correction",
+    )
+    parser.add_argument(
+        "--max-yaw-rate", type=float, default=0.15, help="maximum body |yaw rate|"
+    )
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--head-kp", type=float, default=0.8)
     parser.add_argument("--head-max-rate", type=float, default=0.3, help="rad/s")
@@ -242,8 +259,8 @@ def main() -> int:
     annotated_frames: list[np.ndarray] = []
     observer_frames: list[np.ndarray] = []
     trace: list[dict[str, object]] = []
-    last_record_time = float("-inf")
-    observer_last_record_time = float("-inf")
+    next_record_time: float | None = None
+    observer_next_record_time: float | None = None
     latest_ball_time = float("-inf")
     ball_error_x = 0.0
     ball_error_y = 0.0
@@ -251,10 +268,11 @@ def main() -> int:
     inference_count = 0
     inference_ms_total = 0.0
     last_vision_sim_time: float | None = None
+    latest_command = np.zeros(3, dtype=np.float32)
 
     def pump(capture: bool = True) -> None:
         nonlocal latest_state, body_actuators, head_yaw_actuator, head_pitch_actuator
-        nonlocal last_record_time
+        nonlocal next_record_time
         for kind, payload in client.recv():
             if kind == "state":
                 latest_state = payload
@@ -270,31 +288,45 @@ def main() -> int:
             elif kind in ("rgb", "camera") and payload:
                 if not capture:
                     continue
-                camera = payload[0]
+                camera = next(
+                    (item for item in payload if item.get("camera_name") == "left_eye"),
+                    payload[0],
+                )
                 if not camera["data"]:
                     continue
                 frame = camera_to_rgb(camera)
                 sim_time = float(camera["sim_time"])
                 assert vision is not None
                 vision.submit(frame, sim_time)
-                if sim_time - last_record_time >= 1.0 / args.video_fps:
+                if next_record_time is None:
+                    next_record_time = sim_time
+                if sim_time + 1e-9 >= next_record_time:
                     raw_frames.append(frame)
-                    last_record_time = sim_time
+                    interval = 1.0 / args.video_fps
+                    while next_record_time <= sim_time + 1e-9:
+                        next_record_time += interval
 
     def pump_observer(capture: bool = True) -> None:
-        nonlocal observer_last_record_time
+        nonlocal observer_next_record_time
         for kind, payload in observer.recv():
             if kind not in ("rgb", "camera") or not payload:
                 continue
             if not capture:
                 continue
-            camera = payload[0]
+            camera = next(
+                (item for item in payload if item.get("camera_name") == "left_eye"),
+                payload[0],
+            )
             if not camera["data"]:
                 continue
             sim_time = float(camera["sim_time"])
-            if sim_time - observer_last_record_time >= 1.0 / args.video_fps:
+            if observer_next_record_time is None:
+                observer_next_record_time = sim_time
+            if sim_time + 1e-9 >= observer_next_record_time:
                 observer_frames.append(camera_to_rgb(camera))
-                observer_last_record_time = sim_time
+                interval = 1.0 / args.video_fps
+                while observer_next_record_time <= sim_time + 1e-9:
+                    observer_next_record_time += interval
 
     def consume_vision(allow_lock: bool) -> bool:
         nonlocal head_yaw, head_pitch, centered_count, latest_ball_time
@@ -373,6 +405,7 @@ def main() -> int:
                     "inference_ms": result.inference_ms,
                     "head_yaw": head_yaw,
                     "head_pitch": head_pitch,
+                    "command": latest_command.tolist(),
                     "ball": ball,
                 }
             )
@@ -410,10 +443,14 @@ def main() -> int:
         if args.reset_at_start:
             admin = AdminClient(args.host, args.admin_port)
             try:
-                reply = admin.reset("robot_rp0")
-                if not reply.get("ok", False):
-                    raise RuntimeError(f"failed to reset robot_rp0: {reply}")
-                print("[control] reset robot_rp0 to its configured initial pose")
+                for actor_id in ("robot_rp0", args.ball_actor):
+                    reply = admin.reset(actor_id)
+                    if not reply.get("ok", False):
+                        raise RuntimeError(f"failed to reset {actor_id}: {reply}")
+                print(
+                    f"[control] reset robot_rp0 and {args.ball_actor} "
+                    "to their configured initial poses"
+                )
             finally:
                 admin.close()
 
@@ -482,11 +519,28 @@ def main() -> int:
                     break
             if latest_state is not None and now >= next_policy:
                 ball_recent = now - latest_ball_time < 0.75
+                # Horizontal image error alone approaches zero once the head
+                # tracks the ball. Include head yaw to retain the actual body-
+                # relative direction, and correct it primarily with lateral
+                # motion instead of forcing the robot to turn in place.
+                steering_error = ball_error_x - head_yaw
                 command = np.asarray(
-                    [args.vx if ball_recent else 0.0, 0.0,
-                     np.clip(-0.6 * ball_error_x, -0.5, 0.5) if ball_recent else 0.0],
+                    [
+                        args.vx if ball_recent else 0.0,
+                        np.clip(-args.vy_kp * steering_error, -args.max_vy, args.max_vy)
+                        if ball_recent
+                        else 0.0,
+                        np.clip(
+                            -args.yaw_kp * steering_error,
+                            -args.max_yaw_rate,
+                            args.max_yaw_rate,
+                        )
+                        if ball_recent
+                        else 0.0,
+                    ],
                     dtype=np.float32,
                 )
+                latest_command[:] = command
                 step = observation(latest_state, command, last_action)
                 history = np.roll(history, -OBS_STEP_DIM)
                 history[-OBS_STEP_DIM:] = step
