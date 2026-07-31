@@ -203,13 +203,14 @@ py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
 
 The benchmark uses the production nDisplay atlas by default. Pass
 `--scene-capture` only to compare the legacy independent-capture backend.
-On the RX 7900 XTX with the production sun/atmosphere, Lumen HWRT,
-hardware-ray-traced MegaLights, JPEG quality 85, and 640x480 sensors:
+On the RX 7900 XTX with the production sun/atmosphere, volumetric clouds
+disabled, Lumen HWRT, hardware-ray-traced MegaLights, JPEG quality 85, and
+640x480 sensors:
 
 | 3v3 mode | Delivered rate per robot | Minimum physics/wall ratio |
 | --- | --- | ---: |
-| Six aligned RGBD pairs | ~21.5 RGB/s and 5.0 depth/s | 0.9996 |
-| Twelve RGB cameras | ~13.6 stereo messages/s (27.2 images/s) | 0.9997 |
+| Six aligned RGBD pairs | ~24.2 RGB/s and 5.1 depth/s | 0.9997 |
+| Twelve RGB cameras | ~15.5 stereo messages/s (31.0 images/s) | 0.9999 |
 
 Every measured message was complete and there were no sequence gaps. These
 camera rates are below the configured 30/15 Hz because rendering is the

@@ -348,15 +348,15 @@ atlas results below supersede their camera-throughput figures.
 ### Production atlas delivery
 
 The production readback and TCP path was validated on the RX 7900 XTX with
-the tracked sun/atmosphere, Lumen HWRT, MegaLights HWRT, JPEG quality 85, and
-640x480 sensors:
+the tracked sun/atmosphere, volumetric clouds disabled, Lumen HWRT, MegaLights
+HWRT, JPEG quality 85, and 640x480 sensors:
 
 | 3v3 mode | Delivered rate per sensor | Minimum physics/wall ratio |
 | --- | ---: | ---: |
-| 12 RGB views | 13.6 RGB/s | 0.9997 |
-| 6 RGBD pairs | 21.5 RGB/s, 5.0 depth/s | 0.9996 |
+| 12 RGB views | 15.5 RGB/s | 0.9999 |
+| 6 RGBD pairs | 24.2 RGB/s, 5.1 depth/s | 0.9997 |
 
-All messages were complete and had zero sequence gaps. The 12-RGB rate exactly
+All messages were complete and had zero sequence gaps. The 12-RGB rate
 matched the raw 12-view render cadence, showing that atlas readback, JPEG, and
 TCP no longer reduce render throughput. The remaining 12-view limit is the
 production render workload itself.
