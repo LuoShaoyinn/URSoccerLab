@@ -206,7 +206,7 @@ def main() -> int:
             "-dc_node=node_0",
             "-URSNDisplayCameras",
             f"-URSNDisplayCameraCount={rgb_view_count}",
-            "-ExecCmds=MjCamera.AutoReadback 0",
+            "-ExecCmds=MjCamera.AutoReadback 0,DisableAllScreenMessages",
         ]
         if mode == "rgbd":
             render_args.append(

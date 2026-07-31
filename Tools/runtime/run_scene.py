@@ -60,7 +60,7 @@ def main() -> int:
         "-dc_node=node_0",
         "-URSNDisplayCameras",
         f"-URSNDisplayCameraCount={rgb_view_count}",
-        "-ExecCmds=MjCamera.AutoReadback 0",
+        "-ExecCmds=MjCamera.AutoReadback 0,DisableAllScreenMessages",
         f"-URSSceneConfig={scene_path}",
         "-NoSound",
         *([] if args.windowed else ["-RenderOffscreen"]),
