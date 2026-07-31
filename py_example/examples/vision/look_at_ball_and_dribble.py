@@ -45,7 +45,7 @@ from yolo_left_eye import (  # noqa: E402
     letterbox,
 )
 from ursoccerlab.media import camera_to_rgb, write_video  # noqa: E402
-from ursoccerlab.tcp import RobotClient  # noqa: E402
+from ursoccerlab.tcp import AdminClient, RobotClient  # noqa: E402
 
 
 DEFAULT_ONNX = REPO_ROOT / "refs/vision/models/yolo26/yolo26n_best.onnx"
@@ -88,20 +88,11 @@ class VisionWorker:
         self.pending: queue.Queue[tuple[np.ndarray, float] | None] = queue.Queue(maxsize=1)
         self.results: queue.Queue[VisionResult] = queue.Queue()
         self.error: BaseException | None = None
+        self.ready = threading.Event()
 
         if use_rocm:
             self.model = torch.jit.load(str(torchscript_path), map_location=self.device).eval()
             self.session = None
-            warmup = torch.zeros((1, 3, 736, 1280), device=self.device)
-            warmup_started = time.perf_counter()
-            with torch.inference_mode():
-                for _ in range(3):
-                    self.model(warmup)
-            torch.cuda.synchronize()
-            print(
-                f"[vision] ROCm warm-up completed in "
-                f"{time.perf_counter() - warmup_started:.2f}s"
-            )
         else:
             options = ort.SessionOptions()
             options.intra_op_num_threads = min(16, max(1, (os.cpu_count() or 2) // 2))
@@ -150,6 +141,18 @@ class VisionWorker:
 
     def _run(self) -> None:
         try:
+            if self.model is not None:
+                warmup = torch.zeros((1, 3, 736, 1280), device=self.device)
+                warmup_started = time.perf_counter()
+                with torch.inference_mode():
+                    for _ in range(3):
+                        self.model(warmup)
+                torch.cuda.synchronize()
+                print(
+                    f"[vision] ROCm warm-up completed in "
+                    f"{time.perf_counter() - warmup_started:.2f}s"
+                )
+            self.ready.set()
             while True:
                 item = self.pending.get()
                 if item is None:
@@ -183,12 +186,21 @@ class VisionWorker:
                 self.results.put(VisionResult(frame, sim_time, detections, elapsed_ms))
         except BaseException as exc:
             self.error = exc
+            self.ready.set()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=10000)
+    parser.add_argument("--observer-port", type=int, default=10001)
+    parser.add_argument("--admin-port", type=int, default=11000)
+    parser.add_argument(
+        "--reset-at-start",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="reset robot_rp0 through the admin endpoint before control",
+    )
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
     parser.add_argument("--onnx", type=Path, default=DEFAULT_ONNX)
     parser.add_argument("--torchscript", type=Path, default=DEFAULT_TORCHSCRIPT)
@@ -207,20 +219,16 @@ def main() -> int:
     parser.add_argument(
         "--annotated-video", type=Path, default=Path("out/dribble/detections.mp4")
     )
+    parser.add_argument(
+        "--observer-video", type=Path, default=Path("out/dribble/observer.mp4")
+    )
     parser.add_argument("--trace", type=Path, default=Path("out/dribble/trace.json"))
     args = parser.parse_args()
 
     policy = load_policy(args.policy)
-    vision = VisionWorker(
-        args.onnx,
-        args.torchscript,
-        args.vision_backend,
-        args.confidence,
-        args.iou,
-    )
-    print(f"[vision] backend={vision.backend} device={vision.device}")
-
+    vision: VisionWorker | None = None
     client = RobotClient(args.host, args.port)
+    observer = RobotClient(args.host, args.observer_port)
     latest_state: dict | None = None
     body_actuators: list[str] | None = None
     head_yaw_actuator: str | None = None
@@ -232,8 +240,10 @@ def main() -> int:
     last_action = np.zeros(20, dtype=np.float32)
     raw_frames: list[np.ndarray] = []
     annotated_frames: list[np.ndarray] = []
+    observer_frames: list[np.ndarray] = []
     trace: list[dict[str, object]] = []
     last_record_time = float("-inf")
+    observer_last_record_time = float("-inf")
     latest_ball_time = float("-inf")
     ball_error_x = 0.0
     ball_error_y = 0.0
@@ -242,7 +252,7 @@ def main() -> int:
     inference_ms_total = 0.0
     last_vision_sim_time: float | None = None
 
-    def pump() -> None:
+    def pump(capture: bool = True) -> None:
         nonlocal latest_state, body_actuators, head_yaw_actuator, head_pitch_actuator
         nonlocal last_record_time
         for kind, payload in client.recv():
@@ -258,20 +268,39 @@ def main() -> int:
                     if missing:
                         raise RuntimeError(f"robot is missing actuators: {missing}")
             elif kind in ("rgb", "camera") and payload:
+                if not capture:
+                    continue
                 camera = payload[0]
                 if not camera["data"]:
                     continue
                 frame = camera_to_rgb(camera)
                 sim_time = float(camera["sim_time"])
+                assert vision is not None
                 vision.submit(frame, sim_time)
                 if sim_time - last_record_time >= 1.0 / args.video_fps:
                     raw_frames.append(frame)
                     last_record_time = sim_time
 
+    def pump_observer(capture: bool = True) -> None:
+        nonlocal observer_last_record_time
+        for kind, payload in observer.recv():
+            if kind not in ("rgb", "camera") or not payload:
+                continue
+            if not capture:
+                continue
+            camera = payload[0]
+            if not camera["data"]:
+                continue
+            sim_time = float(camera["sim_time"])
+            if sim_time - observer_last_record_time >= 1.0 / args.video_fps:
+                observer_frames.append(camera_to_rgb(camera))
+                observer_last_record_time = sim_time
+
     def consume_vision(allow_lock: bool) -> bool:
         nonlocal head_yaw, head_pitch, centered_count, latest_ball_time
         nonlocal ball_error_x, ball_error_y, inference_count, inference_ms_total
         nonlocal last_vision_sim_time
+        assert vision is not None
         locked = False
         for result in vision.poll():
             dt = (
@@ -286,11 +315,26 @@ def main() -> int:
             ball = max(balls, key=lambda d: float(d["confidence"]), default=None)
             if ball is None:
                 centered_count = 0
-                if dribble_started is None:
-                    # The ball begins close to rp0 and below the zero-pitch FOV.
-                    head_pitch = float(
-                        np.clip(head_pitch + args.head_search_rate * dt, -0.5, 0.9)
+                # Initially the ball is below rp0's zero-pitch FOV. During a
+                # dribble, continue in the last observed direction instead of
+                # freezing when the close ball crosses the image boundary.
+                pitch_direction = 1.0 if ball_error_y >= -0.05 else -1.0
+                head_pitch = float(
+                    np.clip(
+                        head_pitch + pitch_direction * args.head_search_rate * dt,
+                        -0.5,
+                        0.9,
                     )
+                )
+                if dribble_started is not None:
+                    yaw_rate = float(
+                        np.clip(
+                            -args.head_kp * ball_error_x,
+                            -args.head_max_rate,
+                            args.head_max_rate,
+                        )
+                    )
+                    head_yaw = float(np.clip(head_yaw + yaw_rate * dt, -1.2, 1.2))
             else:
                 x1, y1, x2, y2 = (float(v) for v in ball["box_xyxy"])
                 height, width = result.frame.shape[:2]
@@ -363,19 +407,52 @@ def main() -> int:
     dribble_started: float | None = None
     start_x = 0.0
     try:
+        if args.reset_at_start:
+            admin = AdminClient(args.host, args.admin_port)
+            try:
+                reply = admin.reset("robot_rp0")
+                if not reply.get("ok", False):
+                    raise RuntimeError(f"failed to reset robot_rp0: {reply}")
+                print("[control] reset robot_rp0 to its configured initial pose")
+            finally:
+                admin.close()
+
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline and (latest_state is None or body_actuators is None):
-            pump()
-            consume_vision(False)
+            pump(False)
+            pump_observer(False)
             send_targets()
             time.sleep(0.002)
         if latest_state is None or body_actuators is None:
             raise RuntimeError(f"no robot state received on {args.host}:{args.port}")
 
+        # Establish the standing controls before ROCm performs its expensive
+        # first-use kernel compilation. MuJoCo retains these actuator targets
+        # while the constructor warms the fixed TorchScript graph.
+        send_targets()
+        vision = VisionWorker(
+            args.onnx,
+            args.torchscript,
+            args.vision_backend,
+            args.confidence,
+            args.iou,
+        )
+        print(f"[vision] backend={vision.backend} device={vision.device}")
+
+        # Warm-up runs in the vision worker. Keep draining network traffic and
+        # refreshing the standing command so neither physics nor TCP stalls.
+        while not vision.ready.is_set():
+            pump(False)
+            pump_observer(False)
+            send_targets()
+            time.sleep(0.002)
+        vision.poll()  # Surface a warm-up failure before seeking.
+
         print("[control] holding stance and centering the ball")
         seek_deadline = time.monotonic() + args.seek_timeout
         while time.monotonic() < seek_deadline:
             pump()
+            pump_observer()
             if consume_vision(True):
                 dribble_started = time.monotonic()
                 start_x = float(latest_state["base"]["pos"][0])
@@ -393,6 +470,7 @@ def main() -> int:
         next_policy = time.monotonic()
         while time.monotonic() - dribble_started < args.duration:
             pump()
+            pump_observer()
             consume_vision(False)
             now = time.monotonic()
             if latest_state is not None:
@@ -427,6 +505,7 @@ def main() -> int:
         body_targets = DEFAULT_DOF.copy()
         send_targets()
         pump()
+        pump_observer()
         consume_vision(False)
         end_x = float(latest_state["base"]["pos"][0]) if latest_state else start_x
         mean_ms = inference_ms_total / inference_count if inference_count else float("nan")
@@ -434,13 +513,16 @@ def main() -> int:
         print(f"[vision] {inference_count} frames, mean inference {mean_ms:.2f} ms")
         write_video(raw_frames, args.video, args.video_fps)
         write_video(annotated_frames, args.annotated_video, args.video_fps)
+        write_video(observer_frames, args.observer_video, args.video_fps)
         args.trace.parent.mkdir(parents=True, exist_ok=True)
         args.trace.write_text(json.dumps(trace, indent=2) + "\n", encoding="utf-8")
         print(f"saved {args.trace}")
         return 0
     finally:
         client.close()
-        vision.close()
+        observer.close()
+        if vision is not None:
+            vision.close()
 
 
 if __name__ == "__main__":

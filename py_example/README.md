@@ -193,8 +193,11 @@ temporary fixed-resolution TorchScript cache at
 `out/models/yolo26n_best_736x1280.torchscript.pt`; otherwise it falls back to
 the nano ONNX checkpoint on CPU. This cache was traced from the fixed ONNX
 graph and is intentionally replaceable when the original training `.pt`
-checkpoint becomes available. The example writes raw and annotated videos plus
-a JSON detection/control trace under `out/dribble/`.
+checkpoint becomes available. At startup, the example resets `robot_rp0`
+through the admin endpoint so model warm-up cannot leave the robot fallen; pass
+`--no-reset-at-start` to preserve the live pose. The example writes raw and
+annotated videos plus an external observer video and JSON detection/control
+trace under `out/dribble/`.
 
 The included walking policy was trained against older Pi dynamics. The default
 dribble interval is deliberately short and the example stops on a base-height

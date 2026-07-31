@@ -291,7 +291,10 @@ void UURSTcpTransportComponent::RebuildListeners()
 	{
 		FSocket* ListenSock = SSS->CreateSocket(NAME_Stream, TEXT("URS"), false);
 		if (!ListenSock) return nullptr;
-		ListenSock->SetReuseAddr();
+		// Keep simulator endpoints process-exclusive. On Linux Unreal's
+		// SetReuseAddr() also enables SO_REUSEPORT, which lets two Unreal
+		// instances accept different connections on the same robot/admin ports
+		// and silently mixes state, commands, and camera frames across worlds.
 		ListenSock->SetNonBlocking(true);
 
 		TSharedRef<FInternetAddr> Addr = SSS->CreateInternetAddr();
