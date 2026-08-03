@@ -1,0 +1,19 @@
+{
+  "version": "urs_scene_v1",
+  "robots": [
+    {
+      "actor_id": "robot_mos9",
+      "type": "mos9",
+      "translation_m": [-1.0, 0.0, 0.45],
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+    }
+  ],
+  "objects": [
+    {
+      "actor_id": "ball",
+      "type": "soccer_ball",
+      "translation_m": [0.0, 0.0, 0.075],
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+    }
+  ]
+}

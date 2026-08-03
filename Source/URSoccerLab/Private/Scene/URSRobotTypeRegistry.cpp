@@ -30,6 +30,12 @@ void FURSRobotTypeRegistry::RegisterDefaultTypes()
 	PiPlus.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus");
 	PiPlus.DefaultBaseHeightM = 0.3762;
 	Register(PiPlus);
+
+	FURSRobotType Mos9;
+	Mos9.Name = TEXT("mos9");
+	Mos9.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/mos9/mos9.mos9");
+	Mos9.DefaultBaseHeightM = 0.45;
+	Register(Mos9);
 }
 
 const FURSRobotType* FURSRobotTypeRegistry::Find(const FString& Name) const
