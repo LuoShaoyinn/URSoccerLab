@@ -236,9 +236,16 @@ bool UURSTcpTransportComponent::StartTransport()
 		return false;
 	}
 
+	Core->OnRobotsChanged.AddDynamic(this, &UURSTcpTransportComponent::OnRobotsChanged);
+
 	RebuildListeners();
 	UE_LOG(LogTemp, Log, TEXT("[URS TCP] Transport started."));
 	return true;
+}
+
+void UURSTcpTransportComponent::OnRobotsChanged()
+{
+	RebuildListeners();
 }
 
 void UURSTcpTransportComponent::StopTransport()

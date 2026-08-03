@@ -42,7 +42,7 @@ DEFAULT_UE = Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEdit
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
 NDISPLAY_DIR = ROOT / "Saved/Generated/NDisplay"
-READY_MARKER = "Transport started"
+READY_MARKER = "Robot 'robot_rp0' listening on port"
 
 
 def _read_scene(scene_config: Path) -> dict:
@@ -83,13 +83,13 @@ def _build_sim_command(args: argparse.Namespace, ndisplay_path: Path) -> list[st
     return command
 
 
-def _wait_for_ready(log_path: Path, deadline: float) -> bool:
+def _wait_for_ready(log_path: Path, marker: str, deadline: float) -> bool:
     while time.time() < deadline:
         try:
             text = log_path.read_text(errors="ignore")
         except FileNotFoundError:
             text = ""
-        if READY_MARKER in text:
+        if marker in text:
             return True
         time.sleep(0.5)
     return False
@@ -158,9 +158,12 @@ def main() -> int:
     atexit.register(kill_sim)
 
     try:
+        robot_count = len(config["robots"])
+        last_port = 10000 + robot_count - 1
+        ready_marker = f"listening on port {last_port}"
         ready_deadline = time.time() + args.ready_timeout
-        if not _wait_for_ready(log_path, ready_deadline):
-            print(f"simulator did not signal '{READY_MARKER}' within "
+        if not _wait_for_ready(log_path, ready_marker, ready_deadline):
+            print(f"simulator did not signal '{ready_marker}' within "
                   f"{args.ready_timeout:.0f}s", file=sys.stderr)
             return 2
         print(f"[run_with_sim] transport ready (sim pgid {os.getpgid(sim.pid)})", flush=True)

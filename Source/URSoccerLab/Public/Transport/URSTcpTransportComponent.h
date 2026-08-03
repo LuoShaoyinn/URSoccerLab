@@ -121,6 +121,12 @@ private:
 	void StopTransport();
 	void RebuildListeners();
 
+	/** Called by the Core when its robot endpoint set changes (e.g. after
+	 *  post-compile rebuild), so listeners are (re)opened for the real robot
+	 *  set instead of the empty set seen during BeginPlay. */
+	UFUNCTION()
+	void OnRobotsChanged();
+
 	void AcceptNewConnections(FRobotListener& Listener);
 	void ReadFromClients(FRobotListener& Listener);
 	void FlushAllWrites();
