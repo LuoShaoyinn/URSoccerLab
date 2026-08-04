@@ -4,13 +4,13 @@
     {
       "actor_id": "robot_rp0",
       "type": "mos9",
-      "translation_m": [-1.0, -0.5, 0.45],
+      "translation_m": [-1.0, -0.5, 0.53],
       "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
     },
     {
       "actor_id": "robot_rp1",
       "type": "mos9",
-      "translation_m": [1.0, -0.5, 0.45],
+      "translation_m": [1.0, -0.5, 0.53],
       "rotation_quat_xyzw": [0.0, 0.0, 1.0, 0.0]
     }
   ],

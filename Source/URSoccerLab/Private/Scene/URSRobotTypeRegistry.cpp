@@ -34,7 +34,7 @@ void FURSRobotTypeRegistry::RegisterDefaultTypes()
 	FURSRobotType Mos9;
 	Mos9.Name = TEXT("mos9");
 	Mos9.BlueprintAssetPath = TEXT("/Game/URSoccerLab/Robots/mos9/mos9.mos9");
-	Mos9.DefaultBaseHeightM = 0.45;
+	Mos9.DefaultBaseHeightM = 0.53;
 	Register(Mos9);
 }
 
