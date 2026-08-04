@@ -10,7 +10,7 @@
     {
       "actor_id": "robot_observer",
       "type": "mos9",
-      "translation_m": [0.0, 1.5, 0.53],
+      "translation_m": [0.0, 3.0, 0.53],
       "rotation_quat_xyzw": [0.0, 0.0, -0.7071, 0.7071]
     }
   ],
