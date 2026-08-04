@@ -631,36 +631,43 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 	AAMjManager* ManagerPtr = Manager.Get();
 	if (!ManagerPtr || !ManagerPtr->PhysicsEngine) return false;
 
-	// Lazy-resolve the normalized head/camera link body. UMjCamera is UE-side
-	// only (the compiled MuJoCo model has ncam==0), so cameras can't resolve
-	// it. Instead, the head_pitch_joint's body IS the camera-bearing head
-	// link for both supported robots (mos9: head_link, pi_plus: head_pitch_link).
-	if (Ep->HeadCameraBodyId < 0)
+	// Lazy-resolve the normalized head/camera link body by reading link (body)
+	// names from the compiled model. UMjCamera is UE-side only (ncam==0), so
+	// the head link is identified by its body name, scoped to this robot's
+	// subtree. The camera-bearing head link is "head_link" (mos9) or
+	// "head_pitch_link" (pi_plus).
+	if (Ep->HeadCameraBodyId < 0 && Ep->RootBodyId > 0)
 	{
 		if (const mjModel* M = ManagerPtr->PhysicsEngine->GetModel())
 		{
-			auto BodyForJoint = [&](const FString& WantName) -> int32 {
-				for (const FJointInfo& Ji : Ep->Joints)
+			auto IsInSubtree = [M](int32 BodyId, int32 RootId) -> bool {
+				for (int32 b = BodyId; b > 0; b = M->body_parentid[b])
 				{
-					if (Ji.Name == WantName && Ji.MjId >= 0 && Ji.MjId < M->njnt)
-					{
-						return M->jnt_bodyid[Ji.MjId];
-					}
+					if (b == RootId) return true;
 				}
-				return -1;
+				return false;
 			};
-			Ep->HeadCameraBodyId = BodyForJoint(TEXT("head_pitch_joint"));
+			int32 Fallback = -1;
+			for (int32 b = 1; b < M->nbody; ++b)
+			{
+				if (!IsInSubtree(b, Ep->RootBodyId)) continue;
+				const char* Bn = mj_id2name(M, mjOBJ_BODY, b);
+				if (!Bn) continue;
+				const FString Norm = URSoccerLab::FRobotNames::NormalizeRobotComponentName(FString(Bn), Ep->ActorId);
+				if (Norm.EndsWith(TEXT("head_link")) || Norm.EndsWith(TEXT("head_pitch_link")))
+				{
+					Ep->HeadCameraBodyId = b;
+					break;
+				}
+				if (Fallback < 0 && Norm.Contains(TEXT("head"))
+					&& !Norm.Contains(TEXT("neck")) && !Norm.Contains(TEXT("yaw")))
+				{
+					Fallback = b;
+				}
+			}
 			if (Ep->HeadCameraBodyId < 0)
 			{
-				// Fallback: any head joint's body.
-				for (const FJointInfo& Ji : Ep->Joints)
-				{
-					if (Ji.Name.Contains(TEXT("head")) && Ji.MjId >= 0 && Ji.MjId < M->njnt)
-					{
-						Ep->HeadCameraBodyId = M->jnt_bodyid[Ji.MjId];
-						break;
-					}
-				}
+				Ep->HeadCameraBodyId = Fallback;
 			}
 		}
 	}
