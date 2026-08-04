@@ -143,6 +143,7 @@ public:
 	struct FPoseLock
 	{
 		bool bActive = false;
+		bool bLockJoints = false;
 		FVector Translation = FVector::ZeroVector;
 		FQuat Rotation = FQuat::Identity;
 		TArray<float> JointQpos;

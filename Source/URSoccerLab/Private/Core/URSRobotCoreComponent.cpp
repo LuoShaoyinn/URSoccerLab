@@ -477,44 +477,68 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 			Data->qpos[Adr+6] = Ep.PoseLock.Rotation.Z;
 		}
 
-		int32 Cursor = 0;
-		for (const FQposLayout::FSlot& Slot : Layout.NonRootSlots)
-		{
-			for (int32 Idx = 0; Idx < Slot.Size; ++Idx)
-			{
-				float V = Ep.PoseLock.JointQpos.IsValidIndex(Cursor) ? Ep.PoseLock.JointQpos[Cursor] : 0.0f;
-				Data->qpos[Slot.Adr + Idx] = V;
-				++Cursor;
-			}
-		}
-
-		for (UMjJoint* Joint : Articulation->GetJoints())
-		{
-			if (!Joint) continue;
-			int32 JId = Joint->GetMjID();
-			if (JId < 0 || JId >= Model->njnt) continue;
-			int32 DofAdr = Model->jnt_dofadr[JId];
-			int32 DofSize = (Model->jnt_type[JId] == mjJNT_FREE) ? 6 :
-			                (Model->jnt_type[JId] == mjJNT_BALL) ? 3 : 1;
-			for (int32 i = 0; i < DofSize; ++i)
-				Data->qvel[DofAdr + i] = 0.0;
-		}
-
-		// Sync actuator targets so PD controllers don't fight
-		for (int32 Ai = 0; Ai < Ep.Actuators.Num(); ++Ai)
-		{
-			int32 Am = Ep.Actuators[Ai].MjId;
-			if (Am < 0 || Am >= Model->nu) continue;
-			int32 Jm = Model->actuator_trnid[Am * 2];
-			if (Jm < 0 || Jm >= Model->njnt) continue;
-			int32 Qa = Model->jnt_qposadr[Jm];
-			Data->ctrl[Am] = Data->qpos[Qa];
-			Ep.LatestCommand[Ai] = static_cast<float>(Data->qpos[Qa]);
-			if (UMjActuator* Act = Ep.Actuators[Ai].Actuator.Get())
-				Act->SetNetworkControl(static_cast<float>(Data->qpos[Qa]));
-		}
-		Ep.LastCommandTimeSec = FPlatformTime::Seconds();
-		Ep.bHasCommand = true;
+ 		int32 Cursor = 0;
+ 		for (const FQposLayout::FSlot& Slot : Layout.NonRootSlots)
+ 		{
+ 			for (int32 Idx = 0; Idx < Slot.Size; ++Idx)
+ 			{
+ 				if (Ep.PoseLock.bLockJoints)
+ 				{
+ 					float V = Ep.PoseLock.JointQpos.IsValidIndex(Cursor) ? Ep.PoseLock.JointQpos[Cursor] : 0.0f;
+ 					Data->qpos[Slot.Adr + Idx] = V;
+ 				}
+ 				++Cursor;
+ 			}
+ 		}
+ 
+ 		if (Ep.PoseLock.bLockJoints)
+ 		{
+ 			for (UMjJoint* Joint : Articulation->GetJoints())
+ 			{
+ 				if (!Joint) continue;
+ 				int32 JId = Joint->GetMjID();
+ 				if (JId < 0 || JId >= Model->njnt) continue;
+ 				int32 DofAdr = Model->jnt_dofadr[JId];
+ 				int32 DofSize = (Model->jnt_type[JId] == mjJNT_FREE) ? 6 :
+ 				                (Model->jnt_type[JId] == mjJNT_BALL) ? 3 : 1;
+ 				for (int32 i = 0; i < DofSize; ++i)
+ 					Data->qvel[DofAdr + i] = 0.0;
+ 			}
+ 		}
+ 		else
+ 		{
+ 			// Base-only lock: zero freejoint velocity so the base stays
+ 			// pinned, but leave hinge joints free to move.
+ 			for (UMjJoint* Joint : Articulation->GetJoints())
+ 			{
+ 				if (!Joint) continue;
+ 				int32 JId = Joint->GetMjID();
+ 				if (JId < 0 || JId >= Model->njnt) continue;
+ 				if (Model->jnt_type[JId] != mjJNT_FREE) continue;
+ 				int32 DofAdr = Model->jnt_dofadr[JId];
+ 				for (int32 i = 0; i < 6; ++i)
+ 					Data->qvel[DofAdr + i] = 0.0;
+ 			}
+ 		}
+ 
+ 		if (Ep.PoseLock.bLockJoints)
+ 		{
+ 			// Sync actuator targets so PD controllers don't fight
+ 			for (int32 Ai = 0; Ai < Ep.Actuators.Num(); ++Ai)
+ 			{
+ 				int32 Am = Ep.Actuators[Ai].MjId;
+ 				if (Am < 0 || Am >= Model->nu) continue;
+ 				int32 Jm = Model->actuator_trnid[Am * 2];
+ 				if (Jm < 0 || Jm >= Model->njnt) continue;
+ 				int32 Qa = Model->jnt_qposadr[Jm];
+ 				Data->ctrl[Am] = Data->qpos[Qa];
+ 				Ep.LatestCommand[Ai] = static_cast<float>(Data->qpos[Qa]);
+ 				if (UMjActuator* Act = Ep.Actuators[Ai].Actuator.Get())
+ 					Act->SetNetworkControl(static_cast<float>(Data->qpos[Qa]));
+ 			}
+ 			Ep.LastCommandTimeSec = FPlatformTime::Seconds();
+ 			Ep.bHasCommand = true;
+ 		}
 
 		mj_forward(Model, Data);
 	}
@@ -549,7 +573,15 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 		Ep->PoseLock.bActive = true;
 		if (Trans) Ep->PoseLock.Translation = *Trans;
 		if (Rot) Ep->PoseLock.Rotation = *Rot;
-		if (JointQpos) Ep->PoseLock.JointQpos = *JointQpos;
+		if (JointQpos)
+		{
+			Ep->PoseLock.JointQpos = *JointQpos;
+			Ep->PoseLock.bLockJoints = true;
+		}
+		else
+		{
+			Ep->PoseLock.bLockJoints = false;
+		}
 	}
 	else
 	{
