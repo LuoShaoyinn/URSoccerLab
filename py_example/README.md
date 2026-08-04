@@ -10,7 +10,7 @@ uv sync
 ```
 
 The default environment uses Python 3.12 and does not install PyTorch. Choose
-exactly one PyTorch backend when running the walking-policy example:
+exactly one PyTorch backend when running the pi_plus walking-policy example:
 
 ```bash
 uv sync --extra torch_cpu
@@ -28,7 +28,7 @@ CUDA 13.0.
 uv run python -c "
 from ursoccerlab import RobotClient
 client = RobotClient('127.0.0.1', 10000)
-client.send_command({'head_pitch_joint': 0.1})
+client.send_command({'head_pitch_joint_servo': 0.1})
 for kind, data in client.recv():
     print(kind, type(data))
 "
@@ -81,12 +81,56 @@ recorded.
 
 ```bash
 uv run python examples/move_head.py \
-  --video0 out/head_motion_rp0.mp4 --video1 out/head_motion_rp1.mp4
+  --port 10000 10001 --duration 10 \
+  --video out/head_motion
 ```
 
-Use `Config/examples/two_robots_face_to_face.json` in the runtime command.
+Use `Config/examples/two_robots_face_to_face.json` (pi_plus) or
+`Config/examples/mos9_face_to_face.json` (mos9) in the runtime command.
 
-## 2. Walker And Observer
+For a single robot:
+
+```bash
+uv run python examples/move_head.py \
+  --port 10000 --duration 10 \
+  --video out/head_solo
+```
+
+## 2. Standing
+
+The same scene, but neither robot receives a head command. Static capture only:
+
+```bash
+uv run python examples/standing.py \
+  --port 10000 10001 --duration 5 \
+  --video out/standing
+```
+
+## 3. MOS9 Walking
+
+Run the MOS9 AMP walking policy (ONNX, walk_v11_terrain). The robot walks
+forward while the left-eye camera is recorded.
+
+```bash
+uv run python examples/mos9_walk.py \
+  --robot-port 10000 --vx 0.4 --duration 15 \
+  --video out/mos9_walker.mp4
+```
+
+Use `Config/examples/mos9_solo.json` in the runtime command. Requires
+`refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx`.
+
+With a face-to-face observer:
+
+```bash
+uv run python examples/mos9_walk.py \
+  --robot-port 10000 --observer-port 10001 --vx 0.4 --duration 15 \
+  --video out/mos9_walker.mp4 --observer-video out/mos9_observer.mp4
+```
+
+Use `Config/examples/mos9_face_to_face.json`.
+
+## 4. Pi Plus Walking
 
 `robot_rp0` starts at `(-1, 0)` and walks along `+X`. `robot_rp1` stands at
 `(0, 3)` facing the walker. The policy sends motor commands only to `robot_rp0`
@@ -106,18 +150,6 @@ The policy was trained against the older mos-brain Pi model. It is useful for
 exercising the TCP motor and camera path, but is not a validated gait for the
 current Pi MJCF until its dynamics and actuator calibration are matched or the
 policy is retrained.
-
-## 3. Static Face-To-Face
-
-The same `(-1, 0)` / `(1, 0)` scene, but neither robot receives a motor
-command. This is a two-camera standing capture, not a control test:
-
-```bash
-uv run python examples/standing.py \
-  --video0 out/standing_rp0.mp4 --video1 out/standing_rp1.mp4
-```
-
-Use `Config/examples/two_robots_face_to_face.json` in the runtime command.
 
 ## Vision Smoke Test
 
@@ -201,11 +233,6 @@ the ball through the admin endpoint so model warm-up cannot leave stale scene
 state; pass `--no-reset-at-start` to preserve the live poses. The example
 writes raw and annotated videos plus an external observer video and JSON
 detection/control trace under `out/dribble/`.
-
-The included walking policy was trained against older Pi dynamics. The default
-dribble interval is deliberately short and the example stops on a base-height
-or tilt guard; longer vision tracking works, but longer gait runs should wait
-for a policy matched to the current MJCF.
 
 ## Layout
 

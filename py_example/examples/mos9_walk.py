@@ -16,8 +16,6 @@ For solo walking, use ``Config/examples/mos9_solo.json``::
 from __future__ import annotations
 
 import argparse
-import json
-import math
 import time
 from pathlib import Path
 
