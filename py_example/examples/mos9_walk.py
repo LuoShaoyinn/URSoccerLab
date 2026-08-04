@@ -201,7 +201,7 @@ def main() -> int:
             joint_qpos[i] = 1.4
     try:
         admin = AdminClient(args.host, args.admin_port)
-        admin.set_pose(args.actor, translation_m=[0.0, 0.0, args.base_height],
+        admin.set_pose(args.actor, translation_m=[-3.0, 0.0, args.base_height],
                        rotation_quat_xyzw=[0, 0, 0, 1], joint_qpos=joint_qpos)
         admin.close()
     except Exception as e:
