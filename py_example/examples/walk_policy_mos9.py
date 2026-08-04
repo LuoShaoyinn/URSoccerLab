@@ -147,7 +147,7 @@ def main() -> int:
     default_cmd["head_yaw_joint_servo"] = 0.0
     default_cmd["head_pitch_joint_servo"] = 0.0
     conn.send_json(default_cmd)
-    time.sleep(0.2)
+    time.sleep(0.05)  # brief pause for command to arrive
 
     # Set default standing pose via admin (shoulder_roll ±1.4, base at height)
     joint_names_urs_state = list(state.get("joints", {}).keys())
@@ -166,36 +166,46 @@ def main() -> int:
         print("[walk] set default pose (shoulder_roll ±1.4, z={:.2f})".format(args.base_height), flush=True)
     except Exception as e:
         print(f"[walk] WARNING: admin set_pose failed: {e}", flush=True)
-    time.sleep(0.5)
+    # Send default command again immediately (command timeout is 0.1s)
+    conn.send_json(default_cmd)
 
     # Initialize
     prev_action = np.zeros(18, dtype=np.float32)
     frames: list[np.ndarray] = []
     interval = 1.0 / args.policy_hz
     t0 = time.monotonic()
-    next_cmd = t0
     step = 0
+    last_policy_sim_time = -1.0
+    ctrl_dt = 1.0 / args.policy_hz
+    last_cmd = {sn: float(DEFAULT_QPOS[i]) for i, sn in enumerate(SERVO_NAMES)}
+    last_cmd["head_yaw_joint_servo"] = 0.0
+    last_cmd["head_pitch_joint_servo"] = 0.0
 
     print(f"[walk] running for {args.duration:.0f}s (vx={args.vx} vy={args.vy} wz={args.wz})...", flush=True)
 
     while time.monotonic() - t0 < args.duration:
-        now = time.monotonic()
-        if now >= next_cmd:
-            # Read all available state
-            latest_state = None
-            for ftype, payload in conn.receive_available():
-                if ftype == TYPE_JSON:
-                    latest_state = json.loads(payload.decode("utf-8"))
-                elif ftype == TYPE_RGB:
-                    cams = (parse_image_message(payload) if payload and payload[0] == IMAGE_MESSAGE_VERSION
-                            else parse_camera(payload))
-                    if cams and cams[0]["data"]:
-                        frames.append(camera_to_rgb(cams[0]))
+        # Read all available state
+        latest_state = None
+        for ftype, payload in conn.receive_available():
+            if ftype == TYPE_JSON:
+                latest_state = json.loads(payload.decode("utf-8"))
+            elif ftype == TYPE_RGB:
+                cams = (parse_image_message(payload) if payload and payload[0] == IMAGE_MESSAGE_VERSION
+                        else parse_camera(payload))
+                if cams and cams[0]["data"]:
+                    frames.append(camera_to_rgb(cams[0]))
 
-            if latest_state is None:
-                latest_state = state
-            else:
-                state = latest_state
+        if latest_state is None:
+            time.sleep(0.001)
+            continue
+        state = latest_state
+
+        # Resend last command every state update to prevent 100ms timeout
+        conn.send_json(last_cmd)
+
+        # Gate policy on sim_time
+        current_sim_time = latest_state.get("sim_time", 0.0)
+        if current_sim_time - last_policy_sim_time >= ctrl_dt:
 
             # Build observation
             base = latest_state.get("base", {})
@@ -205,9 +215,9 @@ def main() -> int:
             quat = base.get("quat", [1, 0, 0, 0])
             w, x, y, z = quat
             R = np.array([
-                [1 - 2*(y*y+z*z), 2*(x*y+w*z),   2*(x*z-w*y)],
-                [2*(x*y-w*z),     1-2*(x*x+z*z), 2*(y*z+w*x)],
-                [2*(x*z+w*y),     2*(y*z-w*x),   1-2*(x*x+y*y)],
+                [1 - 2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
+                [2*(x*y+z*w),     1-2*(x*x+z*z), 2*(y*z-x*w)],
+                [2*(x*z-y*w),     2*(y*z+x*w),   1-2*(x*x+y*y)],
             ])
 
             # Base angular velocity: qvel[3:6] is WORLD frame, policy needs BODY frame
@@ -237,28 +247,18 @@ def main() -> int:
             prev_action = action.astype(np.float32)
 
             # Send position targets to all 20 actuators
-            cmd = {sn: float(target[i]) for i, sn in enumerate(SERVO_NAMES)}
-            # Head joints: hold at 0
-            cmd["head_yaw_joint_servo"] = 0.0
-            cmd["head_pitch_joint_servo"] = 0.0
-            conn.send_json(cmd)
+            last_cmd = {sn: float(target[i]) for i, sn in enumerate(SERVO_NAMES)}
+            last_cmd["head_yaw_joint_servo"] = 0.0
+            last_cmd["head_pitch_joint_servo"] = 0.0
+            conn.send_json(last_cmd)
 
             step += 1
-            if step % 25 == 0:
+            last_policy_sim_time = current_sim_time
+            if step % 50 == 0:
                 pos = base.get("pos", [0, 0, 0])
-                elapsed = now - t0
-                print(f"  t={elapsed:.1f} pos=({pos[0]:+.2f},{pos[1]:+.2f},{pos[2]:.2f}) "
+                print(f"  step={step} sim_t={current_sim_time:.1f} pos=({pos[0]:+.2f},{pos[1]:+.2f},{pos[2]:.2f}) "
                       f"frames={len(frames)}", flush=True)
-
-            next_cmd = now + interval
         else:
-            # Pump for camera frames between commands
-            for ftype, payload in conn.receive_available():
-                if ftype == TYPE_RGB:
-                    cams = (parse_image_message(payload) if payload and payload[0] == IMAGE_MESSAGE_VERSION
-                            else parse_camera(payload))
-                    if cams and cams[0]["data"]:
-                        frames.append(camera_to_rgb(cams[0]))
             time.sleep(0.001)
 
     print("[walk] done, saving video...", flush=True)
