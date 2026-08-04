@@ -129,16 +129,29 @@ def main(default_mode: str = "sweep") -> int:
     # Lock base IMMEDIATELY (before robot falls) if requested
     admin: AdminClient | None = None
     if args.lock:
-        admin = AdminClient(args.host, args.admin_port)
         for i in range(len(args.port)):
             actor_id = args.actor[i] if i < len(args.actor) else f"robot_rp{i}"
-            resp = admin.lock_pose(
-                actor_id,
-                translation_m=[0.0, 0.0, args.base_height],
-                rotation_quat_xyzw=[0.0, 0.0, 0.0, 1.0],
-            )
-            print(f"[demo] lock_pose({actor_id}) at z={args.base_height}: "
-                  f"{resp.get('ok', resp)}", flush=True)
+            for attempt in range(3):
+                try:
+                    admin = AdminClient(args.host, args.admin_port)
+                    resp = admin.lock_pose(
+                        actor_id,
+                        translation_m=[0.0, 0.0, args.base_height],
+                        rotation_quat_xyzw=[0.0, 0.0, 0.0, 1.0],
+                    )
+                    admin.close()
+                    print(f"[demo] lock_pose({actor_id}) at z={args.base_height}: "
+                          f"{resp.get('ok', resp)}", flush=True)
+                    break
+                except (TimeoutError, OSError) as e:
+                    try:
+                        admin.close()
+                    except Exception:
+                        pass
+                    if attempt < 2:
+                        time.sleep(1.0)
+                    else:
+                        print(f"[demo] WARNING: lock_pose({actor_id}) failed: {e}", flush=True)
 
     robots = [RobotConnection(args.host, p) for p in args.port]
     n = len(robots)
@@ -253,11 +266,6 @@ def main(default_mode: str = "sweep") -> int:
             time.sleep(0.001)
 
     print("[demo] done, saving videos ...", flush=True)
-    if admin:
-        for i in range(n):
-            actor_id = args.actor[i] if i < len(args.actor) else f"robot_rp{i}"
-            admin.unlock_pose(actor_id)
-        admin.close()
     for r in robots:
         r.close()
     for i, r in enumerate(robots):
@@ -265,6 +273,17 @@ def main(default_mode: str = "sweep") -> int:
             f"{args.video.stem}_{i}{args.video.suffix}")
         write_video(r.frames, out_path, args.video_fps)
         print(f"  robot {i}: {out_path} ({len(r.frames)} frames)", flush=True)
+
+    # Best-effort unlock (sim is about to be killed anyway)
+    if args.lock:
+        for i in range(n):
+            actor_id = args.actor[i] if i < len(args.actor) else f"robot_rp{i}"
+            try:
+                a = AdminClient(args.host, args.admin_port)
+                a.unlock_pose(actor_id)
+                a.close()
+            except Exception:
+                pass
     return 0
 
 
