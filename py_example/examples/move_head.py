@@ -122,36 +122,25 @@ def main(default_mode: str = "sweep") -> int:
     ap.add_argument("--admin-port", type=int, default=11000)
     ap.add_argument("--actor", nargs="+", default=[],
                     help="actor_id per --port for admin lock_pose")
-    ap.add_argument("--scene", type=Path, default=None,
-                    help="scene config JSON to read spawn poses for lock_pose")
+    ap.add_argument("--base-height", type=float, default=0.45,
+                    help="base z-height for lock_pose")
     args = ap.parse_args()
 
-    # Read spawn poses from scene config if provided
-    spawn_poses: list[tuple[list[float], list[float]]] = []
-    if args.scene:
-        scene = json.loads(args.scene.read_text())
-        for r in scene.get("robots", []):
-            spawn_poses.append((
-                r.get("translation_m", [0, 0, 0]),
-                r.get("rotation_quat_xyzw", [0, 0, 0, 1]),
-            ))
-
     # Lock base IMMEDIATELY (before robot falls) if requested
+    admin: AdminClient | None = None
     if args.lock:
         for i in range(len(args.port)):
             actor_id = args.actor[i] if i < len(args.actor) else f"robot_rp{i}"
-            t_m, r_q = (spawn_poses[i] if i < len(spawn_poses)
-                        else ([0, 0, 0.45], [0, 0, 0, 1]))
             for attempt in range(3):
                 try:
                     admin = AdminClient(args.host, args.admin_port)
-                    admin.set_pose(actor_id,
-                                   translation_m=t_m, rotation_quat_xyzw=r_q)
                     resp = admin.lock_pose(
                         actor_id,
-                        translation_m=t_m, rotation_quat_xyzw=r_q)
+                        translation_m=[0.0, 0.0, args.base_height],
+                        rotation_quat_xyzw=[0.0, 0.0, 0.0, 1.0],
+                    )
                     admin.close()
-                    print(f"[demo] lock_pose({actor_id}) at {t_m}: "
+                    print(f"[demo] lock_pose({actor_id}) at z={args.base_height}: "
                           f"{resp.get('ok', resp)}", flush=True)
                     break
                 except (TimeoutError, OSError) as e:
