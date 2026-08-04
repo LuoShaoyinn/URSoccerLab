@@ -28,7 +28,7 @@ EXAMPLES_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = EXAMPLES_DIR.parents[1]
 sys.path.insert(0, str(EXAMPLES_DIR))
 
-from walk_policy import (  # noqa: E402
+from pi_walk import (  # noqa: E402
     ACTION_SCALE,
     DEFAULT_DOF,
     ISAAC_TO_MUJOCO,

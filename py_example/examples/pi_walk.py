@@ -15,7 +15,7 @@ Run with one of the optional PyTorch backends:
 
     cd py_example
     uv sync --extra torch_rocm
-    uv run --extra torch_rocm python examples/walk_policy.py \
+    uv run --extra torch_rocm python examples/pi_walk.py \
         --vx 0.35 --duration 15 \
         --video out/walker.mp4 \
         --observer-video out/observer.mp4

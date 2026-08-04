@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Run a MOS9 walking policy (ONNX) while recording both robots' cameras.
 
-The simulator must be running with a scene that has at least one MOS9 robot.
-For the observer variant, use ``Config/examples/mos9_face_to_face.json``::
+The walker follows the AMP walk_v11_terrain policy.  A second robot stands
+as a stationary observer, recording the walk from its left-eye camera.
+
+Use ``Config/examples/mos9_walker_and_observer.json``::
 
     cd py_example
-    uv run python examples/mos9_walk.py --robot-port 10000 --vx 0.4 --duration 15 \
-        --video out/walker.mp4 --observer-port 10001 --observer-video out/observer.mp4
+    uv run python examples/mos9_walk.py --robot-port 10000 --observer-port 10001 \
+        --vx 0.4 --duration 15 \
+        --video out/walker.mp4 --observer-video out/observer.mp4
 
-For solo walking, use ``Config/examples/mos9_solo.json``::
+For solo walking (no observer), pass ``--observer-port 0`` and use
+``Config/examples/mos9_solo.json``::
 
-    uv run python examples/mos9_walk.py --robot-port 10000 --vx 0.4 --duration 15 \
+    uv run python examples/mos9_walk.py --robot-port 10000 --observer-port 0 \
+        --vx 0.4 --duration 15 \
         --video out/walker.mp4
 """
 from __future__ import annotations
@@ -99,7 +104,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--robot-port", type=int, default=10000)
-    parser.add_argument("--observer-port", type=int, default=0)
+    parser.add_argument("--observer-port", type=int, default=10001,
+                        help="observer robot TCP port (0 to skip observer)")
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
     parser.add_argument("--duration", type=float, default=15.0)
     parser.add_argument("--vx", type=float, default=0.4)

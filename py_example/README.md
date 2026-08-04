@@ -108,19 +108,9 @@ uv run python examples/standing.py \
 
 ## 3. MOS9 Walking
 
-Run the MOS9 AMP walking policy (ONNX, walk_v11_terrain). The robot walks
-forward while the left-eye camera is recorded.
-
-```bash
-uv run python examples/mos9_walk.py \
-  --robot-port 10000 --vx 0.4 --duration 15 \
-  --video out/mos9_walker.mp4
-```
-
-Use `Config/examples/mos9_solo.json` in the runtime command. Requires
-`refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx`.
-
-With a face-to-face observer:
+Run the MOS9 AMP walking policy (ONNX, walk_v11_terrain). The walker follows
+the policy while an observer robot stands still and records the walk from its
+left-eye camera.
 
 ```bash
 uv run python examples/mos9_walk.py \
@@ -128,7 +118,19 @@ uv run python examples/mos9_walk.py \
   --video out/mos9_walker.mp4 --observer-video out/mos9_observer.mp4
 ```
 
-Use `Config/examples/mos9_face_to_face.json`.
+Use `Config/examples/mos9_walker_and_observer.json` in the runtime command.
+Requires
+`refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx`.
+
+For solo walking (no observer):
+
+```bash
+uv run python examples/mos9_walk.py \
+  --robot-port 10000 --observer-port 0 --vx 0.4 --duration 15 \
+  --video out/mos9_walker.mp4
+```
+
+Use `Config/examples/mos9_solo.json`.
 
 ## 4. Pi Plus Walking
 
@@ -138,7 +140,7 @@ and records both left-eye cameras:
 
 ```bash
 uv sync --extra torch_rocm
-uv run --extra torch_rocm python examples/walk_policy.py \
+uv run --extra torch_rocm python examples/pi_walk.py \
   --vx 0.35 --duration 15 \
   --video out/walker.mp4 \
   --observer-video out/observer.mp4
@@ -153,34 +155,8 @@ policy is retrained.
 
 ## Vision Smoke Test
 
-From the project root:
-
-```bash
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
-```
-
-Starts the simulator, connects via TCP, sends zero commands, captures camera
-frames, and validates non-blank RGB content.
-
-The runner can compare JPEG and uncompressed BGRA transport:
-
-```bash
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
-  --camera-compress jpeg --jpeg-quality 85 \
-  --out py_example/out/vision_jpeg_q85
-
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
-  --camera-compress raw \
-  --out py_example/out/vision_raw
-```
-
-Each output directory includes `transport.json` with the received codec and
-encoded payload sizes. The saved `camera.png` is only a decoded inspection
-image; it does not indicate the wire encoding.
-
-The launcher uses Unreal's persistent Zen derived-data cache by default so
-compiled shaders are reused. `--force-memory-ddc` is available only as a
-recovery option; it discards compiled shader data when Unreal exits.
+Removed. Use `Tools/runtime/run_vision_smoke_test.py` from the project root
+for automated vision validation.
 
 ## YOLO Left-Eye Inference
 
@@ -197,7 +173,7 @@ For repeatable inference on an existing capture:
 
 ```bash
 uv run --extra vision python examples/vision/yolo_left_eye.py \
-  --image out/vision_smoke/camera.png --out out/yolo_saved_frame
+  --image out/yolo/camera.png --out out/yolo_saved_frame
 ```
 
 The example defaults to `refs/vision/models/yolo26/yolo26s_best.onnx` and
