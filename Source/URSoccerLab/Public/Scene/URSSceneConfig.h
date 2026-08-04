@@ -90,6 +90,8 @@ struct URSOCCERLAB_API FURSNoiseConfig
 	double Qtor = 0.0;          // actuator command / torque feedback
 	double ImuQuat = 0.0;       // base orientation quaternion components
 	double ImuAngVel = 0.0;     // base angular velocity (rad/s)
+	double CameraImuQuat = 0.0; // head/camera link orientation quaternion
+	double CameraImuAngVel = 0.0; // head/camera link angular velocity (rad/s)
 	double SelfPos = 0.0;       // privileged self world pos (m)
 	double BallPosRelated = 0.0;// privileged ball-in-yaw-frame pos (m)
 	double BallVelRelated = 0.0;// privileged ball-in-yaw-frame vel (m/s)

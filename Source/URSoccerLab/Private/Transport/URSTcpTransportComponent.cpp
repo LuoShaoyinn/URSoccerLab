@@ -1470,6 +1470,31 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 	}
 	Root->SetArrayField(TEXT("cameras"), CamerasArr);
 
+	if (State.bHasCameraImu)
+	{
+		FQuat HeadQuat = State.HeadQuat;
+		if (State.Noise.CameraImuQuat > 0.0)
+		{
+			const double S = State.Noise.CameraImuQuat;
+			HeadQuat.W += Gaussian() * S;
+			HeadQuat.X += Gaussian() * S;
+			HeadQuat.Y += Gaussian() * S;
+			HeadQuat.Z += Gaussian() * S;
+			HeadQuat.Normalize();
+		}
+		auto CameraImuObj = MakeShared<FJsonObject>();
+		CameraImuObj->SetArrayField(TEXT("quat"), {
+			MakeShared<FJsonValueNumber>(HeadQuat.W),
+			MakeShared<FJsonValueNumber>(HeadQuat.X),
+			MakeShared<FJsonValueNumber>(HeadQuat.Y),
+			MakeShared<FJsonValueNumber>(HeadQuat.Z) });
+		CameraImuObj->SetArrayField(TEXT("ang_vel"), {
+			MakeShared<FJsonValueNumber>(Noisy(State.HeadAngVel.X, State.Noise.CameraImuAngVel)),
+			MakeShared<FJsonValueNumber>(Noisy(State.HeadAngVel.Y, State.Noise.CameraImuAngVel)),
+			MakeShared<FJsonValueNumber>(Noisy(State.HeadAngVel.Z, State.Noise.CameraImuAngVel)) });
+		Root->SetObjectField(TEXT("camera_imu"), CameraImuObj);
+	}
+
 	if (State.bPrivSelfPos)
 	{
 		Root->SetArrayField(TEXT("self_pos"), {

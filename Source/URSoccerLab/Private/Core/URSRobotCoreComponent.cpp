@@ -631,6 +631,40 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 	AAMjManager* ManagerPtr = Manager.Get();
 	if (!ManagerPtr || !ManagerPtr->PhysicsEngine) return false;
 
+	// Lazy-resolve the normalized head/camera link body. UMjCamera is UE-side
+	// only (the compiled MuJoCo model has ncam==0), so cameras can't resolve
+	// it. Instead, the head_pitch_joint's body IS the camera-bearing head
+	// link for both supported robots (mos9: head_link, pi_plus: head_pitch_link).
+	if (Ep->HeadCameraBodyId < 0)
+	{
+		if (const mjModel* M = ManagerPtr->PhysicsEngine->GetModel())
+		{
+			auto BodyForJoint = [&](const FString& WantName) -> int32 {
+				for (const FJointInfo& Ji : Ep->Joints)
+				{
+					if (Ji.Name == WantName && Ji.MjId >= 0 && Ji.MjId < M->njnt)
+					{
+						return M->jnt_bodyid[Ji.MjId];
+					}
+				}
+				return -1;
+			};
+			Ep->HeadCameraBodyId = BodyForJoint(TEXT("head_pitch_joint"));
+			if (Ep->HeadCameraBodyId < 0)
+			{
+				// Fallback: any head joint's body.
+				for (const FJointInfo& Ji : Ep->Joints)
+				{
+					if (Ji.Name.Contains(TEXT("head")) && Ji.MjId >= 0 && Ji.MjId < M->njnt)
+					{
+						Ep->HeadCameraBodyId = M->jnt_bodyid[Ji.MjId];
+						break;
+					}
+				}
+			}
+		}
+	}
+
 	const double NowSec = FPlatformTime::Seconds();
 
 	OutState = FURSRobotState();
@@ -804,6 +838,30 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 				if (!Snapshot.XPos.IsValidIndex(PosAdr + 2)) continue;
 				OutState.AllPos.Add(Pair.Key,
 					FVector(Snapshot.XPos[PosAdr], Snapshot.XPos[PosAdr + 1], Snapshot.XPos[PosAdr + 2]));
+			}
+		}
+
+		// Camera/head IMU: orientation and body-frame angular velocity of the
+		// link that carries the eye cameras (the normalized head link).
+		if (Ep->HeadCameraBodyId > 0)
+		{
+			const int32 HB = Ep->HeadCameraBodyId;
+			const int32 QuatAdr = HB * 4;
+			const int32 VelAdr = HB * 6;
+			if (Snapshot.XQuat.IsValidIndex(QuatAdr + 3))
+			{
+				OutState.HeadQuat = FQuat(
+					Snapshot.XQuat[QuatAdr + 1],
+					Snapshot.XQuat[QuatAdr + 2],
+					Snapshot.XQuat[QuatAdr + 3],
+					Snapshot.XQuat[QuatAdr]);
+				OutState.bHasCameraImu = true;
+			}
+			if (Snapshot.CVel.IsValidIndex(VelAdr + 2))
+			{
+				// CVel angular part is already in the body (head) frame — the
+				// natural gyroscope reading.
+				OutState.HeadAngVel = FVector(Snapshot.CVel[VelAdr], Snapshot.CVel[VelAdr + 1], Snapshot.CVel[VelAdr + 2]);
 			}
 		}
 	});

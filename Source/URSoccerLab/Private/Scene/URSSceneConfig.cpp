@@ -404,8 +404,10 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 			ReadSigma(TEXT("qpos"), Spawn.Noise.Qpos);
 			ReadSigma(TEXT("qvel"), Spawn.Noise.Qvel);
 			ReadSigma(TEXT("qtor"), Spawn.Noise.Qtor);
-			ReadSigma(TEXT("imu_quat"), Spawn.Noise.ImuQuat);
-			ReadSigma(TEXT("imu_ang_vel"), Spawn.Noise.ImuAngVel);
+		ReadSigma(TEXT("imu_quat"), Spawn.Noise.ImuQuat);
+		ReadSigma(TEXT("imu_ang_vel"), Spawn.Noise.ImuAngVel);
+		ReadSigma(TEXT("camera_imu_quat"), Spawn.Noise.CameraImuQuat);
+		ReadSigma(TEXT("camera_imu_ang_vel"), Spawn.Noise.CameraImuAngVel);
 			ReadSigma(TEXT("self_pos"), Spawn.Noise.SelfPos);
 			ReadSigma(TEXT("ball_pos_related"), Spawn.Noise.BallPosRelated);
 			ReadSigma(TEXT("ball_vel_related"), Spawn.Noise.BallVelRelated);
@@ -560,6 +562,7 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		}
 		if (Spawn.Noise.Qpos > 0.0 || Spawn.Noise.Qvel > 0.0 || Spawn.Noise.Qtor > 0.0
 			|| Spawn.Noise.ImuQuat > 0.0 || Spawn.Noise.ImuAngVel > 0.0
+			|| Spawn.Noise.CameraImuQuat > 0.0 || Spawn.Noise.CameraImuAngVel > 0.0
 			|| Spawn.Noise.SelfPos > 0.0 || Spawn.Noise.BallPosRelated > 0.0
 			|| Spawn.Noise.BallVelRelated > 0.0 || Spawn.Noise.AllPos > 0.0)
 		{
@@ -569,6 +572,8 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 			NoiseObj->SetNumberField(TEXT("qtor"), Spawn.Noise.Qtor);
 			NoiseObj->SetNumberField(TEXT("imu_quat"), Spawn.Noise.ImuQuat);
 			NoiseObj->SetNumberField(TEXT("imu_ang_vel"), Spawn.Noise.ImuAngVel);
+			NoiseObj->SetNumberField(TEXT("camera_imu_quat"), Spawn.Noise.CameraImuQuat);
+			NoiseObj->SetNumberField(TEXT("camera_imu_ang_vel"), Spawn.Noise.CameraImuAngVel);
 			NoiseObj->SetNumberField(TEXT("self_pos"), Spawn.Noise.SelfPos);
 			NoiseObj->SetNumberField(TEXT("ball_pos_related"), Spawn.Noise.BallPosRelated);
 			NoiseObj->SetNumberField(TEXT("ball_vel_related"), Spawn.Noise.BallVelRelated);

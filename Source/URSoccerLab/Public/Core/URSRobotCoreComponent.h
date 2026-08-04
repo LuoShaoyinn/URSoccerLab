@@ -70,6 +70,13 @@ struct FURSRobotState
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab")
 	TArray<FURSCameraInfo> Cameras;
 
+	// Camera/head IMU: orientation (world quat) and angular velocity (body
+	// frame) of the link that carries the eye cameras. Valid only when
+	// bHasCameraImu is true.
+	bool bHasCameraImu = false;
+	FQuat HeadQuat = FQuat::Identity;
+	FVector HeadAngVel = FVector::ZeroVector;
+
 	// Privilege flags mirrored from this robot's scene-config entry. The
 	// corresponding fields below are only populated when the flag is set.
 	bool bPrivSelfPos = false;
@@ -221,6 +228,10 @@ private:
 		int32 RootQposAdr = -1;
 
 		TArray<FCameraEntry> Cameras;
+
+		// Resolved body id of the link carrying the eye cameras (the
+		// normalized "head link"), used for the camera_imu state. -1 if none.
+		int32 HeadCameraBodyId = -1;
 
 		TArray<float> LatestCommand;
 		TMap<FString, float> LastNamedValues;
