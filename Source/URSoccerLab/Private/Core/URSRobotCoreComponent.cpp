@@ -399,15 +399,20 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 	{
 		for (const URSoccerLab::FURSRobotSpawn& Spawn : SceneComp->GetActiveConfig().Robots)
 		{
-			AMjArticulation* const* Found = ArticulationsByName.Find(Spawn.ActorId);
-			if (Found && *Found)
+		AMjArticulation* const* Found = ArticulationsByName.Find(Spawn.ActorId);
+		if (Found && *Found)
+		{
+			BuildEndpoint(*Found, Spawn.ActorId);
+			if (NewEndpoints.Num() > 0)
 			{
-				BuildEndpoint(*Found, Spawn.ActorId);
+				NewEndpoints.Last().Privilege = Spawn.Privilege;
+				NewEndpoints.Last().Noise = Spawn.Noise;
 			}
-			else
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[URS Core] Robot '%s' not found in world."), *Spawn.ActorId);
-			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[URS Core] Robot '%s' not found in world."), *Spawn.ActorId);
+		}
 		}
 	}
 
@@ -423,9 +428,28 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 	}
 
 	const int32 NewEndpointCount = NewEndpoints.Num();
+	TMap<FString, int32> NewActorRootBodyIds;
+	if (Model)
+	{
+		TSet<AMjArticulation*> Seen;
+		for (const TPair<FString, AMjArticulation*>& Pair : ArticulationsByName)
+		{
+			AMjArticulation* Articulation = Pair.Value;
+			if (!Articulation || Seen.Contains(Articulation)) continue;
+			Seen.Add(Articulation);
+			FString Id = Articulation->ActorId.IsEmpty() ? Articulation->GetName() : Articulation->ActorId;
+			if (Id.IsEmpty()) continue;
+			const int32 RootId = DiscoverRootBodyId(Articulation, Model);
+			if (RootId > 0)
+			{
+				NewActorRootBodyIds.Add(Id, RootId);
+			}
+		}
+	}
 	{
 		FScopeLock Lock(&EndpointMutex);
 		Endpoints = MoveTemp(NewEndpoints);
+		ActorRootBodyIds = MoveTemp(NewActorRootBodyIds);
 	}
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Endpoint cache rebuilt: %d robot(s)."), NewEndpointCount);
 }
@@ -698,16 +722,91 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 					OutState.JointQpos.Add(Snapshot.QPos[Idx]);
 				}
 
-				const int32 QvelBegin = JointInfo.DofAdr;
-				const int32 QvelEnd = QvelBegin + JointInfo.DofSize;
-				for (int32 Idx = QvelBegin;
-					Idx < QvelEnd && Snapshot.QVel.IsValidIndex(Idx);
-					++Idx)
+			const int32 QvelBegin = JointInfo.DofAdr;
+			const int32 QvelEnd = QvelBegin + JointInfo.DofSize;
+			for (int32 Idx = QvelBegin;
+				Idx < QvelEnd && Snapshot.QVel.IsValidIndex(Idx);
+				++Idx)
+			{
+				OutState.JointQvel.Add(Snapshot.QVel[Idx]);
+			}
+		}
+
+		// Privileged positions, resolved from the same snapshot. Each actor's
+		// world position is read from its cached root body id.
+		OutState.bPrivSelfPos = Ep->Privilege.bSelfPos;
+		OutState.bPrivBallPosRelated = Ep->Privilege.bBallPosRelated;
+		OutState.bPrivBallVelRelated = Ep->Privilege.bBallVelRelated;
+		OutState.bPrivAllPos = Ep->Privilege.bAllPos;
+		OutState.Noise = Ep->Noise;
+
+		// Yaw-only quaternion extracted from the base orientation. Both
+		// ball_pos_related and ball_vel_related express the ball in this
+		// horizontal frame (matching the kick teacher's _yaw_quat convention).
+		FQuat YawQuat = FQuat::Identity;
+		{
+			const float W = (float)OutState.BaseQuat.W;
+			const float X = (float)OutState.BaseQuat.X;
+			const float Y = (float)OutState.BaseQuat.Y;
+			const float Z = (float)OutState.BaseQuat.Z;
+			const float Yaw = FMath::Atan2(2.f * (W * Z + X * Y), 1.f - 2.f * (Y * Y + Z * Z));
+			const float Half = 0.5f * Yaw;
+			YawQuat = FQuat(0.f, 0.f, FMath::Sin(Half), FMath::Cos(Half)); // (X,Y,Z,W)
+		}
+		const FQuat YawInv = YawQuat.Inverse();
+
+		if (Ep->Privilege.bSelfPos)
+		{
+			OutState.SelfPos = OutState.BasePos;
+		}
+		if (Ep->Privilege.bBallPosRelated || Ep->Privilege.bBallVelRelated)
+		{
+			const int32* BallBodyPtr = ActorRootBodyIds.Find(TEXT("ball"));
+			if (BallBodyPtr)
+			{
+				const int32 BallBody = *BallBodyPtr;
+				const int32 PosAdr = BallBody * 3;
+				if (Snapshot.XPos.IsValidIndex(PosAdr + 2) && Snapshot.CVel.IsValidIndex(BallBody * 6 + 5))
 				{
-					OutState.JointQvel.Add(Snapshot.QVel[Idx]);
+					const FVector BallWorldPos(Snapshot.XPos[PosAdr], Snapshot.XPos[PosAdr + 1], Snapshot.XPos[PosAdr + 2]);
+					if (Ep->Privilege.bBallPosRelated)
+					{
+						OutState.BallPosRelated = YawInv.RotateVector(BallWorldPos - OutState.BasePos);
+					}
+					if (Ep->Privilege.bBallVelRelated)
+					{
+						// mjData.cvel linear part is in the ball's body frame;
+						// rotate to world by the ball's world quat, then into
+						// the robot's yaw frame.
+						const int32 VelAdr = BallBody * 6 + 3;
+						const int32 QuatAdr = BallBody * 4;
+						const FVector BallVelBody(Snapshot.CVel[VelAdr], Snapshot.CVel[VelAdr + 1], Snapshot.CVel[VelAdr + 2]);
+						FQuat BallQuat = FQuat::Identity;
+						if (Snapshot.XQuat.IsValidIndex(QuatAdr + 3))
+						{
+							BallQuat = FQuat(
+								Snapshot.XQuat[QuatAdr + 1],
+								Snapshot.XQuat[QuatAdr + 2],
+								Snapshot.XQuat[QuatAdr + 3],
+								Snapshot.XQuat[QuatAdr]);
+						}
+						const FVector BallVelWorld = BallQuat.RotateVector(BallVelBody);
+						OutState.BallVelRelated = YawInv.RotateVector(BallVelWorld);
+					}
 				}
 			}
-		});
+		}
+		if (Ep->Privilege.bAllPos)
+		{
+			for (const TPair<FString, int32>& Pair : ActorRootBodyIds)
+			{
+				const int32 PosAdr = Pair.Value * 3;
+				if (!Snapshot.XPos.IsValidIndex(PosAdr + 2)) continue;
+				OutState.AllPos.Add(Pair.Key,
+					FVector(Snapshot.XPos[PosAdr], Snapshot.XPos[PosAdr + 1], Snapshot.XPos[PosAdr + 2]));
+			}
+		}
+	});
 	if (!bHaveSnapshot)
 	{
 		return false;

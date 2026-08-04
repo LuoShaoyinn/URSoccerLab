@@ -104,6 +104,8 @@ private:
 	double NextDepthTimeSec = 0.0;
 	TArray<FString> LastKnownRobots;
 	URSoccerLab::FURSVisionConfig VisionConfig;
+	// Deterministic Gaussian noise generator shared across robot publishes.
+	FRandomStream NoiseRng;
 	uint64 ListenerGenerationCounter = 0;
 	TSharedPtr<FAsyncVisionState, ESPMode::ThreadSafe> AsyncVisionState;
 	IImageWrapperModule* ImageWrapperModule = nullptr;

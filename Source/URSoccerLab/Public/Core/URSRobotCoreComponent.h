@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Scene/URSSceneConfig.h"
 #include "URSRobotCoreComponent.generated.h"
 
 class AAMjManager;
@@ -68,6 +69,30 @@ struct FURSRobotState
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab")
 	TArray<FURSCameraInfo> Cameras;
+
+	// Privilege flags mirrored from this robot's scene-config entry. The
+	// corresponding fields below are only populated when the flag is set.
+	bool bPrivSelfPos = false;
+	bool bPrivBallPosRelated = false;
+	bool bPrivBallVelRelated = false;
+	bool bPrivAllPos = false;
+
+	// Privileged state. self_pos and all_pos are in world metres; ball_pos_related
+	// is the ball expressed in the robot's yaw-only frame.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab")
+	FVector SelfPos = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab")
+	FVector BallPosRelated = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab")
+	FVector BallVelRelated = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "URSoccerLab")
+	TMap<FString, FVector> AllPos;
+
+	// Per-channel Gaussian noise sigmas mirrored from this robot's scene entry.
+	URSoccerLab::FURSNoiseConfig Noise;
 };
 
 USTRUCT(BlueprintType)
@@ -203,9 +228,14 @@ private:
 		bool bHasCommand = false;
 
 		FPoseLock PoseLock;
+		URSoccerLab::FURSPrivilegeConfig Privilege;
+		URSoccerLab::FURSNoiseConfig Noise;
 	};
 
 	TArray<FRobotEndpoint> Endpoints;
+	// Maps every spawned actor_id (robots and objects) to its MuJoCo root body
+	// id, used to resolve privileged world positions from the render snapshot.
+	TMap<FString, int32> ActorRootBodyIds;
 	// Endpoint metadata and command/pose-lock state are shared by the game
 	// thread and the asynchronous MuJoCo pre-step callback. Lock ordering for
 	// operations that also touch live mjData is:

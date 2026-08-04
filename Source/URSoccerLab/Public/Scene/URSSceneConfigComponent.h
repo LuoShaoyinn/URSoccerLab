@@ -96,4 +96,5 @@ private:
 	bool SpawnOneObject(AAMjManager* Manager, const URSoccerLab::FURSObjectSpawn& Spawn, FString& OutError);
 	void ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId);
 	void HideImportedFieldGeoms(AMjArticulation* Articulation);
+	void ApplyRenderConfig();
 };

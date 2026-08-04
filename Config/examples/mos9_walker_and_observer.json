@@ -1,11 +1,30 @@
 {
   "version": "urs_scene_v1",
+  "render": {
+    "enable": true,
+    "lumen": true,
+    "hardware_ray_tracing": false,
+    "anti_aliasing": "tsr",
+    "screen_percentage": 100,
+    "shadow_quality": 3,
+    "motion_blur": false,
+    "auto_exposure": false,
+    "exposure_compensation": 0.0,
+    "resolution_x": 1280,
+    "resolution_y": 720
+  },
   "robots": [
     {
       "actor_id": "robot_mos9",
       "type": "mos9",
       "translation_m": [-3.0, 0.0, 0.53],
-      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+      "privilege": {
+        "self_pos": true,
+        "ball_pos_related": true,
+        "ball_vel_related": true,
+        "all_pos": true
+      }
     },
     {
       "actor_id": "robot_observer",

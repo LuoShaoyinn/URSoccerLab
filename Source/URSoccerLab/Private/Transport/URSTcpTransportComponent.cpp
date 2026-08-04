@@ -105,6 +105,7 @@ UURSTcpTransportComponent::UURSTcpTransportComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
+	NoiseRng.Initialize(1973);
 }
 
 void UURSTcpTransportComponent::BeginPlay()
@@ -1387,19 +1388,46 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 	Root->SetNumberField(TEXT("sim_time"), State.SimTime);
 	Root->SetBoolField(TEXT("command_timed_out"), State.bCommandTimedOut);
 
+	auto Gaussian = [this]() -> double
+	{
+		const double U1 = FMath::Max(NoiseRng.GetFraction(), 1e-7);
+		const double U2 = NoiseRng.GetFraction();
+		return FMath::Sqrt(-2.0 * FMath::Loge(U1)) * FMath::Cos(2.0 * UE_DOUBLE_PI * U2);
+	};
+	auto Noisy = [&Gaussian](double V, double Sigma) -> double
+	{
+		return Sigma > 0.0 ? V + Gaussian() * Sigma : V;
+	};
+
 	auto BaseObj = MakeShared<FJsonObject>();
 	BaseObj->SetArrayField(TEXT("pos"), {
 		MakeShared<FJsonValueNumber>(State.BasePos.X),
 		MakeShared<FJsonValueNumber>(State.BasePos.Y),
 		MakeShared<FJsonValueNumber>(State.BasePos.Z) });
-	BaseObj->SetArrayField(TEXT("quat"), {
-		MakeShared<FJsonValueNumber>(State.BaseQuat.W),
-		MakeShared<FJsonValueNumber>(State.BaseQuat.X),
-		MakeShared<FJsonValueNumber>(State.BaseQuat.Y),
-		MakeShared<FJsonValueNumber>(State.BaseQuat.Z) });
-	TArray<TSharedPtr<FJsonValue>> VelArr;
-	for (double V : State.BaseVel)
+	FQuat Quat = State.BaseQuat;
+	if (State.Noise.ImuQuat > 0.0)
 	{
+		const double S = State.Noise.ImuQuat;
+		Quat.W += Gaussian() * S;
+		Quat.X += Gaussian() * S;
+		Quat.Y += Gaussian() * S;
+		Quat.Z += Gaussian() * S;
+		Quat.Normalize();
+	}
+	BaseObj->SetArrayField(TEXT("quat"), {
+		MakeShared<FJsonValueNumber>(Quat.W),
+		MakeShared<FJsonValueNumber>(Quat.X),
+		MakeShared<FJsonValueNumber>(Quat.Y),
+		MakeShared<FJsonValueNumber>(Quat.Z) });
+	TArray<TSharedPtr<FJsonValue>> VelArr;
+	const int32 NV = State.BaseVel.Num();
+	for (int32 i = 0; i < NV; ++i)
+	{
+		double V = State.BaseVel[i];
+		if (State.Noise.ImuAngVel > 0.0 && NV == 6 && i >= 3)
+		{
+			V += Gaussian() * State.Noise.ImuAngVel;
+		}
 		VelArr.Add(MakeShared<FJsonValueNumber>(V));
 	}
 	BaseObj->SetArrayField(TEXT("vel"), VelArr);
@@ -1413,8 +1441,8 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 		for (int32 i = 0; i < State.JointNames.Num(); ++i)
 		{
 			auto JObj = MakeShared<FJsonObject>();
-			JObj->SetNumberField(TEXT("qpos"), State.JointQpos[i]);
-			JObj->SetNumberField(TEXT("qvel"), State.JointQvel[i]);
+			JObj->SetNumberField(TEXT("qpos"), Noisy(State.JointQpos[i], State.Noise.Qpos));
+			JObj->SetNumberField(TEXT("qvel"), Noisy(State.JointQvel[i], State.Noise.Qvel));
 			JointsObj->SetObjectField(State.JointNames[i], JObj);
 		}
 	}
@@ -1425,7 +1453,7 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 	{
 		for (int32 i = 0; i < State.ActuatorNames.Num(); ++i)
 		{
-			ActuatorsObj->SetNumberField(State.ActuatorNames[i], State.MotorCommand[i]);
+			ActuatorsObj->SetNumberField(State.ActuatorNames[i], Noisy(State.MotorCommand[i], State.Noise.Qtor));
 		}
 	}
 	Root->SetObjectField(TEXT("actuators"), ActuatorsObj);
@@ -1441,6 +1469,40 @@ FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
 		CamerasArr.Add(MakeShared<FJsonValueObject>(CamObj));
 	}
 	Root->SetArrayField(TEXT("cameras"), CamerasArr);
+
+	if (State.bPrivSelfPos)
+	{
+		Root->SetArrayField(TEXT("self_pos"), {
+			MakeShared<FJsonValueNumber>(Noisy(State.SelfPos.X, State.Noise.SelfPos)),
+			MakeShared<FJsonValueNumber>(Noisy(State.SelfPos.Y, State.Noise.SelfPos)),
+			MakeShared<FJsonValueNumber>(Noisy(State.SelfPos.Z, State.Noise.SelfPos)) });
+	}
+	if (State.bPrivBallPosRelated)
+	{
+		Root->SetArrayField(TEXT("ball_pos_related"), {
+			MakeShared<FJsonValueNumber>(Noisy(State.BallPosRelated.X, State.Noise.BallPosRelated)),
+			MakeShared<FJsonValueNumber>(Noisy(State.BallPosRelated.Y, State.Noise.BallPosRelated)),
+			MakeShared<FJsonValueNumber>(Noisy(State.BallPosRelated.Z, State.Noise.BallPosRelated)) });
+	}
+	if (State.bPrivBallVelRelated)
+	{
+		Root->SetArrayField(TEXT("ball_vel_related"), {
+			MakeShared<FJsonValueNumber>(Noisy(State.BallVelRelated.X, State.Noise.BallVelRelated)),
+			MakeShared<FJsonValueNumber>(Noisy(State.BallVelRelated.Y, State.Noise.BallVelRelated)),
+			MakeShared<FJsonValueNumber>(Noisy(State.BallVelRelated.Z, State.Noise.BallVelRelated)) });
+	}
+	if (State.bPrivAllPos)
+	{
+		TSharedPtr<FJsonObject> AllPosObj = MakeShared<FJsonObject>();
+		for (const TPair<FString, FVector>& Pair : State.AllPos)
+		{
+			AllPosObj->SetArrayField(Pair.Key, {
+				MakeShared<FJsonValueNumber>(Noisy(Pair.Value.X, State.Noise.AllPos)),
+				MakeShared<FJsonValueNumber>(Noisy(Pair.Value.Y, State.Noise.AllPos)),
+				MakeShared<FJsonValueNumber>(Noisy(Pair.Value.Z, State.Noise.AllPos)) });
+		}
+		Root->SetObjectField(TEXT("all_pos"), AllPosObj);
+	}
 
 	FString Json;
 	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =

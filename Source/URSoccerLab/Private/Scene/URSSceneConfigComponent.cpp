@@ -7,6 +7,7 @@
 #include "MuJoCo/Utils/MjUtils.h"
 #include "Transport/NetworkManager.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -156,6 +157,7 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s), %d object(s)."),
 		SpawnedRobots.Num(), SpawnedObjects.Num());
+	ApplyRenderConfig();
 	OnSceneConfigApplied.Broadcast();
 	return true;
 }
@@ -509,4 +511,66 @@ void UURSSceneConfigComponent::HideImportedFieldGeoms(AMjArticulation* Articulat
 			Geom->SetGeomVisibility(false);
 		}
 	}
+}
+
+void UURSSceneConfigComponent::ApplyRenderConfig()
+{
+	if (!ActiveConfig.Render.bIsSet) return;
+
+	UWorld* World = GetWorld();
+	if (!World || !GEngine) return;
+
+	auto Exec = [World](const TCHAR* Cmd)
+	{
+		GEngine->Exec(World, Cmd);
+	};
+
+	const FURSRenderConfig& R = ActiveConfig.Render;
+
+	if (!R.bEnable)
+	{
+		// Minimal render preset: lowest cost when rendering is "disabled".
+		Exec(TEXT("r.ScreenPercentage 10"));
+		Exec(TEXT("r.DynamicGlobalIlluminationMethod 0"));
+		Exec(TEXT("r.ReflectionMethod 0"));
+		Exec(TEXT("r.ShadowQuality 0"));
+		Exec(TEXT("r.MotionBlurQuality 0"));
+		Exec(TEXT("r.AntiAliasingMethod 0"));
+		Exec(TEXT("r.ViewDistanceScale 0.1"));
+		Exec(TEXT("r.DefaultFeature.AutoExposure 0"));
+		Exec(TEXT("r.Lumen.HardwareRayTracing 0"));
+		UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] render: disabled (minimal preset applied)."));
+		return;
+	}
+
+	Exec(R.bLumen ? TEXT("r.DynamicGlobalIlluminationMethod 1") : TEXT("r.DynamicGlobalIlluminationMethod 0"));
+	Exec(R.bLumen ? TEXT("r.ReflectionMethod 1") : TEXT("r.ReflectionMethod 2"));
+	// r.RayTracing is read-only at runtime; r.Lumen.HardwareRayTracing is the
+	// settable toggle for hardware-accelerated Lumen traces.
+	Exec(R.bHardwareRayTracing ? TEXT("r.Lumen.HardwareRayTracing 1") : TEXT("r.Lumen.HardwareRayTracing 0"));
+
+	int32 AAMethod = 3; // tsr
+	if (R.AntiAliasing == TEXT("none")) AAMethod = 0;
+	else if (R.AntiAliasing == TEXT("fxaa")) AAMethod = 1;
+	else if (R.AntiAliasing == TEXT("taa")) AAMethod = 2;
+	Exec(*FString::Printf(TEXT("r.AntiAliasingMethod %d"), AAMethod));
+
+	Exec(*FString::Printf(TEXT("r.ScreenPercentage %g"), R.ScreenPercentage));
+	Exec(*FString::Printf(TEXT("r.ShadowQuality %d"), R.ShadowQuality));
+	Exec(R.bMotionBlur ? TEXT("r.MotionBlurQuality 4") : TEXT("r.MotionBlurQuality 0"));
+	Exec(R.bAutoExposure ? TEXT("r.DefaultFeature.AutoExposure 1") : TEXT("r.DefaultFeature.AutoExposure 0"));
+	Exec(*FString::Printf(TEXT("r.EyeAdaptationExposureCompensation %g"), R.ExposureCompensation));
+
+	if (R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
+	{
+		Exec(*FString::Printf(TEXT("r.setres %dx%d"),
+			R.ResolutionX.GetValue(), R.ResolutionY.GetValue()));
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[URSoccerLab] render: enable=true lumen=%d hwrt=%d aa=%s screen=%g shadow=%d res=%s"),
+		R.bLumen ? 1 : 0, R.bHardwareRayTracing ? 1 : 0, *R.AntiAliasing, R.ScreenPercentage, R.ShadowQuality,
+		(R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
+			? *FString::Printf(TEXT("%dx%d"), R.ResolutionX.GetValue(), R.ResolutionY.GetValue())
+			: TEXT("unchanged"));
 }

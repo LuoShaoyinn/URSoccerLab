@@ -203,6 +203,59 @@ bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out
 	}
 	return true;
 }
+
+bool ReadRenderConfig(const TSharedPtr<FJsonObject>& Root, FURSRenderConfig& Out, FString& OutError)
+{
+	const TSharedPtr<FJsonObject>* RenderObjPtr = nullptr;
+	if (!Root->TryGetObjectField(TEXT("render"), RenderObjPtr))
+	{
+		// No render block: leave engine render settings untouched.
+		return true;
+	}
+	if (!RenderObjPtr || !RenderObjPtr->IsValid())
+	{
+		OutError = TEXT("scene config: 'render' must be an object");
+		return false;
+	}
+	Out.bIsSet = true;
+	const TSharedPtr<FJsonObject>& R = *RenderObjPtr;
+
+	bool bValue = false;
+	if (R->TryGetBoolField(TEXT("enable"), bValue)) Out.bEnable = bValue;
+	if (R->TryGetBoolField(TEXT("lumen"), bValue)) Out.bLumen = bValue;
+	if (R->TryGetBoolField(TEXT("hardware_ray_tracing"), bValue)) Out.bHardwareRayTracing = bValue;
+	if (R->TryGetBoolField(TEXT("motion_blur"), bValue)) Out.bMotionBlur = bValue;
+	if (R->TryGetBoolField(TEXT("auto_exposure"), bValue)) Out.bAutoExposure = bValue;
+
+	FString AA;
+	if (R->TryGetStringField(TEXT("anti_aliasing"), AA) && !AA.IsEmpty()) Out.AntiAliasing = AA;
+
+	double DValue = 0.0;
+	if (R->TryGetNumberField(TEXT("screen_percentage"), DValue) && FMath::IsFinite(DValue) && DValue > 0.0)
+	{
+		Out.ScreenPercentage = DValue;
+	}
+	if (R->TryGetNumberField(TEXT("exposure_compensation"), DValue) && FMath::IsFinite(DValue))
+	{
+		Out.ExposureCompensation = DValue;
+	}
+
+	double NValue = 0.0;
+	if (R->TryGetNumberField(TEXT("shadow_quality"), NValue) && NValue == FMath::TruncToDouble(NValue)
+		&& NValue >= 0.0 && NValue <= 5.0)
+	{
+		Out.ShadowQuality = static_cast<int32>(NValue);
+	}
+	if (R->TryGetNumberField(TEXT("resolution_x"), NValue) && NValue == FMath::TruncToDouble(NValue) && NValue >= 1.0)
+	{
+		Out.ResolutionX = static_cast<int32>(NValue);
+	}
+	if (R->TryGetNumberField(TEXT("resolution_y"), NValue) && NValue == FMath::TruncToDouble(NValue) && NValue >= 1.0)
+	{
+		Out.ResolutionY = static_cast<int32>(NValue);
+	}
+	return true;
+}
 } // namespace
 
 bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Out, FString& OutError)
@@ -238,6 +291,11 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 	}
 
 	if (!ReadVisionConfig(Root, Out.Vision, OutError))
+	{
+		return false;
+	}
+
+	if (!ReadRenderConfig(Root, Out.Render, OutError))
 	{
 		return false;
 	}
@@ -322,6 +380,38 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 			Spawn.JointPositionsRad = MoveTemp(JointPositions);
 		}
 
+		const TSharedPtr<FJsonObject>* PrivilegeObj = nullptr;
+		if ((*RobotObj)->TryGetObjectField(TEXT("privilege"), PrivilegeObj) && PrivilegeObj && PrivilegeObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>& P = *PrivilegeObj;
+			bool bValue = false;
+			if (P->TryGetBoolField(TEXT("self_pos"), bValue)) Spawn.Privilege.bSelfPos = bValue;
+			if (P->TryGetBoolField(TEXT("ball_pos_related"), bValue)) Spawn.Privilege.bBallPosRelated = bValue;
+			if (P->TryGetBoolField(TEXT("ball_vel_related"), bValue)) Spawn.Privilege.bBallVelRelated = bValue;
+			if (P->TryGetBoolField(TEXT("all_pos"), bValue)) Spawn.Privilege.bAllPos = bValue;
+		}
+
+		const TSharedPtr<FJsonObject>* NoiseObj = nullptr;
+		if ((*RobotObj)->TryGetObjectField(TEXT("noise"), NoiseObj) && NoiseObj && NoiseObj->IsValid())
+		{
+			const TSharedPtr<FJsonObject>& N = *NoiseObj;
+			double Sigma = 0.0;
+			auto ReadSigma = [&N](const TCHAR* Key, double& Out)
+			{
+				double V = 0.0;
+				if (N->TryGetNumberField(Key, V) && FMath::IsFinite(V) && V >= 0.0) Out = V;
+			};
+			ReadSigma(TEXT("qpos"), Spawn.Noise.Qpos);
+			ReadSigma(TEXT("qvel"), Spawn.Noise.Qvel);
+			ReadSigma(TEXT("qtor"), Spawn.Noise.Qtor);
+			ReadSigma(TEXT("imu_quat"), Spawn.Noise.ImuQuat);
+			ReadSigma(TEXT("imu_ang_vel"), Spawn.Noise.ImuAngVel);
+			ReadSigma(TEXT("self_pos"), Spawn.Noise.SelfPos);
+			ReadSigma(TEXT("ball_pos_related"), Spawn.Noise.BallPosRelated);
+			ReadSigma(TEXT("ball_vel_related"), Spawn.Noise.BallVelRelated);
+			ReadSigma(TEXT("all_pos"), Spawn.Noise.AllPos);
+		}
+
 		Out.Robots.Add(MoveTemp(Spawn));
 	}
 
@@ -404,6 +494,23 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 	VisionObj->SetObjectField(TEXT("depth"), DepthObj);
 	Root->SetObjectField(TEXT("vision"), VisionObj);
 
+	if (In.Render.bIsSet)
+	{
+		TSharedPtr<FJsonObject> RenderObj = MakeShared<FJsonObject>();
+		RenderObj->SetBoolField(TEXT("enable"), In.Render.bEnable);
+		RenderObj->SetBoolField(TEXT("lumen"), In.Render.bLumen);
+		RenderObj->SetBoolField(TEXT("hardware_ray_tracing"), In.Render.bHardwareRayTracing);
+		RenderObj->SetStringField(TEXT("anti_aliasing"), In.Render.AntiAliasing);
+		RenderObj->SetNumberField(TEXT("screen_percentage"), In.Render.ScreenPercentage);
+		RenderObj->SetNumberField(TEXT("shadow_quality"), In.Render.ShadowQuality);
+		RenderObj->SetBoolField(TEXT("motion_blur"), In.Render.bMotionBlur);
+		RenderObj->SetBoolField(TEXT("auto_exposure"), In.Render.bAutoExposure);
+		RenderObj->SetNumberField(TEXT("exposure_compensation"), In.Render.ExposureCompensation);
+		if (In.Render.ResolutionX.IsSet()) RenderObj->SetNumberField(TEXT("resolution_x"), In.Render.ResolutionX.GetValue());
+		if (In.Render.ResolutionY.IsSet()) RenderObj->SetNumberField(TEXT("resolution_y"), In.Render.ResolutionY.GetValue());
+		Root->SetObjectField(TEXT("render"), RenderObj);
+	}
+
 	TArray<TSharedPtr<FJsonValue>> RobotsJson;
 	for (const FURSRobotSpawn& Spawn : In.Robots)
 	{
@@ -441,6 +548,32 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 				JointPositionsObj->SetNumberField(JointName, Spawn.JointPositionsRad.GetValue()[JointName]);
 			}
 			RobotObj->SetObjectField(TEXT("joint_positions_rad"), JointPositionsObj);
+		}
+		if (Spawn.Privilege.bSelfPos || Spawn.Privilege.bBallPosRelated || Spawn.Privilege.bAllPos)
+		{
+			TSharedPtr<FJsonObject> PrivilegeObj = MakeShared<FJsonObject>();
+			PrivilegeObj->SetBoolField(TEXT("self_pos"), Spawn.Privilege.bSelfPos);
+			PrivilegeObj->SetBoolField(TEXT("ball_pos_related"), Spawn.Privilege.bBallPosRelated);
+			PrivilegeObj->SetBoolField(TEXT("ball_vel_related"), Spawn.Privilege.bBallVelRelated);
+			PrivilegeObj->SetBoolField(TEXT("all_pos"), Spawn.Privilege.bAllPos);
+			RobotObj->SetObjectField(TEXT("privilege"), PrivilegeObj);
+		}
+		if (Spawn.Noise.Qpos > 0.0 || Spawn.Noise.Qvel > 0.0 || Spawn.Noise.Qtor > 0.0
+			|| Spawn.Noise.ImuQuat > 0.0 || Spawn.Noise.ImuAngVel > 0.0
+			|| Spawn.Noise.SelfPos > 0.0 || Spawn.Noise.BallPosRelated > 0.0
+			|| Spawn.Noise.BallVelRelated > 0.0 || Spawn.Noise.AllPos > 0.0)
+		{
+			TSharedPtr<FJsonObject> NoiseObj = MakeShared<FJsonObject>();
+			NoiseObj->SetNumberField(TEXT("qpos"), Spawn.Noise.Qpos);
+			NoiseObj->SetNumberField(TEXT("qvel"), Spawn.Noise.Qvel);
+			NoiseObj->SetNumberField(TEXT("qtor"), Spawn.Noise.Qtor);
+			NoiseObj->SetNumberField(TEXT("imu_quat"), Spawn.Noise.ImuQuat);
+			NoiseObj->SetNumberField(TEXT("imu_ang_vel"), Spawn.Noise.ImuAngVel);
+			NoiseObj->SetNumberField(TEXT("self_pos"), Spawn.Noise.SelfPos);
+			NoiseObj->SetNumberField(TEXT("ball_pos_related"), Spawn.Noise.BallPosRelated);
+			NoiseObj->SetNumberField(TEXT("ball_vel_related"), Spawn.Noise.BallVelRelated);
+			NoiseObj->SetNumberField(TEXT("all_pos"), Spawn.Noise.AllPos);
+			RobotObj->SetObjectField(TEXT("noise"), NoiseObj);
 		}
 		RobotsJson.Add(MakeShared<FJsonValueObject>(RobotObj));
 	}
