@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""Capture two standing robots, optionally sweeping both heads.
+"""Capture one or more standing robots, optionally sweeping their heads.
 
-Uses the floating-base pi_plus model (22 actuators including
-head_yaw_joint_servo and head_pitch_joint_servo).  Pure motor-command
-control via the per-robot TCP port — no admin API, no lock_pose, no
-physics override.  Just like driving a real robot.
+Works with any robot type (pi_plus, mos9, ...) — head actuators are discovered
+dynamically from the state's ``actuators`` dict by substring-matching
+``head_yaw`` / ``head_pitch``.  Motor command suffix (``_servo`` or ``_motor``)
+does not matter.
 
-The sim must be running with
-``Config/examples/two_robots_face_to_face.json`` passed with
-``-URSSceneConfig``:
+Connect to as many robots as the scene provides::
 
-    UnrealEditor URSoccerLab.uproject /Game/Levels/URS_SoccerField -game \
-        -RenderOffscreen -URSSceneConfig=/path/to/Config/examples/two_robots_face_to_face.json
+    # single robot (mos9_solo or URS_scene)
+    uv run python examples/move_head.py --port 10000 --duration 10
 
-    cd py_example
-    uv run python examples/move_head.py \
-        --host 127.0.0.1 --duration 10 \
-        --video0 out/head_demo_rp0.mp4 \
-        --video1 out/head_demo_rp1.mp4
+    # two robots (walker_and_observer / two_robots_face_to_face)
+    uv run python examples/move_head.py --port 10000 10001 --duration 10
+
+The sim must be started with ``run_with_sim.py`` or an equivalent launch that
+passes ``-URSSceneConfig=<scene.json>``.
 """
 from __future__ import annotations
 
@@ -72,7 +70,6 @@ class RobotConnection:
                 )
                 if not cams:
                     continue
-                # Left eye is camera index 0
                 cam0 = cams[0]
                 if not cam0["data"]:
                     continue
@@ -85,47 +82,52 @@ class RobotConnection:
 def main(default_mode: str = "sweep") -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--robot0-port", type=int, default=10000)
-    ap.add_argument("--robot1-port", type=int, default=10001)
+    ap.add_argument("--port", type=int, nargs="+", default=[10000],
+                    help="one or more robot TCP ports")
     ap.add_argument("--duration", type=float, default=10.0)
     ap.add_argument("--mode", choices=("sweep", "static"), default=default_mode,
-                    help="sweep both robots' head joints, or capture with no motor commands")
+                    help="sweep head joints, or capture with no motor commands")
     ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=15)
-    ap.add_argument("--video0", type=Path, default=Path("out/head_demo_rp0.mp4"))
-    ap.add_argument("--video1", type=Path, default=Path("out/head_demo_rp1.mp4"))
+    ap.add_argument("--video", type=Path, default=Path("out/head_demo"),
+                    help="output video prefix (one file per port appended with _N.mp4)")
     args = ap.parse_args()
 
-    rp0 = RobotConnection(args.host, args.robot0_port)
-    rp1 = RobotConnection(args.host, args.robot1_port)
+    robots = [RobotConnection(args.host, p) for p in args.port]
+    n = len(robots)
 
     # Wait for first state to learn actuator names
-    print("[demo] waiting for state ...", flush=True)
+    print(f"[demo] waiting for state on {n} robot(s) ...", flush=True)
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        rp0.pump()
-        rp1.pump()
-        if rp0.actuator_names and rp1.actuator_names:
+        for r in robots:
+            r.pump()
+        if all(r.actuator_names for r in robots):
             break
         time.sleep(0.01)
 
-    if not rp0.actuator_names:
-        print("[demo] ERROR: no state received", flush=True)
+    if not all(r.actuator_names for r in robots):
+        missing = [args.port[i] for i, r in enumerate(robots) if not r.actuator_names]
+        print(f"[demo] ERROR: no state on port(s) {missing}", flush=True)
         return 1
 
-    print(f"[demo] {len(rp0.actuator_names)} actuators: {rp0.actuator_names[-4:]}", flush=True)
+    for i, r in enumerate(robots):
+        print(f"[demo] robot {i} (port {args.port[i]}): "
+              f"{len(r.actuator_names)} actuators", flush=True)
 
-    head_yaw_name = None
-    head_pitch_name = None
+    # Discover head actuators per robot
+    head_names: list[tuple[str | None, str | None]] = []
     if args.mode == "sweep":
-        head_yaw_name = next((n for n in rp0.actuator_names if "head_yaw" in n), None)
-        head_pitch_name = next((n for n in rp0.actuator_names if "head_pitch" in n), None)
-        rp1_head_yaw_name = next((n for n in rp1.actuator_names if "head_yaw" in n), None)
-        rp1_head_pitch_name = next((n for n in rp1.actuator_names if "head_pitch" in n), None)
-        if not head_yaw_name or not head_pitch_name or not rp1_head_yaw_name or not rp1_head_pitch_name:
-            print(f"[demo] ERROR: head actuators not found in {rp0.actuator_names}", flush=True)
-            return 1
-        print(f"[demo] heads: {head_yaw_name}, {head_pitch_name}", flush=True)
+        for r in robots:
+            hy = next((n for n in r.actuator_names if "head_yaw" in n), None)
+            hp = next((n for n in r.actuator_names if "head_pitch" in n), None)
+            head_names.append((hy, hp))
+
+        for i, (hy, hp) in enumerate(head_names):
+            if not hy or not hp:
+                print(f"[demo] WARNING: robot {i} has no head actuators "
+                      f"(yaw={hy}, pitch={hp}); skipping sweep for this robot",
+                      flush=True)
 
     print(f"[demo] {args.mode} capture for {args.duration:.0f}s ...", flush=True)
     interval = 1.0 / args.cmd_hz
@@ -136,7 +138,8 @@ def main(default_mode: str = "sweep") -> int:
     while time.monotonic() - t0 < args.duration:
         now = time.monotonic()
         if now >= next_cmd:
-            rp0.pump(); rp1.pump()
+            for r in robots:
+                r.pump()
 
             t = (now - t0) / args.duration
             head_yaw = 0.0
@@ -144,26 +147,35 @@ def main(default_mode: str = "sweep") -> int:
             if args.mode == "sweep":
                 head_yaw = 0.8 * math.sin(2.0 * math.pi * t)
                 head_pitch = 0.4 * math.sin(4.0 * math.pi * t)
-                rp0.send_command({head_yaw_name: head_yaw, head_pitch_name: head_pitch})
-                rp1.send_command({rp1_head_yaw_name: -head_yaw, rp1_head_pitch_name: head_pitch})
+                for i, r in enumerate(robots):
+                    hy, hp = head_names[i]
+                    if hy and hp:
+                        # First robot leads, others mirror yaw
+                        sign = 1.0 if i == 0 else -1.0
+                        r.send_command({hy: sign * head_yaw, hp: head_pitch})
 
             step += 1
             if step % 30 == 0:
+                parts = [f"r{i}(z={r.latest_z:.2f} up={r.latest_up:.2f} "
+                         f"frames={len(r.frames)})"
+                         for i, r in enumerate(robots)]
                 print(f"  t={t:.1f} yaw={math.degrees(head_yaw):+.0f}° "
                       f"pitch={math.degrees(head_pitch):+.0f}° "
-                      f"rp0(z={rp0.latest_z:.2f} up={rp0.latest_up:.2f}) "
-                      f"rp1(z={rp1.latest_z:.2f} up={rp1.latest_up:.2f}) "
-                      f"frames: {len(rp0.frames)} {len(rp1.frames)}", flush=True)
+                      f"{' '.join(parts)}", flush=True)
             next_cmd = now + interval
         else:
-            # Keep pumping for camera frames between commands
-            rp0.pump(); rp1.pump()
+            for r in robots:
+                r.pump()
             time.sleep(0.001)
 
     print("[demo] done, saving videos ...", flush=True)
-    rp0.close(); rp1.close()
-    write_video(rp0.frames, args.video0, args.video_fps)
-    write_video(rp1.frames, args.video1, args.video_fps)
+    for r in robots:
+        r.close()
+    for i, r in enumerate(robots):
+        out_path = args.video if n == 1 else args.video.with_name(
+            f"{args.video.stem}_{i}{args.video.suffix}")
+        write_video(r.frames, out_path, args.video_fps)
+        print(f"  robot {i}: {out_path} ({len(r.frames)} frames)", flush=True)
     return 0
 
 

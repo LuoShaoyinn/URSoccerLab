@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture two standing robots without sending motor commands."""
+"""Capture standing robot(s) without sending motor commands."""
 
 from move_head import main
 
