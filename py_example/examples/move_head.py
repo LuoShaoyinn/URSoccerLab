@@ -6,16 +6,19 @@ dynamically from the state's ``actuators`` dict by substring-matching
 ``head_yaw`` / ``head_pitch``.  Motor command suffix (``_servo`` or ``_motor``)
 does not matter.
 
+For torque-controlled robots (motor actuators), pass ``--stabilize`` to enable
+a PD controller that holds all non-head joints at a standing pose while the
+head sweeps.  Use ``--lock`` to additionally pin the floating base via the
+admin API.
+
 Connect to as many robots as the scene provides::
 
-    # single robot (mos9_solo or URS_scene)
-    uv run python examples/move_head.py --port 10000 --duration 10
+    # single robot (mos9_solo)
+    uv run python examples/move_head.py --port 10000 --duration 10 \
+        --stabilize --lock --actor robot_mos9
 
-    # two robots (walker_and_observer / two_robots_face_to_face)
+    # two robots (pi_plus, position-servo — no stabilization needed)
     uv run python examples/move_head.py --port 10000 10001 --duration 10
-
-The sim must be started with ``run_with_sim.py`` or an equivalent launch that
-passes ``-URSSceneConfig=<scene.json>``.
 """
 from __future__ import annotations
 
@@ -35,6 +38,7 @@ from ursoccerlab.tcp import (
     TYPE_RGB,
     parse_camera,
     parse_image_message,
+    AdminClient,
 )
 
 
@@ -44,6 +48,9 @@ class RobotConnection:
     def __init__(self, host: str, port: int):
         self.conn = FrameConn(host, port)
         self.actuator_names: list[str] = []
+        self.joint_names: list[str] = []
+        self.joint_qpos: dict[str, float] = {}
+        self.joint_qvel: dict[str, float] = {}
         self.frames: list[np.ndarray] = []
         self.latest_z: float = 0.0
         self.latest_up: float = 0.0
@@ -58,6 +65,11 @@ class RobotConnection:
                 st = json.loads(payload.decode("utf-8"))
                 if not self.actuator_names:
                     self.actuator_names = list(st.get("actuators", {}).keys())
+                if not self.joint_names:
+                    self.joint_names = list(st.get("joints", {}).keys())
+                joints = st.get("joints", {})
+                self.joint_qpos = {k: v.get("qpos", 0.0) for k, v in joints.items()}
+                self.joint_qvel = {k: v.get("qvel", 0.0) for k, v in joints.items()}
                 b = st.get("base", {})
                 self.latest_z = b.get("pos", [0, 0, 0])[2]
                 q = b.get("quat", [1, 0, 0, 0])
@@ -79,6 +91,14 @@ class RobotConnection:
         self.conn.close()
 
 
+def _joint_to_actuator(joint_name: str, actuator_names: list[str]) -> str | None:
+    """Find the actuator that drives *joint_name*."""
+    for a in actuator_names:
+        if joint_name in a:
+            return a
+    return None
+
+
 def main(default_mode: str = "sweep") -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
@@ -91,7 +111,34 @@ def main(default_mode: str = "sweep") -> int:
     ap.add_argument("--video-fps", type=int, default=15)
     ap.add_argument("--video", type=Path, default=Path("out/head_demo"),
                     help="output video prefix (one file per port appended with _N.mp4)")
+    # PD stabilization for torque-controlled robots
+    ap.add_argument("--stabilize", action="store_true",
+                    help="PD-control non-head joints to maintain standing pose")
+    ap.add_argument("--kp", type=float, default=40.0, help="PD proportional gain")
+    ap.add_argument("--kd", type=float, default=2.0, help="PD derivative gain")
+    # Admin base locking
+    ap.add_argument("--lock", action="store_true",
+                    help="lock floating base via admin API")
+    ap.add_argument("--admin-port", type=int, default=11000)
+    ap.add_argument("--actor", nargs="+", default=[],
+                    help="actor_id per --port for admin lock_pose")
+    ap.add_argument("--base-height", type=float, default=0.45,
+                    help="base z-height for lock_pose")
     args = ap.parse_args()
+
+    # Lock base IMMEDIATELY (before robot falls) if requested
+    admin: AdminClient | None = None
+    if args.lock:
+        admin = AdminClient(args.host, args.admin_port)
+        for i in range(len(args.port)):
+            actor_id = args.actor[i] if i < len(args.actor) else f"robot_rp{i}"
+            resp = admin.lock_pose(
+                actor_id,
+                translation_m=[0.0, 0.0, args.base_height],
+                rotation_quat_xyzw=[0.0, 0.0, 0.0, 1.0],
+            )
+            print(f"[demo] lock_pose({actor_id}) at z={args.base_height}: "
+                  f"{resp.get('ok', resp)}", flush=True)
 
     robots = [RobotConnection(args.host, p) for p in args.port]
     n = len(robots)
@@ -113,21 +160,35 @@ def main(default_mode: str = "sweep") -> int:
 
     for i, r in enumerate(robots):
         print(f"[demo] robot {i} (port {args.port[i]}): "
-              f"{len(r.actuator_names)} actuators", flush=True)
+              f"{len(r.actuator_names)} actuators, {len(r.joint_names)} joints",
+              flush=True)
 
     # Discover head actuators per robot
     head_names: list[tuple[str | None, str | None]] = []
-    if args.mode == "sweep":
-        for r in robots:
-            hy = next((n for n in r.actuator_names if "head_yaw" in n), None)
-            hp = next((n for n in r.actuator_names if "head_pitch" in n), None)
-            head_names.append((hy, hp))
+    for r in robots:
+        hy = next((a for a in r.actuator_names if "head_yaw" in a), None)
+        hp = next((a for a in r.actuator_names if "head_pitch" in a), None)
+        head_names.append((hy, hp))
 
-        for i, (hy, hp) in enumerate(head_names):
-            if not hy or not hp:
-                print(f"[demo] WARNING: robot {i} has no head actuators "
-                      f"(yaw={hy}, pitch={hp}); skipping sweep for this robot",
-                      flush=True)
+    for i, (hy, hp) in enumerate(head_names):
+        if args.mode == "sweep" and (not hy or not hp):
+            print(f"[demo] WARNING: robot {i} has no head actuators; skipping sweep",
+                  flush=True)
+
+    # Build PD joint→actuator mapping for stabilization
+    pd_maps: list[dict[str, str]] = []
+    if args.stabilize:
+        for i, r in enumerate(robots):
+            hy, hp = head_names[i]
+            head_acts = {a for a in (hy, hp) if a}
+            mapping = {}
+            for jn in r.joint_names:
+                act = _joint_to_actuator(jn, r.actuator_names)
+                if act and act not in head_acts:
+                    mapping[jn] = act
+            pd_maps.append(mapping)
+            print(f"[demo] robot {i}: PD stabilizing {len(mapping)} body joints "
+                  f"(kp={args.kp}, kd={args.kd})", flush=True)
 
     print(f"[demo] {args.mode} capture for {args.duration:.0f}s ...", flush=True)
     interval = 1.0 / args.cmd_hz
@@ -147,12 +208,35 @@ def main(default_mode: str = "sweep") -> int:
             if args.mode == "sweep":
                 head_yaw = 0.8 * math.sin(2.0 * math.pi * t)
                 head_pitch = 0.4 * math.sin(4.0 * math.pi * t)
-                for i, r in enumerate(robots):
-                    hy, hp = head_names[i]
-                    if hy and hp:
-                        # First robot leads, others mirror yaw
-                        sign = 1.0 if i == 0 else -1.0
-                        r.send_command({hy: sign * head_yaw, hp: head_pitch})
+
+            for i, r in enumerate(robots):
+                cmd: dict[str, float] = {}
+
+                # PD stabilization for body joints
+                if args.stabilize and i < len(pd_maps):
+                    for jn, act in pd_maps[i].items():
+                        qpos = r.joint_qpos.get(jn, 0.0)
+                        qvel = r.joint_qvel.get(jn, 0.0)
+                        cmd[act] = args.kp * (0.0 - qpos) - args.kd * qvel
+
+                # Head sweep
+                hy, hp = head_names[i]
+                if hy and hp:
+                    sign = 1.0 if i == 0 else -1.0
+                    if args.stabilize:
+                        # PD toward sweep target
+                        jy = hy.replace("_motor", "").replace("_servo", "")
+                        jp = hp.replace("_motor", "").replace("_servo", "")
+                        cmd[hy] = args.kp * (sign * head_yaw - r.joint_qpos.get(jy, 0.0)) \
+                                  - args.kd * r.joint_qvel.get(jy, 0.0)
+                        cmd[hp] = args.kp * (head_pitch - r.joint_qpos.get(jp, 0.0)) \
+                                  - args.kd * r.joint_qvel.get(jp, 0.0)
+                    else:
+                        cmd[hy] = sign * head_yaw
+                        cmd[hp] = head_pitch
+
+                if cmd:
+                    r.send_command(cmd)
 
             step += 1
             if step % 30 == 0:
@@ -169,6 +253,11 @@ def main(default_mode: str = "sweep") -> int:
             time.sleep(0.001)
 
     print("[demo] done, saving videos ...", flush=True)
+    if admin:
+        for i in range(n):
+            actor_id = args.actor[i] if i < len(args.actor) else f"robot_rp{i}"
+            admin.unlock_pose(actor_id)
+        admin.close()
     for r in robots:
         r.close()
     for i, r in enumerate(robots):
