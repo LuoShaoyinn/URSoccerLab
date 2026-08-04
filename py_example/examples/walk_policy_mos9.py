@@ -142,7 +142,14 @@ def main() -> int:
             print(f"[walk] ERROR: actuator '{sn}' not found in {actuators}")
             return 1
 
-    # Set default standing pose via admin (shoulder_roll ±1.4, base at 0.56)
+    # Send default pose targets first so actuators hold the pose
+    default_cmd = {sn: float(DEFAULT_QPOS[i]) for i, sn in enumerate(SERVO_NAMES)}
+    default_cmd["head_yaw_joint_servo"] = 0.0
+    default_cmd["head_pitch_joint_servo"] = 0.0
+    conn.send_json(default_cmd)
+    time.sleep(0.2)
+
+    # Set default standing pose via admin (shoulder_roll ±1.4, base at height)
     joint_names_urs_state = list(state.get("joints", {}).keys())
     joint_qpos = [0.0] * len(joint_names_urs_state)
     for i, jn in enumerate(joint_names_urs_state):
@@ -194,19 +201,21 @@ def main() -> int:
             base = latest_state.get("base", {})
             joints = latest_state.get("joints", {})
 
-            # Base angular velocity (body frame) — from base vel or gyro
-            base_vel = base.get("vel", [0, 0, 0, 0, 0, 0])
-            ang_vel = np.array(base_vel[3:6] if len(base_vel) >= 6 else [0, 0, 0], dtype=np.float64)
-
-            # Projected gravity: rotate [0,0,-1] from world to body frame
-            quat = base.get("quat", [1, 0, 0, 0])  # [w, x, y, z]
+            # Rotation matrix body→world from quaternion [w, x, y, z]
+            quat = base.get("quat", [1, 0, 0, 0])
             w, x, y, z = quat
-            # Rotation matrix world→body (transpose of body→world)
             R = np.array([
                 [1 - 2*(y*y+z*z), 2*(x*y+w*z),   2*(x*z-w*y)],
                 [2*(x*y-w*z),     1-2*(x*x+z*z), 2*(y*z+w*x)],
                 [2*(x*z+w*y),     2*(y*z-w*x),   1-2*(x*x+y*y)],
             ])
+
+            # Base angular velocity: qvel[3:6] is WORLD frame, policy needs BODY frame
+            base_vel = base.get("vel", [0, 0, 0, 0, 0, 0])
+            ang_vel_world = np.array(base_vel[3:6] if len(base_vel) >= 6 else [0, 0, 0], dtype=np.float64)
+            ang_vel = R.T @ ang_vel_world  # world → body
+
+            # Projected gravity: rotate [0,0,-1] from world to body frame
             grav_body = R.T @ np.array([0, 0, -1.0])
 
             # Joint positions and velocities in policy order
