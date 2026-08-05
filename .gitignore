@@ -63,6 +63,9 @@ env/
 *.onnx
 *.engine
 *.trt
+# ...except vendored model checkpoints under py_example/models (git LFS)
+!py_example/models/
+!py_example/models/**
 
 # Native build artifacts
 *.o

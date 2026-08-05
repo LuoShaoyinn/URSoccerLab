@@ -29,12 +29,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = EXAMPLE_ROOT.parents[1]
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient
 
-POLICY_PATH = REPO_ROOT / "refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt"
+POLICY_PATH = Path(__file__).resolve().parents[2] / "models" / "policies" / "pi_plus_model_40000.pt"
 
 # The policy was trained with these 20 joints.  Head joints remain at their
 # robot-MJCF defaults and are intentionally not commanded by this example.

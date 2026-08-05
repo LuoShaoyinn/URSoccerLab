@@ -29,8 +29,7 @@ import numpy as np
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient, AdminClient
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-POLICY_PATH = REPO_ROOT / "refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx"
+POLICY_PATH = Path(__file__).resolve().parents[2] / "models" / "policies" / "mos9_walk_v11_5500.onnx"
 
 # ── Policy joint order (from AMP training, walk_v11_terrain) ────────────────
 MOS9_JOINT_NAMES = [

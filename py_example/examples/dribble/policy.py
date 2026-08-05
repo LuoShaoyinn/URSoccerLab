@@ -12,8 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-POLICY_PATH = REPO_ROOT / "refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt"
+POLICY_PATH = Path(__file__).resolve().parents[2] / "models" / "policies" / "pi_plus_model_40000.pt"
 
 # The policy was trained with these 20 joints. Head joints remain at their
 # robot-MJCF defaults and are intentionally not commanded by this example.
