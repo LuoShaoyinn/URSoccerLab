@@ -60,18 +60,25 @@ admin.close()
 ## Run A Scene
 
 Each example lives in its own folder under `examples/<name>/` together with the
-scene it expects as `scene.json`. Start an offscreen runtime pointing at that
-config:
+scene it expects as `scene.json`. Always launch the runtime through the
+production nDisplay atlas backend (`Tools/runtime/run_scene.py`); it generates
+the nDisplay viewport config from the scene's robot/camera count and starts a
+single-node cluster session, so the `URSDisplayClusterCameraBinderComponent`
+owns camera capture. Do **not** launch a plain `-game` session — that falls
+back to the per-actor MjCamera readback path, which is not supported for the
+examples.
+
+From the project root:
 
 ```bash
-"$HOME/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor" \
-  "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game -RenderOffScreen \
-  -DDC-ForceMemoryCache -unattended -nop4 -nosplash -NoSound \
-  -URSSceneConfig="$PWD/py_example/examples/move_head/scene.json"
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/move_head/scene.json
 ```
 
-Each client uses TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port
-`10001`. Port `11000` is one optional global administration connection, not a
+This is a foreground process (the editor window). In a second terminal, run the
+client from `py_example/`. Each client uses TCP only. `robot_rp0` is port
+`10000`; `robot_rp1` is port `10001`. Port `11000` is one optional global
+administration connection, not a
 second per-robot stream. Output files go under `py_example/out/` and are ignored
 by Git. Each example folder is self-contained (no cross-imports between
 examples).

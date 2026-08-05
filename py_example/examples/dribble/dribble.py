@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Look at the ball with the left eye, then walk forward to dribble it.
 
-Run Unreal with this folder's ``scene.json``::
+Launch the runtime with this folder's ``scene.json`` via the nDisplay backend
+(run from the project root)::
 
-    "$HOME/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor" \
-      "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game \
-      -RenderOffScreen -NoSound \
-      -URSSceneConfig="$PWD/py_example/examples/dribble/scene.json"
+    uv run --project py_example python Tools/runtime/run_scene.py \
+      --scene-config py_example/examples/dribble/scene.json
 
 The ball detector is the Ultralytics COCO ``yolo26s.pt`` checkpoint
 (class 32 = sports ball, normalized to ``ball``); resize/NMS are handled by
