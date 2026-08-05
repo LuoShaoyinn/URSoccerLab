@@ -8,3 +8,4 @@ Content/URSoccerLab/Robots/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 Content/URSoccerLab/Objects/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 Content/Levels/URS_SoccerField.umap filter=lfs diff=lfs merge=lfs -text
 Content/URSoccerLab/Scenes/SoccerField/**/*.uasset filter=lfs diff=lfs merge=lfs -text
+py_example/models/** filter=lfs diff=lfs merge=lfs -text

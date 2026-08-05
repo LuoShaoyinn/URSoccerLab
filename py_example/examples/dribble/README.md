@@ -13,7 +13,8 @@ no fixed-shape ONNX is required. Defaults to the ROCm GPU.
 - Vision + a PyTorch backend: `uv sync --extra vision --extra torch_rocm`.
 - Pi Plus policy checkpoint: `refs/mos-brain/.../pi_plus_model_40000.pt`
   (used by the local `policy.py`).
-- Ultralytics `.pt` checkpoint (default path below).
+- Ultralytics `.pt` checkpoint: `py_example/models/yolo26s.pt` (tracked via
+  git LFS; the `--ultralytics-pt` default points here).
 
 ## Scene
 
@@ -52,7 +53,7 @@ uv run --extra vision --extra torch_rocm \
 
 | flag | default | notes |
 |------|---------|-------|
-| `--ultralytics-pt` | tmp2 `yolo26s.pt` | Ultralytics checkpoint |
+| `--ultralytics-pt` | `py_example/models/yolo26s.pt` | Ultralytics checkpoint |
 | `--ultralytics-device` | `0` | ROCm GPU id, or `cpu` |
 | `--ultralytics-conf` | `0.15` | detection confidence |
 | `--duration` | `1` | dribble length in seconds |

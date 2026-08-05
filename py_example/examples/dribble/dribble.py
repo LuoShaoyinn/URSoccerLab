@@ -42,9 +42,8 @@ from policy import (  # noqa: E402
 from ursoccerlab.media import camera_to_rgb, write_video  # noqa: E402
 from ursoccerlab.tcp import AdminClient, RobotClient  # noqa: E402
 
-DEFAULT_ULTRALYTICS_PT = Path(
-    "/home/luoshaoyinn/workspace/tmp2/refs/视觉_0625/"
-    "soccer_backend_TensorRT(1)/soccer_backend_TensorRT/yolo26s.pt"
+DEFAULT_ULTRALYTICS_PT = (
+    Path(__file__).resolve().parents[2] / "models" / "yolo26s.pt"
 )
 
 _COLORS = ["#ffb000", "#00d7ff", "#ff4f81", "#73d13d", "#9254de", "#36cfc9", "#fa541c"]
