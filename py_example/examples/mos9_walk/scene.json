@@ -3,7 +3,7 @@
   "render": {
     "enable": true,
     "lumen": true,
-    "hardware_ray_tracing": false,
+    "hardware_ray_tracing": true,
     "anti_aliasing": "tsr",
     "screen_percentage": 100,
     "shadow_quality": 3,
