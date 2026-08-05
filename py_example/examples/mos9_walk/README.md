@@ -16,6 +16,15 @@ as a stationary observer.
 
 ## Run
 
+Start the simulator offscreen in a separate terminal (project root):
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/mos9_walk/scene.json
+```
+
+Then run the client:
+
 ```bash
 cd py_example
 uv run python examples/mos9_walk/mos9_walk.py \

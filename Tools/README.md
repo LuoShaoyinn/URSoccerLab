@@ -78,12 +78,17 @@ uv run --project py_example python \
   --expected-cameras 2 --duration 15
 ```
 
-Launch a complete scene with the production nDisplay atlas backend:
+Launch a complete scene with the production nDisplay atlas backend. All
+runtime launchers read the `URS_UE` env var for the UnrealEditor binary (or
+take `--ue`):
 
 ```bash
+export URS_UE="$HOME/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
 uv run --project py_example python Tools/runtime/run_scene.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json
 ```
+
+`run_scene.py` always starts offscreen (`-RenderOffscreen`).
 
 Use `benchmark_match_vision.py` for an end-to-end multi-robot measurement. It
 uses the same generated nDisplay atlas and connects one client per robot.

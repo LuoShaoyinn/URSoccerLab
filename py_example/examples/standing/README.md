@@ -12,7 +12,14 @@ face. `robot_rp0` listens on port `10000`, `robot_rp1` on `10001`.
 
 ## Run
 
-Launch the runtime with this folder's `scene.json`, then run the client:
+Start the simulator offscreen in a separate terminal (project root):
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/standing/scene.json
+```
+
+Then run the client:
 
 ```bash
 cd py_example

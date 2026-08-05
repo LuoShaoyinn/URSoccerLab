@@ -68,20 +68,32 @@ owns camera capture. Do **not** launch a plain `-game` session — that falls
 back to the per-actor MjCamera readback path, which is not supported for the
 examples.
 
-From the project root:
+### Unreal Engine path
+
+Point the runtime tools at your UnrealEditor build with the `URS_UE` environment
+variable (all `Tools/runtime/*.py` launchers read it; `--ue` overrides it for a
+single run):
+
+```bash
+export URS_UE="$HOME/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
+```
+
+### Start the simulator
+
+From the project root, in one terminal (this is a foreground process — it runs
+headless, always offscreen via `-RenderOffscreen`):
 
 ```bash
 uv run --project py_example python Tools/runtime/run_scene.py \
   --scene-config py_example/examples/move_head/scene.json
 ```
 
-This is a foreground process (the editor window). In a second terminal, run the
-client from `py_example/`. Each client uses TCP only. `robot_rp0` is port
-`10000`; `robot_rp1` is port `10001`. Port `11000` is one optional global
-administration connection, not a
-second per-robot stream. Output files go under `py_example/out/` and are ignored
-by Git. Each example folder is self-contained (no cross-imports between
-examples).
+Then, in a second terminal, run the client from `py_example/`. Each client uses
+TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port `10001`. Port
+`11000` is one optional global administration connection, not a second
+per-robot stream. Output files go under `py_example/out/` and are ignored by
+Git. Each example folder is self-contained (no cross-imports between examples).
+
 
 ## 1. Head Motion
 

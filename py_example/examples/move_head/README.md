@@ -12,6 +12,15 @@ runtime at `Config/examples/mos9_face_to_face.json`.
 
 ## Run
 
+Start the simulator offscreen in a separate terminal (project root):
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/move_head/scene.json
+```
+
+Then run the client:
+
 ```bash
 cd py_example
 uv run python examples/move_head/move_head.py --port 10000 10001 --duration 10 \

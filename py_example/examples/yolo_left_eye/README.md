@@ -18,7 +18,14 @@ port is needed for capture.
 
 ## Run
 
-Live capture:
+Start the simulator offscreen in a separate terminal (project root):
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/yolo_left_eye/scene.json
+```
+
+Then run the client (needs the vision extra). Live capture:
 
 ```bash
 cd py_example

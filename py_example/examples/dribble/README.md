@@ -24,6 +24,15 @@ ball through the admin endpoint before control.
 
 ## Run
 
+Start the simulator offscreen in a separate terminal (project root):
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/dribble/scene.json
+```
+
+Then run the client (needs vision + a PyTorch backend):
+
 ```bash
 cd py_example
 uv sync --extra vision --extra torch_rocm

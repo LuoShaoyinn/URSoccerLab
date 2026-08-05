@@ -22,6 +22,15 @@ observer (`robot_rp1`, port `10001`).
 
 ## Run
 
+Start the simulator offscreen in a separate terminal (project root):
+
+```bash
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/pi_walk/scene.json
+```
+
+Then run the client (needs a PyTorch backend extra):
+
 ```bash
 cd py_example
 uv sync --extra torch_rocm

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -12,7 +13,12 @@ from ndisplay_config import write_ndisplay_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_UE = Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
+DEFAULT_UE = Path(
+    os.environ.get(
+        "URS_UE",
+        str(Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"),
+    )
+)
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
 
@@ -26,7 +32,6 @@ def main() -> int:
     )
     parser.add_argument("--ue", type=Path, default=DEFAULT_UE)
     parser.add_argument("--map", default=MAP_PATH)
-    parser.add_argument("--windowed", action="store_true")
     parser.add_argument(
         "--sim-extra-arg",
         action="append",
@@ -63,7 +68,7 @@ def main() -> int:
         "-ExecCmds=MjCamera.AutoReadback 0,DisableAllScreenMessages",
         f"-URSSceneConfig={scene_path}",
         "-NoSound",
-        *([] if args.windowed else ["-RenderOffscreen"]),
+        "-RenderOffscreen",
         *args.sim_extra_arg,
     ]
     if mode == "rgbd":

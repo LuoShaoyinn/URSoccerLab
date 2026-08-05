@@ -38,7 +38,12 @@ from ndisplay_config import write_ndisplay_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_UE = Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
+DEFAULT_UE = Path(
+    os.environ.get(
+        "URS_UE",
+        str(Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"),
+    )
+)
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
 NDISPLAY_DIR = ROOT / "Saved/Generated/NDisplay"

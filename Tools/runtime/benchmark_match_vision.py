@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -34,7 +35,12 @@ from ursoccerlab.tcp import (  # noqa: E402
 from ndisplay_config import write_ndisplay_config
 
 
-DEFAULT_UE = Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
+DEFAULT_UE = Path(
+    os.environ.get(
+        "URS_UE",
+        str(Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"),
+    )
+)
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
 
