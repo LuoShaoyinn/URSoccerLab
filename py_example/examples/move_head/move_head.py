@@ -38,7 +38,7 @@ def main(default_mode: str = "sweep") -> int:
     ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=30)
     ap.add_argument("--video", type=Path, default=Path("out/head_demo"),
-                    help="output video prefix (one file per robot appended with _N.mp4)")
+                    help="output video path or prefix (.mp4 always applied; _N appended per robot when >1)")
     args = ap.parse_args()
 
     clients = [RobotClient(args.host, p) for p in args.port]
@@ -139,8 +139,10 @@ def main(default_mode: str = "sweep") -> int:
     for c in clients:
         c.close()
     for i in range(n):
-        out_path = args.video if n == 1 else args.video.with_name(
-            f"{args.video.stem}_{i}{args.video.suffix}")
+        out_path = args.video.parent / (
+            args.video.stem if n == 1 else f"{args.video.stem}_{i}"
+        )
+        out_path = out_path.with_suffix(".mp4")
         write_video(all_frames[i], out_path, args.video_fps)
         print(f"  robot {i}: {out_path} ({len(all_frames[i])} frames)", flush=True)
     return 0
