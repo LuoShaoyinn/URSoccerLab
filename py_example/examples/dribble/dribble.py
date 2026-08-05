@@ -1,34 +1,35 @@
 #!/usr/bin/env python3
 """Look at the ball with the left eye, then walk forward to dribble it.
 
-Run Unreal with ``Config/examples/walker_and_observer.json``.  Vision uses the
-temporary fixed 736x1280 YOLO26n TorchScript cache on ROCm when available and
-falls back to the source ONNX checkpoint on CPU.  The 50 Hz gait loop remains
-independent from camera inference.
+Run Unreal with this folder's ``scene.json``::
+
+    "$HOME/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor" \
+      "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game \
+      -RenderOffScreen -NoSound \
+      -URSSceneConfig="$PWD/py_example/examples/dribble/scene.json"
+
+The ball detector is the Ultralytics COCO ``yolo26s.pt`` checkpoint
+(class 32 = sports ball, normalized to ``ball``); resize/NMS are handled by
+Ultralytics so no fixed-shape ONNX is required. Defaults to the ROCm GPU
+(``0``); pass ``--ultralytics-device cpu`` for CPU. The 50 Hz gait loop
+remains independent from camera inference.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
-import os
 import queue
-import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 
-EXAMPLES_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = EXAMPLES_DIR.parents[1]
-sys.path.insert(0, str(EXAMPLES_DIR))
-
-from pi_walk import (  # noqa: E402
+from policy import (  # noqa: E402
     ACTION_SCALE,
     DEFAULT_DOF,
     ISAAC_TO_MUJOCO,
@@ -39,20 +40,33 @@ from pi_walk import (  # noqa: E402
     load_policy,
     observation,
 )
-from yolo_left_eye import (  # noqa: E402
-    DEFAULT_CLASSES,
-    annotate,
-    decode_detections,
-    letterbox,
-)
 from ursoccerlab.media import camera_to_rgb, write_video  # noqa: E402
 from ursoccerlab.tcp import AdminClient, RobotClient  # noqa: E402
 
-
-DEFAULT_ONNX = REPO_ROOT / "refs/vision/models/yolo26/yolo26n_best.onnx"
-DEFAULT_TORCHSCRIPT = (
-    REPO_ROOT / "py_example/out/models/yolo26n_best_736x1280.torchscript.pt"
+DEFAULT_ULTRALYTICS_PT = Path(
+    "/home/luoshaoyinn/workspace/tmp2/refs/视觉_0625/"
+    "soccer_backend_TensorRT(1)/soccer_backend_TensorRT/yolo26s.pt"
 )
+
+_COLORS = ["#ffb000", "#00d7ff", "#ff4f81", "#73d13d", "#9254de", "#36cfc9", "#fa541c"]
+
+
+def annotate(frame: np.ndarray, detections: list[dict[str, object]]) -> np.ndarray:
+    image = Image.fromarray(frame)
+    draw = ImageDraw.Draw(image)
+    for det in detections:
+        cid = int(det["class_id"])
+        color = _COLORS[cid % len(_COLORS)]
+        x1, y1, x2, y2 = (float(v) for v in det["box_xyxy"])
+        label = f'{det["class_name"]} {float(det["confidence"]):.2f}'
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        text_box = draw.textbbox((x1, y1), label)
+        text_h = text_box[3] - text_box[1]
+        label_y = max(0.0, y1 - text_h - 4)
+        label_box = draw.textbbox((x1 + 2, label_y + 2), label)
+        draw.rectangle((x1, label_y, label_box[2] + 2, label_box[3] + 2), fill=color)
+        draw.text((x1 + 2, label_y + 2), label, fill="black")
+    return np.asarray(image)
 
 
 @dataclass
@@ -74,45 +88,83 @@ class VisionWorker:
 
     def __init__(
         self,
-        onnx_path: Path,
-        torchscript_path: Path,
-        backend: str,
-        confidence: float,
-        iou: float,
+        ultralytics_pt: Path,
+        device: str = "0",
+        confidence: float = 0.15,
+        iou: float = 0.45,
+        imgsz: int = 640,
+        class_id: int = 32,
     ):
-        use_rocm = backend != "cpu" and torch.cuda.is_available()
-        if backend == "gpu" and not use_rocm:
-            raise RuntimeError("--vision-backend gpu requested, but ROCm is unavailable")
-        if use_rocm and not torchscript_path.is_file():
-            if backend == "gpu":
-                raise FileNotFoundError(f"TorchScript cache not found: {torchscript_path}")
-            use_rocm = False
+        from ultralytics import YOLO
 
-        self.backend = "rocm-torchscript" if use_rocm else "cpu-onnxruntime"
-        self.device = torch.device("cuda" if use_rocm else "cpu")
         self.confidence = confidence
         self.iou = iou
+        self.imgsz = imgsz
+        self.class_id = class_id
         self.pending: queue.Queue[tuple[np.ndarray, float] | None] = queue.Queue(maxsize=1)
         self.results: queue.Queue[VisionResult] = queue.Queue()
         self.error: BaseException | None = None
         self.ready = threading.Event()
 
-        if use_rocm:
-            self.model = torch.jit.load(str(torchscript_path), map_location=self.device).eval()
-            self.session = None
-        else:
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = min(16, max(1, (os.cpu_count() or 2) // 2))
-            options.inter_op_num_threads = 1
-            self.session = ort.InferenceSession(
-                str(onnx_path),
-                sess_options=options,
-                providers=["CPUExecutionProvider"],
-            )
-            self.model = None
+        self.model = YOLO(str(ultralytics_pt))
+        use_cuda = device not in ("cpu", "") and torch.cuda.is_available()
+        self.device = torch.device("cuda" if use_cuda else "cpu")
+        self.device_str = device if use_cuda else "cpu"
+        self.backend = f"ultralytics:{Path(ultralytics_pt).name}:{self.device_str}"
 
         self.thread = threading.Thread(target=self._run, name="ball-yolo", daemon=True)
         self.thread.start()
+
+    def _run(self) -> None:
+        try:
+            dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+            began = time.perf_counter()
+            for _ in range(3):
+                self.model.predict(
+                    dummy, conf=self.confidence, iou=self.iou, imgsz=self.imgsz,
+                    classes=[self.class_id], device=self.device_str, verbose=False,
+                )
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
+            print(
+                f"[vision] Ultralytics warm-up completed in "
+                f"{time.perf_counter() - began:.2f}s"
+            )
+            self.ready.set()
+            while True:
+                item = self.pending.get()
+                if item is None:
+                    return
+                frame, sim_time = item
+                started = time.perf_counter()
+                results = self.model.predict(
+                    frame, conf=self.confidence, iou=self.iou, imgsz=self.imgsz,
+                    classes=[self.class_id], device=self.device_str, verbose=False,
+                )
+                result = results[0]
+                out: list[dict[str, object]] = []
+                if result.boxes is not None and len(result.boxes):
+                    names = result.names
+                    xyxy = result.boxes.xyxy.detach().cpu().numpy()
+                    confs = result.boxes.conf.detach().cpu().numpy()
+                    clses = result.boxes.cls.detach().cpu().numpy().astype(int)
+                    for box, score, cls_id in zip(xyxy, confs, clses):
+                        cname = str(names.get(int(cls_id), str(int(cls_id))))
+                        if cname == "sports ball":
+                            cname = "ball"
+                        out.append(
+                            {
+                                "class_id": int(cls_id),
+                                "class_name": cname,
+                                "confidence": float(score),
+                                "box_xyxy": [float(v) for v in box],
+                            }
+                        )
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                self.results.put(VisionResult(frame, sim_time, out, elapsed_ms))
+        except BaseException as exc:
+            self.error = exc
+            self.ready.set()
 
     def submit(self, frame: np.ndarray, sim_time: float) -> None:
         try:
@@ -146,58 +198,9 @@ class VisionWorker:
             self.pending.put_nowait(None)
         self.thread.join(timeout=5.0)
 
-    def _run(self) -> None:
-        try:
-            if self.model is not None:
-                warmup = torch.zeros((1, 3, 736, 1280), device=self.device)
-                warmup_started = time.perf_counter()
-                with torch.inference_mode():
-                    for _ in range(3):
-                        self.model(warmup)
-                torch.cuda.synchronize()
-                print(
-                    f"[vision] ROCm warm-up completed in "
-                    f"{time.perf_counter() - warmup_started:.2f}s"
-                )
-            self.ready.set()
-            while True:
-                item = self.pending.get()
-                if item is None:
-                    return
-                frame, sim_time = item
-                image = Image.fromarray(frame)
-                tensor, gain, pad_x, pad_y = letterbox(image, 1280, 736)
-                started = time.perf_counter()
-                if self.model is not None:
-                    device_tensor = torch.from_numpy(tensor).to(self.device)
-                    with torch.inference_mode():
-                        output = self.model(device_tensor)
-                    if self.device.type == "cuda":
-                        torch.cuda.synchronize()
-                    output_array = output.detach().cpu().numpy()
-                else:
-                    assert self.session is not None
-                    output_array = self.session.run(None, {"images": tensor})[0]
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
-                detections = decode_detections(
-                    output_array,
-                    image.size,
-                    (1280, 736),
-                    gain,
-                    pad_x,
-                    pad_y,
-                    DEFAULT_CLASSES,
-                    self.confidence,
-                    self.iou,
-                )
-                self.results.put(VisionResult(frame, sim_time, detections, elapsed_ms))
-        except BaseException as exc:
-            self.error = exc
-            self.ready.set()
-
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=10000)
     parser.add_argument("--observer-port", type=int, default=10001)
@@ -210,18 +213,19 @@ def main() -> int:
         help="reset robot_rp0 and --ball-actor through the admin endpoint before control",
     )
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
-    parser.add_argument("--onnx", type=Path, default=DEFAULT_ONNX)
-    parser.add_argument("--torchscript", type=Path, default=DEFAULT_TORCHSCRIPT)
-    parser.add_argument("--vision-backend", choices=("auto", "gpu", "cpu"), default="auto")
-    parser.add_argument("--confidence", type=float, default=0.4)
-    parser.add_argument("--iou", type=float, default=0.45)
+    parser.add_argument("--ultralytics-pt", type=Path, default=DEFAULT_ULTRALYTICS_PT)
+    parser.add_argument("--ultralytics-device", default="0", help="ROCm GPU id (0) | cpu")
+    parser.add_argument("--ultralytics-conf", type=float, default=0.15)
+    parser.add_argument("--ultralytics-imgsz", type=int, default=640)
+    parser.add_argument(
+        "--ultralytics-class-id", type=int, default=32,
+        help="COCO class id to track (32 = sports ball)",
+    )
     parser.add_argument("--seek-timeout", type=float, default=8.0)
     parser.add_argument("--duration", type=float, default=1.0, help="dribbling duration")
     parser.add_argument("--vx", type=float, default=0.3)
     parser.add_argument(
-        "--vy-kp",
-        type=float,
-        default=0.55,
+        "--vy-kp", type=float, default=0.55,
         help="lateral velocity gain for horizontal ball displacement",
     )
     parser.add_argument("--max-vy", type=float, default=0.4, help="maximum |vy| in m/s")
@@ -230,21 +234,15 @@ def main() -> int:
     parser.add_argument("--yaw-ki", type=float, default=0.08)
     parser.add_argument("--yaw-kd", type=float, default=0.15)
     parser.add_argument("--yaw-integral-limit", type=float, default=0.5)
-    parser.add_argument(
-        "--max-yaw-rate", type=float, default=0.5, help="maximum body |yaw rate|"
-    )
+    parser.add_argument("--max-yaw-rate", type=float, default=0.5, help="maximum body |yaw rate|")
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--head-kp", type=float, default=0.8)
     parser.add_argument("--head-max-rate", type=float, default=0.3, help="rad/s")
     parser.add_argument("--head-search-rate", type=float, default=0.15, help="rad/s")
     parser.add_argument("--video-fps", type=int, default=30)
     parser.add_argument("--video", type=Path, default=Path("out/dribble/left_eye.mp4"))
-    parser.add_argument(
-        "--annotated-video", type=Path, default=Path("out/dribble/detections.mp4")
-    )
-    parser.add_argument(
-        "--observer-video", type=Path, default=Path("out/dribble/observer.mp4")
-    )
+    parser.add_argument("--annotated-video", type=Path, default=Path("out/dribble/detections.mp4"))
+    parser.add_argument("--observer-video", type=Path, default=Path("out/dribble/observer.mp4"))
     parser.add_argument("--trace", type=Path, default=Path("out/dribble/trace.json"))
     args = parser.parse_args()
 
@@ -356,24 +354,19 @@ def main() -> int:
             ball = max(balls, key=lambda d: float(d["confidence"]), default=None)
             if ball is None:
                 centered_count = 0
-                # Initially the ball is below rp0's zero-pitch FOV. During a
-                # dribble, continue in the last observed direction instead of
-                # freezing when the close ball crosses the image boundary.
+                # During a dribble, continue in the last observed direction
+                # instead of freezing when the close ball crosses the image
+                # boundary.
                 pitch_direction = 1.0 if ball_error_y >= -0.05 else -1.0
                 head_pitch = float(
                     np.clip(
                         head_pitch + pitch_direction * args.head_search_rate * dt,
-                        -0.5,
-                        0.9,
+                        -0.5, 0.9,
                     )
                 )
                 if dribble_started is not None:
                     yaw_rate = float(
-                        np.clip(
-                            -args.head_kp * ball_error_x,
-                            -args.head_max_rate,
-                            args.head_max_rate,
-                        )
+                        np.clip(-args.head_kp * ball_error_x, -args.head_max_rate, args.head_max_rate)
                     )
                     head_yaw = float(np.clip(head_yaw + yaw_rate * dt, -1.2, 1.2))
             else:
@@ -383,18 +376,10 @@ def main() -> int:
                 ball_error_y = ((y1 + y2) * 0.5 - height * 0.55) / (height * 0.5)
                 latest_ball_time = time.monotonic()
                 yaw_rate = float(
-                    np.clip(
-                        -args.head_kp * ball_error_x,
-                        -args.head_max_rate,
-                        args.head_max_rate,
-                    )
+                    np.clip(-args.head_kp * ball_error_x, -args.head_max_rate, args.head_max_rate)
                 )
                 pitch_rate = float(
-                    np.clip(
-                        args.head_kp * ball_error_y,
-                        -args.head_max_rate,
-                        args.head_max_rate,
-                    )
+                    np.clip(args.head_kp * ball_error_y, -args.head_max_rate, args.head_max_rate)
                 )
                 head_yaw = float(np.clip(head_yaw + yaw_rate * dt, -1.2, 1.2))
                 # Positive MuJoCo rotation around +Y points the camera downward.
@@ -404,9 +389,7 @@ def main() -> int:
                 else:
                     centered_count = 0
                 locked = allow_lock and centered_count >= 3
-            annotated_frames.append(
-                np.asarray(annotate(Image.fromarray(result.frame), result.detections))
-            )
+            annotated_frames.append(annotate(result.frame, result.detections))
             trace.append(
                 {
                     "sim_time": result.sim_time,
@@ -435,16 +418,12 @@ def main() -> int:
         args.trace.parent.mkdir(parents=True, exist_ok=True)
         args.trace.write_text(json.dumps(trace, indent=2) + "\n", encoding="utf-8")
         if annotated_frames:
-            Image.fromarray(annotated_frames[-1]).save(
-                args.trace.parent / "last_detection.png"
-            )
+            Image.fromarray(annotated_frames[-1]).save(args.trace.parent / "last_detection.png")
 
     def send_targets() -> None:
         if body_actuators is None or head_yaw_actuator is None or head_pitch_actuator is None:
             return
-        command = {
-            name: float(value) for name, value in zip(body_actuators, body_targets)
-        }
+        command = {name: float(value) for name, value in zip(body_actuators, body_targets)}
         command[head_yaw_actuator] = head_yaw
         command[head_pitch_actuator] = head_pitch
         client.send_command(command)
@@ -459,10 +438,7 @@ def main() -> int:
                     reply = admin.reset(actor_id)
                     if not reply.get("ok", False):
                         raise RuntimeError(f"failed to reset {actor_id}: {reply}")
-                print(
-                    f"[control] reset robot_rp0 and {args.ball_actor} "
-                    "to their configured initial poses"
-                )
+                print(f"[control] reset robot_rp0 and {args.ball_actor} to their configured initial poses")
             finally:
                 admin.close()
 
@@ -475,21 +451,17 @@ def main() -> int:
         if latest_state is None or body_actuators is None:
             raise RuntimeError(f"no robot state received on {args.host}:{args.port}")
 
-        # Establish the standing controls before ROCm performs its expensive
-        # first-use kernel compilation. MuJoCo retains these actuator targets
-        # while the constructor warms the fixed TorchScript graph.
         send_targets()
         vision = VisionWorker(
-            args.onnx,
-            args.torchscript,
-            args.vision_backend,
-            args.confidence,
-            args.iou,
+            args.ultralytics_pt,
+            device=args.ultralytics_device,
+            confidence=args.ultralytics_conf,
+            iou=0.45,
+            imgsz=args.ultralytics_imgsz,
+            class_id=args.ultralytics_class_id,
         )
         print(f"[vision] backend={vision.backend} device={vision.device}")
 
-        # Warm-up runs in the vision worker. Keep draining network traffic and
-        # refreshing the standing command so neither physics nor TCP stalls.
         while not vision.ready.is_set():
             pump(False)
             pump_observer(False)
@@ -505,10 +477,7 @@ def main() -> int:
             if consume_vision(True):
                 dribble_started = time.monotonic()
                 start_x = float(latest_state["base"]["pos"][0])
-                print(
-                    f"[control] ball locked: yaw={head_yaw:+.3f} "
-                    f"pitch={head_pitch:+.3f}"
-                )
+                print(f"[control] ball locked: yaw={head_yaw:+.3f} pitch={head_pitch:+.3f}")
                 break
             send_targets()
             time.sleep(0.001)
@@ -534,10 +503,8 @@ def main() -> int:
                 policy_dt = float(np.clip(now - last_policy_time, 1.0 / 200.0, 0.1))
                 last_policy_time = now
                 ball_recent = now - latest_ball_time < 0.75
-                # Horizontal image error alone approaches zero once the head
-                # tracks the ball. Include head yaw to retain the actual body-
-                # relative direction, and correct it primarily with lateral
-                # motion instead of forcing the robot to turn in place.
+                # Include head yaw to retain the actual body-relative direction,
+                # corrected primarily with lateral motion.
                 steering_error = ball_error_x - head_yaw
                 base = latest_state["base"]
                 latest_base_yaw = yaw_from_wxyz(base["quat"])
@@ -548,8 +515,7 @@ def main() -> int:
                 yaw_integral = float(
                     np.clip(
                         yaw_integral + latest_yaw_error * policy_dt,
-                        -args.yaw_integral_limit,
-                        args.yaw_integral_limit,
+                        -args.yaw_integral_limit, args.yaw_integral_limit,
                     )
                 )
                 angular_velocity = base.get("vel", [0.0] * 6)
@@ -558,17 +524,15 @@ def main() -> int:
                     args.yaw_kp * latest_yaw_error
                     + args.yaw_ki * yaw_integral
                     - args.yaw_kd * measured_yaw_rate,
-                    -args.max_yaw_rate,
-                    args.max_yaw_rate,
+                    -args.max_yaw_rate, args.max_yaw_rate,
                 )
                 command = np.asarray(
                     [
                         args.vx if ball_recent else 0.0,
-                        # The locomotion policy uses +Y to move left. Camera-
-                        # right is a positive image error, hence the minus.
+                        # The locomotion policy uses +Y to move left. Camera-right
+                        # is a positive image error, hence the minus.
                         np.clip(-args.vy_kp * steering_error, -args.max_vy, args.max_vy)
-                        if ball_recent
-                        else 0.0,
+                        if ball_recent else 0.0,
                         yaw_command,
                     ],
                     dtype=np.float32,
@@ -581,9 +545,7 @@ def main() -> int:
                     action = policy(
                         torch.from_numpy(np.clip(history, -100.0, 100.0)).unsqueeze(0)
                     )
-                last_action = np.clip(
-                    action.numpy().squeeze().astype(np.float32), -100.0, 100.0
-                )
+                last_action = np.clip(action.numpy().squeeze().astype(np.float32), -100.0, 100.0)
                 body_targets = last_action[ISAAC_TO_MUJOCO] * ACTION_SCALE + DEFAULT_DOF
                 next_policy = now + 1.0 / args.policy_hz
             send_targets()

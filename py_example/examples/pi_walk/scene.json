@@ -1,0 +1,27 @@
+{
+  "version": "urs_scene_v1",
+  "robots": [
+    {
+      "actor_id": "robot_rp0",
+      "type": "pi_plus",
+      "translation_m": [-1.0, 0.0, 0.3762],
+      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+      "joint_positions_rad": {
+        "l_hip_pitch_joint": -0.25, "l_hip_roll_joint": 0.0, "l_thigh_joint": 0.0, "l_calf_joint": 0.65, "l_ankle_pitch_joint": -0.4, "l_ankle_roll_joint": 0.0,
+        "r_hip_pitch_joint": -0.25, "r_hip_roll_joint": 0.0, "r_thigh_joint": 0.0, "r_calf_joint": 0.65, "r_ankle_pitch_joint": -0.4, "r_ankle_roll_joint": 0.0,
+        "l_shoulder_pitch_joint": 0.0, "l_shoulder_roll_joint": 0.2, "l_upper_arm_joint": 0.0, "l_elbow_joint": -1.2,
+        "r_shoulder_pitch_joint": 0.0, "r_shoulder_roll_joint": -0.2, "r_upper_arm_joint": 0.0, "r_elbow_joint": -1.2,
+        "head_yaw_joint": 0.0, "head_pitch_joint": 0.0
+      }
+    },
+    {
+      "actor_id": "robot_rp1",
+      "type": "pi_plus",
+      "translation_m": [0.0, 3.0, 0.3762],
+      "rotation_quat_xyzw": [0.0, 0.0, -0.70710678, 0.70710678]
+    }
+  ],
+  "objects": [
+    {"actor_id":"ball","type":"soccer_ball","translation_m":[0.0,0.0,0.075],"rotation_quat_xyzw":[0.0,0.0,0.0,1.0]}
+  ]
+}

@@ -10,7 +10,7 @@ uv sync
 ```
 
 The default environment uses Python 3.12 and does not install PyTorch. Choose
-exactly one PyTorch backend when running the pi_plus walking-policy example:
+exactly one PyTorch backend when running a walking-policy or vision example:
 
 ```bash
 uv sync --extra torch_cpu
@@ -19,8 +19,9 @@ uv sync --extra torch_cuda
 ```
 
 The extras are mutually exclusive. The ROCm and CUDA builds are supported on
-Linux; `torch_rocm` currently selects ROCm 7.2.4 and `torch_cuda` selects
-CUDA 13.0.
+Linux; `torch_rocm` currently selects ROCm 7.2.4 (torch + torchvision from the
+ROCm index) and `torch_cuda` selects CUDA 13.0. Vision examples also need
+`--extra vision` (onnxruntime + ultralytics).
 
 ## RobotClient — motor commands, state, and camera
 
@@ -58,53 +59,57 @@ admin.close()
 
 ## Run A Scene
 
-Start an offscreen runtime from the project root with the scene config named
-by the example:
+Each example lives in its own folder under `examples/<name>/` together with the
+scene it expects as `scene.json`. Start an offscreen runtime pointing at that
+config:
 
 ```bash
 "$HOME/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor" \
-  "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game -RenderOffscreen \
+  "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField -game -RenderOffScreen \
   -DDC-ForceMemoryCache -unattended -nop4 -nosplash -NoSound \
-  -URSSceneConfig="$PWD/Config/examples/two_robots_face_to_face.json"
+  -URSSceneConfig="$PWD/py_example/examples/move_head/scene.json"
 ```
 
 Each client uses TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port
 `10001`. Port `11000` is one optional global administration connection, not a
 second per-robot stream. Output files go under `py_example/out/` and are ignored
-by Git.
+by Git. Each example folder is self-contained (no cross-imports between
+examples).
 
 ## 1. Head Motion
 
-Two standing robots are at `(-1, -0.5)` and `(1, -0.5)`, facing one another. Both
-heads sweep while the legs remain uncommanded. Both left-eye videos are
-recorded.
+Two standing robots face one another. Both heads sweep while the legs remain
+uncommanded. Both left-eye videos are recorded.
 
 ```bash
-uv run python examples/move_head.py \
+uv run python examples/move_head/move_head.py \
   --port 10000 10001 --duration 10 \
   --video out/head_motion
 ```
 
-Use `Config/examples/two_robots_face_to_face.json` (pi_plus) or
-`Config/examples/mos9_face_to_face.json` (mos9) in the runtime command.
+Scene: `examples/move_head/scene.json` (`two_robots_face_to_face`, pi_plus).
+For a mos9 variant, point the runtime at `Config/examples/mos9_face_to_face.json`.
 
 For a single robot:
 
 ```bash
-uv run python examples/move_head.py \
+uv run python examples/move_head/move_head.py \
   --port 10000 --duration 10 \
   --video out/head_solo
 ```
 
 ## 2. Standing
 
-The same scene, but neither robot receives a head command. Static capture only:
+The same scene, but neither robot receives a head command. All actuators are
+held at 0 (static capture):
 
 ```bash
-uv run python examples/standing.py \
+uv run python examples/standing/standing.py \
   --port 10000 10001 --duration 5 \
   --video out/standing
 ```
+
+Scene: `examples/standing/scene.json`.
 
 ## 3. MOS9 Walking
 
@@ -113,24 +118,23 @@ the policy while an observer robot stands still and records the walk from its
 left-eye camera.
 
 ```bash
-uv run python examples/mos9_walk.py \
+uv run python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 --vx 0.4 --duration 15 \
   --video out/mos9_walker.mp4 --observer-video out/mos9_observer.mp4
 ```
 
-Use `Config/examples/mos9_walker_and_observer.json` in the runtime command.
-Requires
+Scene: `examples/mos9_walk/scene.json`. Requires
 `refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx`.
 
 For solo walking (no observer):
 
 ```bash
-uv run python examples/mos9_walk.py \
+uv run python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 0 --vx 0.4 --duration 15 \
   --video out/mos9_walker.mp4
 ```
 
-Use `Config/examples/mos9_solo.json`.
+Use `Config/examples/mos9_solo.json` in the runtime command for solo mode.
 
 ## 4. Pi Plus Walking
 
@@ -139,45 +143,41 @@ Use `Config/examples/mos9_solo.json`.
 and records both left-eye cameras:
 
 ```bash
-uv sync --extra torch_rocm
-uv run --extra torch_rocm python examples/pi_walk.py \
+uv sync --extra vision --extra torch_rocm
+uv run --extra vision --extra torch_rocm python examples/pi_walk/pi_walk.py \
   --vx 0.35 --duration 15 \
   --video out/walker.mp4 \
   --observer-video out/observer.mp4
 ```
 
-Use `Config/examples/walker_and_observer.json` in the runtime command.
-It requires `refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt`.
+Scene: `examples/pi_walk/scene.json`. It requires
+`refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt`.
 The policy was trained against the older mos-brain Pi model. It is useful for
 exercising the TCP motor and camera path, but is not a validated gait for the
 current Pi MJCF until its dynamics and actuator calibration are matched or the
 policy is retrained.
 
-## Vision Smoke Test
-
-Removed. Use `Tools/runtime/run_vision_smoke_test.py` from the project root
-for automated vision validation.
-
 ## YOLO Left-Eye Inference
 
-Install the optional CPU ONNX runtime, start a scene, and run the trained
-YOLO26 checkpoint on camera index 0 (the robot's left eye):
+Install the optional vision extra, start a scene, and run the trained YOLO26
+checkpoint on camera index 0 (the robot's left eye):
 
 ```bash
 uv sync --extra vision
-uv run --extra vision python examples/vision/yolo_left_eye.py \
+uv run --extra vision python examples/yolo_left_eye/yolo_left_eye.py \
   --port 10000 --out out/yolo_left_eye
 ```
 
 For repeatable inference on an existing capture:
 
 ```bash
-uv run --extra vision python examples/vision/yolo_left_eye.py \
+uv run --extra vision python examples/yolo_left_eye/yolo_left_eye.py \
   --image out/yolo/camera.png --out out/yolo_saved_frame
 ```
 
-The example defaults to `refs/vision/models/yolo26/yolo26s_best.onnx` and
-writes `left_eye.png`, `annotated.png`, and `detections.json`. Use
+Scene: `examples/yolo_left_eye/scene.json`. The example defaults to
+`refs/vision/models/yolo26/yolo26s_best.onnx` and writes `left_eye.png`,
+`annotated.png`, and `detections.json`. Use
 `--model ../refs/vision/models/yolo26/yolo26n_best.onnx` for the nano model.
 This inspection example uses ONNX Runtime on CPU; the deployment code under
 `refs/vision` converts the same checkpoint to TensorRT.
@@ -185,27 +185,23 @@ This inspection example uses ONNX Runtime on CPU; the deployment code under
 ### Look at the ball and dribble
 
 The vision-control example centers the ball with the head, then runs the
-walking policy while continuously tracking the ball from the left eye. It
-uses lateral velocity to remove horizontal ball displacement and reserves a
+walking policy while continuously tracking the ball from the left eye. It uses
+lateral velocity to remove horizontal ball displacement and reserves a
 closed-loop PID for world-yaw control. The PID consumes the simulated IMU
 orientation and angular velocity and defaults to a zero-radian heading. Camera
 inference runs on a latest-frame-only worker, independent of the 50 Hz policy
-loop:
+loop. The detector is the Ultralytics COCO `yolo26s.pt` checkpoint (class 32 =
+sports ball); resize/NMS are handled by Ultralytics, defaulting to the ROCm GPU:
 
 ```bash
 uv sync --extra vision --extra torch_rocm
 uv run --extra vision --extra torch_rocm \
-  python examples/vision/look_at_ball_and_dribble.py \
-  --vision-backend auto --duration 1
+  python examples/dribble/dribble.py \
+  --ultralytics-device 0 --duration 10
 ```
 
-Use `Config/examples/walker_and_observer.json`. On ROCm, `auto` uses the
-temporary fixed-resolution TorchScript cache at
-`out/models/yolo26n_best_736x1280.torchscript.pt`; otherwise it falls back to
-the nano ONNX checkpoint on CPU. This cache was traced from the fixed ONNX
-graph and is intentionally replaceable when the original training `.pt`
-checkpoint becomes available. At startup, the example resets `robot_rp0` and
-the ball through the admin endpoint so model warm-up cannot leave stale scene
+Scene: `examples/dribble/scene.json`. At startup the example resets `robot_rp0`
+and the ball through the admin endpoint so warm-up cannot leave stale scene
 state; pass `--no-reset-at-start` to preserve the live poses. The example
 writes raw and annotated videos plus an external observer video and JSON
 detection/control trace under `out/dribble/`.
@@ -213,11 +209,16 @@ detection/control trace under `out/dribble/`.
 ## Layout
 
 ```text
-src/ursoccerlab/     reusable TCP, camera, and video APIs
-examples/            standing, head-motion, walking, and vision clients
-examples/vision/     trained-checkpoint inference examples
-tests/               protocol and camera parser tests
-out/                 ignored local captures
+src/ursoccerlab/                       reusable TCP, camera, and video APIs
+examples/move_head/                    head-sweep capture (scene.json)
+examples/standing/                     static standing capture (scene.json)
+examples/mos9_walk/                    MOS9 AMP walk policy (scene.json)
+examples/pi_walk/                      Pi Plus walk policy (scene.json)
+examples/yolo_left_eye/                YOLO26 inference inspection (scene.json)
+examples/dribble/                      look-at-ball + dribble (policy.py + scene.json)
+Config/examples/                       alternative/general scene configs
+tests/                                 protocol and camera parser tests
+out/                                   ignored local captures
 ```
 
 Run the unit tests without installing another test framework:

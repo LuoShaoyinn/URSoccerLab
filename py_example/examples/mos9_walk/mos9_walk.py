@@ -4,17 +4,17 @@
 The walker follows the AMP walk_v11_terrain policy.  A second robot stands
 as a stationary observer, recording the walk from its left-eye camera.
 
-Use ``Config/examples/mos9_walker_and_observer.json``::
+Use this folder's ``scene.json`` (mos9 walker + observer)::
 
     cd py_example
-    uv run python examples/mos9_walk.py --robot-port 10000 --observer-port 10001 \
+    uv run python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 10001 \
         --vx 0.4 --duration 15 \
         --video out/walker.mp4 --observer-video out/observer.mp4
 
 For solo walking (no observer), pass ``--observer-port 0`` and use
 ``Config/examples/mos9_solo.json``::
 
-    uv run python examples/mos9_walk.py --robot-port 10000 --observer-port 0 \
+    uv run python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 0 \
         --vx 0.4 --duration 15 \
         --video out/walker.mp4
 """
@@ -29,7 +29,7 @@ import numpy as np
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient, AdminClient
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = REPO_ROOT / "refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx"
 
 # ── Policy joint order (from AMP training, walk_v11_terrain) ────────────────

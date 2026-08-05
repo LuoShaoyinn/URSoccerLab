@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Run one Pi Plus policy while recording both robots' left-eye cameras.
 
-The simulator must be running with
-``Config/examples/walker_and_observer.json``. Robot ``robot_rp0`` walks from
-``(-1, 0)`` along ``+X``; ``robot_rp1`` stands at ``(0, 3)`` facing ``-Y``.
-This external client reads TCP state, sends named motor position targets only
-to the walker, and does not use the admin pose API.
+The simulator must be running with this folder's ``scene.json``. Robot
+``robot_rp0`` walks from ``(-1, 0)`` along ``+X``; ``robot_rp1`` stands at
+``(0, 3)`` facing ``-Y``. This external client reads TCP state, sends named
+motor position targets only to the walker, and does not use the admin pose API.
 
 The policy was trained for the older mos-brain Pi dynamics. It exercises the
 runtime protocol and capture path, but it is not a validated gait for the
@@ -31,7 +30,7 @@ import numpy as np
 import torch
 
 EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = EXAMPLE_ROOT.parent
+REPO_ROOT = EXAMPLE_ROOT.parents[1]
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient
 
