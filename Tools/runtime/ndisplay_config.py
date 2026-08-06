@@ -34,10 +34,7 @@ def write_ndisplay_config(view_count: int, output: Path) -> tuple[int, int]:
         "nDisplay": {
             "description": f"URS production {view_count}-camera atlas",
             "version": "5.00",
-            "assetPath": (
-                "/Game/URSoccerLab/NDisplay/"
-                "URS_ProductionCameras.URS_ProductionCameras"
-            ),
+            "assetPath": "",
             "misc": {
                 "bFollowLocalPlayerCamera": False,
                 "bExitOnEsc": True,

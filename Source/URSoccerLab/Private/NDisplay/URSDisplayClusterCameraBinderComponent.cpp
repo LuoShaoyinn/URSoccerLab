@@ -149,6 +149,7 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 
 	if (Cameras.Num() < RequestedCameraCount)
 	{
+		UE_LOG(LogTemp, Display, TEXT("[URS nDisplay] TryBind: %d/%d cameras found (waiting)"), Cameras.Num(), RequestedCameraCount);
 		return false;
 	}
 
@@ -156,6 +157,7 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 		IDisplayCluster::Get().GetRenderMgr();
 	if (!RenderManager || !RenderManager->GetViewportManager())
 	{
+		UE_LOG(LogTemp, Display, TEXT("[URS nDisplay] TryBind: render manager not ready"));
 		return false;
 	}
 	TArray<IDisplayClusterViewport*> Viewports;
@@ -167,6 +169,7 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 			RenderManager->GetViewportManager()->FindViewport(ViewportId);
 		if (!Viewport)
 		{
+			UE_LOG(LogTemp, Display, TEXT("[URS nDisplay] TryBind: viewport '%s' not found"), *ViewportId);
 			return false;
 		}
 		Viewports.Add(Viewport);
@@ -175,15 +178,10 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 	// nDisplay owns RGB rendering while this adapter is active. Keep depth
 	// SceneCaptures alive in RGBD mode; depth is still produced independently
 	// until it can be extracted from an nDisplay view attachment.
-	for (UMjCamera* Camera : AllCameras)
-	{
-		if (Camera && Camera->CaptureComponent
-			&& Camera->CaptureMode != EMjCameraMode::Depth)
-		{
-			Camera->CaptureComponent->bCaptureEveryFrame = false;
-			Camera->CaptureComponent->bCaptureOnMovement = false;
-		}
-	}
+	// NOTE: SceneCapture disabling is deferred to AFTER the binding loop
+	// completes successfully. If we disable before binding and the binding
+	// fails partway (e.g. a viewport isn't ready yet), the SceneCaptures are
+	// left disabled with no nDisplay coverage → cameras go dark.
 
 	CameraProxies.Reserve(RequestedCameraCount);
 	for (int32 Index = 0; Index < RequestedCameraCount; ++Index)
@@ -191,6 +189,10 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 		UMjCamera* Source = Cameras[Index];
 		if (!Source || !Source->CaptureComponent)
 		{
+			// Clean up partial proxies + rects so the next retry starts fresh.
+			for (UCameraComponent* Proxy : CameraProxies) { if (Proxy) { Proxy->DestroyComponent(); } }
+			CameraProxies.Reset();
+			CameraRects.Reset();
 			return false;
 		}
 
@@ -218,6 +220,9 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 		if (!IDisplayClusterProjection::Get().CameraPolicySetCamera(
 			Viewports[Index]->GetProjectionPolicy(), Proxy, Settings))
 		{
+			for (UCameraComponent* P : CameraProxies) { if (P) { P->DestroyComponent(); } }
+			CameraProxies.Reset();
+			CameraRects.Reset();
 			return false;
 		}
 		CameraProxies.Add(Proxy);
@@ -225,12 +230,24 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 			CameraKey(Owner->GetName(), Source->MjName),
 			Viewports[Index]->GetRenderSettings().Rect);
 
-		UE_LOG(LogTemp, Log,
+		UE_LOG(LogTemp, Display,
 			TEXT("[URS nDisplay] viewport '%s' bound to '%s/%s'."),
 			*ViewportId, *Owner->GetName(), *Source->MjName);
 	}
 
-	UE_LOG(LogTemp, Log,
+	// ALL cameras bound successfully — NOW safe to disable the duplicate
+	// SceneCaptures so nDisplay owns rendering exclusively.
+	for (UMjCamera* Camera : AllCameras)
+	{
+		if (Camera && Camera->CaptureComponent
+			&& Camera->CaptureMode != EMjCameraMode::Depth)
+		{
+			Camera->CaptureComponent->bCaptureEveryFrame = false;
+			Camera->CaptureComponent->bCaptureOnMovement = false;
+		}
+	}
+
+	UE_LOG(LogTemp, Display,
 		TEXT("[URS nDisplay] bound %d RGB cameras%s; duplicate RGB SceneCaptures disabled."),
 		CameraProxies.Num(),
 		RequestedCameraName.IsEmpty()
