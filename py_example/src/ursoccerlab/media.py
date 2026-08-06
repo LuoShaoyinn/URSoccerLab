@@ -52,9 +52,10 @@ def depth_to_meters(depth: dict) -> np.ndarray:
 
 
 def write_video(frames: list[np.ndarray], path: Path, fps: int) -> None:
-    """Write RGB frames to an H.264 MP4."""
+    """Write RGB frames to an H.264 MP4. Skips (with a warning) if empty."""
     if not frames:
-        raise RuntimeError(f"no camera frames received for {path}")
+        print(f"WARNING: no camera frames received for {path} — skipping")
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with imageio.get_writer(
         str(path),

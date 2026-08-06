@@ -105,3 +105,15 @@ env/
 !/Content/URSoccerLab/Objects/**
 
 refs/
+
+# AppImage packaging workspace (cook output, AppDir, .AppImage)
+/build/
+
+# Packaged AppImage output
+/dist/
+
+# Build artifacts (do not commit)
+/ArchivedBuilds/
+/Saved/StagedBuilds/
+/Saved/Cooked/
+/_pack/
