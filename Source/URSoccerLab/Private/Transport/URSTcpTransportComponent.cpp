@@ -899,12 +899,16 @@ void UURSTcpTransportComponent::SendToClients(FRobotListener& Listener, uint8 Fr
 			Listener.Clients.RemoveAt(Idx);
 			continue;
 		}
-		EnqueueFrame(Client, FrameType, PayloadData, PayloadSize);
-		if (Client.WriteBuffer.Num() > MaxSendQueueBytes)
+		// Latest-frame-only: if the previous frame hasn't fully flushed yet,
+		// drop this one. This makes the channel behave like UDP (latest-wins)
+		// over TCP — a slow client never accumulates stale data. Camera frames
+		// are already gated by bRgbEncodeInFlight; state frames get the same
+		// treatment here.
+		if (Client.WriteBuffer.Num() > 0)
 		{
-			CloseSocket(Client.Socket);
-			Listener.Clients.RemoveAt(Idx);
+			continue;
 		}
+		EnqueueFrame(Client, FrameType, PayloadData, PayloadSize);
 	}
 }
 
