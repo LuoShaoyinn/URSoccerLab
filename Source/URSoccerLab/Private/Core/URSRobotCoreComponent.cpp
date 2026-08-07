@@ -54,7 +54,7 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	}
 	int32 EndpointCount = 0;
 	{
-		FScopeLock Lock(&EndpointMutex);
+		// no lock needed;
 		EndpointCount = Endpoints.Num();
 	}
 	if (bInitialized && EndpointCount == 0)
@@ -118,7 +118,7 @@ bool UURSRobotCoreComponent::Initialize()
 	{
 		UE_LOG(LogTemp, Log, TEXT("[URS Core] Physics engine not ready; will retry next tick."));
 		{
-			FScopeLock Lock(&EndpointMutex);
+			// no lock needed;
 			Endpoints.Reset();
 		}
 		return false;
@@ -132,7 +132,7 @@ bool UURSRobotCoreComponent::Initialize()
 	bInitialized = true;
 	TryInitializeCompiledScene();
 	{
-		FScopeLock Lock(&EndpointMutex);
+		// no lock needed;
 		UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized with %d robot(s)."), Endpoints.Num());
 	}
 	return true;
@@ -163,7 +163,7 @@ void UURSRobotCoreComponent::TryInitializeCompiledScene()
 	RebuildEndpointCache();
 	int32 EndpointCount = 0;
 	{
-		FScopeLock Lock(&EndpointMutex);
+		// no lock needed;
 		EndpointCount = Endpoints.Num();
 	}
 	if (EndpointCount == 0)
@@ -187,7 +187,7 @@ void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
 	// only after URLab compilation, so run this after every cache rebuild.
 	TArray<FString> ActorIds;
 	{
-		FScopeLock Lock(&EndpointMutex);
+		// no lock needed;
 		ActorIds.Reserve(Endpoints.Num());
 		for (const FRobotEndpoint& Endpoint : Endpoints)
 		{
@@ -447,9 +447,16 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		}
 	}
 	{
-		FScopeLock Lock(&EndpointMutex);
+		// no lock needed;
+		// Bump sequence lock (odd = writing)
+		uint32 OldSeq = EndpointSeq.load(std::memory_order_relaxed);
+		EndpointSeq.store(OldSeq | 1, std::memory_order_release);
 		Endpoints = MoveTemp(NewEndpoints);
 		ActorRootBodyIds = MoveTemp(NewActorRootBodyIds);
+		Snapshots.Reset();
+		Snapshots.AddDefaulted(NewEndpointCount);
+		// Done (even = stable)
+		EndpointSeq.store(OldSeq + 2, std::memory_order_release);
 	}
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Endpoint cache rebuilt: %d robot(s)."), NewEndpointCount);
 }
@@ -474,9 +481,157 @@ void UURSRobotCoreComponent::RegisterPhysicsCallbacks()
 
 void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 {
-	FScopeLock Lock(&EndpointMutex);
+	// Sequence lock: if EndpointSeq is odd, a rebuild is in progress.
+	// If it changes during our work, the data might be inconsistent — skip.
+	const uint32 Seq1 = EndpointSeq.load(std::memory_order_acquire);
+	if (Seq1 & 1) return;
+
+	PublishSnapshots(Model, Data);
+	ApplyControllerGains(Model);
 	ApplyPoseLocks(Model, Data);
 	ApplyCommands(FPlatformTime::Seconds());
+
+	const uint32 Seq2 = EndpointSeq.load(std::memory_order_acquire);
+	if (Seq1 != Seq2)
+	{
+		// Rebuild happened during this step — our writes may have gone to
+		// stale data. The next step will use the fresh endpoints.
+	}
+}
+
+void UURSRobotCoreComponent::PublishSnapshots(mjModel* Model, mjData* Data)
+{
+	const int32 NumRobots = FMath::Min(Endpoints.Num(), Snapshots.Num());
+	for (int32 Ri = 0; Ri < NumRobots; ++Ri)
+	{
+		const FRobotEndpoint& Ep = Endpoints[Ri];
+		FRobotSnapshot& S = Snapshots[Ri].Back();
+		S = FRobotSnapshot{}; // zero
+
+		S.SimTime = Data->time;
+		S.bCommandTimedOut = !Ep.bHasCommand.load(std::memory_order_acquire) ||
+			(FPlatformTime::Seconds() - Ep.LastCommandTimeSec.load(std::memory_order_acquire) > CommandTimeoutSec);
+
+		// Base pose from body world transforms
+		if (Ep.RootBodyId > 0)
+		{
+			const int32 P = Ep.RootBodyId * 3;
+			const int32 Q = Ep.RootBodyId * 4;
+			S.BasePos[0] = Data->xpos[P]; S.BasePos[1] = Data->xpos[P+1]; S.BasePos[2] = Data->xpos[P+2];
+			S.BaseQuat[0] = Data->xquat[Q]; S.BaseQuat[1] = Data->xquat[Q+1];
+			S.BaseQuat[2] = Data->xquat[Q+2]; S.BaseQuat[3] = Data->xquat[Q+3];
+		}
+
+		// Base velocity from free joint
+		for (const FJointInfo& Ji : Ep.Joints)
+		{
+			if (Ji.JointType == mjJNT_FREE && Ji.DofAdr >= 0 && Ji.DofSize >= 6)
+			{
+				for (int32 V = 0; V < 6; ++V) S.BaseVel[V] = Data->qvel[Ji.DofAdr + V];
+				break;
+			}
+		}
+
+		// Non-root joints
+		S.JointCount = 0;
+		for (const FJointInfo& Ji : Ep.Joints)
+		{
+			if (Ji.JointType == mjJNT_FREE || Ji.QposAdr < 0) continue;
+			const int32 N = FMath::Min(Ji.QposSize, Ji.DofSize > 0 ? Ji.DofSize : 1);
+			for (int32 V = 0; V < N && S.JointCount < URS_MAX_JOINTS; ++V, ++S.JointCount)
+			{
+				S.JointQpos[S.JointCount] = Data->qpos[Ji.QposAdr + V];
+				S.JointQvel[S.JointCount] = Data->qvel[Ji.DofAdr + V];
+			}
+		}
+
+		// Actuator commands
+		S.ActuatorCount = FMath::Min(Ep.Actuators.Num(), URS_MAX_ACTUATORS);
+		for (int32 Ai = 0; Ai < S.ActuatorCount; ++Ai)
+		{
+			S.ActuatorCmds[Ai] = S.bCommandTimedOut ? 0.0 :
+				(Ai < Ep.LatestCommand.Num() ? Ep.LatestCommand[Ai] : 0.0);
+		}
+
+		// Camera IMU
+		if (Ep.HeadCameraBodyId > 0)
+		{
+			const int32 HB = Ep.HeadCameraBodyId;
+			const int32 Q = HB * 4;
+			const int32 V = HB * 6;
+			S.bHasCameraImu = true;
+			S.HeadQuat[0] = Data->xquat[Q]; S.HeadQuat[1] = Data->xquat[Q+1];
+			S.HeadQuat[2] = Data->xquat[Q+2]; S.HeadQuat[3] = Data->xquat[Q+3];
+			S.HeadAngVel[0] = Data->cvel[V]; S.HeadAngVel[1] = Data->cvel[V+1]; S.HeadAngVel[2] = Data->cvel[V+2];
+		}
+
+		// Privileged positions
+		S.bPrivSelfPos = Ep.Privilege.bSelfPos;
+		S.bPrivBallPosRelated = Ep.Privilege.bBallPosRelated;
+		S.bPrivBallVelRelated = Ep.Privilege.bBallVelRelated;
+		S.bPrivAllPos = Ep.Privilege.bAllPos;
+
+		if (S.bPrivSelfPos)
+		{
+			S.SelfPos[0] = S.BasePos[0]; S.SelfPos[1] = S.BasePos[1]; S.SelfPos[2] = S.BasePos[2];
+		}
+
+		// Yaw-only frame for ball-relative
+		double YawSin = 0, YawCos = 1;
+		{
+			const double W = S.BaseQuat[0], X = S.BaseQuat[1], Y = S.BaseQuat[2], Z = S.BaseQuat[3];
+			const double Yaw = FMath::Atan2(2.0*(W*Z+X*Y), 1.0-2.0*(Y*Y+Z*Z));
+			YawSin = FMath::Sin(Yaw); YawCos = FMath::Cos(Yaw);
+		}
+		auto WorldToYaw = [&](double Wx, double Wy, double Wz, double Dx, double Dy, double Dz) {
+			const double Rx = Dx, Ry = Dy, Rz = Dz;
+			return FVector(
+				YawCos * Rx + YawSin * Ry,
+				-YawSin * Rx + YawCos * Ry,
+				Rz);
+		};
+
+		if (S.bPrivBallPosRelated || S.bPrivBallVelRelated)
+		{
+			const int32* BallPtr = ActorRootBodyIds.Find(TEXT("ball"));
+			if (BallPtr)
+			{
+				const int32 BP = (*BallPtr) * 3;
+				const double Bx = Data->xpos[BP], By = Data->xpos[BP+1], Bz = Data->xpos[BP+2];
+				if (S.bPrivBallPosRelated)
+				{
+					const FVector Rel = WorldToYaw(Bx, By, Bz, Bx - S.BasePos[0], By - S.BasePos[1], Bz - S.BasePos[2]);
+					S.BallPosRelated[0] = Rel.X; S.BallPosRelated[1] = Rel.Y; S.BallPosRelated[2] = Rel.Z;
+				}
+				if (S.bPrivBallVelRelated)
+				{
+					const int32 BV = (*BallPtr) * 6 + 3;
+					const int32 BQ = (*BallPtr) * 4;
+					FQuat BQ_(Data->xquat[BQ+1], Data->xquat[BQ+2], Data->xquat[BQ+3], Data->xquat[BQ]);
+					FVector BVBody(Data->cvel[BV], Data->cvel[BV+1], Data->cvel[BV+2]);
+					FVector BVWorld = BQ_.RotateVector(BVBody);
+					const FVector Rel = WorldToYaw(Bx, By, Bz, BVWorld.X, BVWorld.Y, BVWorld.Z);
+					S.BallVelRelated[0] = Rel.X; S.BallVelRelated[1] = Rel.Y; S.BallVelRelated[2] = Rel.Z;
+				}
+			}
+		}
+
+		if (S.bPrivAllPos)
+		{
+			S.ActorCount = 0;
+			for (const auto& Pair : ActorRootBodyIds)
+			{
+				if (S.ActorCount >= URS_MAX_ACTORS) break;
+				const int32 P = Pair.Value * 3;
+				S.ActorPos[S.ActorCount][0] = Data->xpos[P];
+				S.ActorPos[S.ActorCount][1] = Data->xpos[P+1];
+				S.ActorPos[S.ActorCount][2] = Data->xpos[P+2];
+				++S.ActorCount;
+			}
+		}
+
+		Snapshots[Ri].Publish();
+	}
 }
 
 void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
@@ -537,8 +692,8 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 			if (UMjActuator* Act = Ep.Actuators[Ai].Actuator.Get())
 				Act->SetNetworkControl(static_cast<float>(Data->qpos[Qa]));
 		}
-		Ep.LastCommandTimeSec = FPlatformTime::Seconds();
-		Ep.bHasCommand = true;
+		Ep.LastCommandTimeSec.store(FPlatformTime::Seconds(), std::memory_order_release);
+		Ep.bHasCommand.store(true, std::memory_order_release);
 
 		mj_forward(Model, Data);
 	}
@@ -560,7 +715,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 	// Serialize the game-thread update here instead of recursively taking
 	// the non-recursive mutex inside the physics callback.
 	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-	FScopeLock EndpointLock(&EndpointMutex);
+	// no lock needed;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -585,34 +740,105 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 
 void UURSRobotCoreComponent::ApplyCommands(double NowSec)
 {
+	static constexpr int32 MAX_CMD = 64;
+	static thread_local float CmdBuf[MAX_CMD];
+
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		bool bTimedOut = !Ep.bHasCommand || (NowSec - Ep.LastCommandTimeSec > CommandTimeoutSec);
+		const bool bTimedOut = !Ep.bHasCommand.load(std::memory_order_acquire) ||
+			(NowSec - Ep.LastCommandTimeSec.load(std::memory_order_acquire) > CommandTimeoutSec);
+		const int32 Count = FMath::Min(Ep.Actuators.Num(), MAX_CMD);
 
-		TArray<float> ToApply;
 		if (bTimedOut)
 		{
-			ToApply.Init(0.0f, Ep.Actuators.Num());
+			for (int32 i = 0; i < Count; ++i) CmdBuf[i] = 0.0f;
 		}
 		else
 		{
-			ToApply = Ep.LatestCommand;
+			for (int32 i = 0; i < Count; ++i)
+				CmdBuf[i] = i < Ep.LatestCommand.Num() ? Ep.LatestCommand[i] : 0.0f;
 		}
 
-		const int32 Count = FMath::Min(ToApply.Num(), Ep.Actuators.Num());
 		for (int32 Idx = 0; Idx < Count; ++Idx)
 		{
 			if (UMjActuator* Actuator = Ep.Actuators[Idx].Actuator.Get())
 			{
-				Actuator->SetNetworkControl(ToApply[Idx]);
+				Actuator->SetNetworkControl(CmdBuf[Idx]);
 			}
 		}
 	}
 }
 
+void UURSRobotCoreComponent::ApplyControllerGains(mjModel* Model)
+{
+	for (FRobotEndpoint& Ep : Endpoints)
+	{
+		if (!Ep.bGainsDirty.load(std::memory_order_acquire)) continue;
+		Ep.bGainsDirty.store(false, std::memory_order_release);
+
+		const bool bTorque = (Ep.ActuatorMode == FRobotEndpoint::EURSActuatorMode::Torque);
+
+		for (const FActuatorInfo& Info : Ep.Actuators)
+		{
+			const int32 Am = Info.MjId;
+			if (Am < 0 || Am >= Model->nu) continue;
+
+			mjtNum* gp = Model->actuator_gainprm + Am * mjNGAIN;
+			mjtNum* bp = Model->actuator_biasprm + Am * mjNBIAS;
+
+			const int32 Idx = Ep.Actuators.IndexOfByPredicate([&](const FActuatorInfo& A) { return A.MjId == Am; });
+			if (Idx < 0 || Idx >= FRobotEndpoint::MAX_GAINS) continue;
+
+			if (bTorque)
+			{
+				gp[0] = 1.0;
+				bp[1] = 0.0;
+				bp[2] = 0.0;
+			}
+			else
+			{
+				const double Kp = Ep.KpArr[Idx];
+				const double Kv = Ep.KvArr[Idx];
+				const double Damp = Ep.DampingArr[Idx];
+				gp[0] = Kp;
+				bp[1] = -Kp;
+				bp[2] = -(Kv + Damp);
+			}
+		}
+	}
+}
+
+void UURSRobotCoreComponent::SubmitControllerParams(
+	const FString& ActorId,
+	const TMap<FString, double>* Kp,
+	const TMap<FString, double>* Kv,
+	const TMap<FString, double>* Damping,
+	const FString* ActuatorMode)
+{
+	FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep) return;
+
+	const int32 N = FMath::Min(Ep->Actuators.Num(), (int32)FRobotEndpoint::MAX_GAINS);
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FString& Name = Ep->Actuators[i].Name;
+		if (Kp)      Ep->KpArr[i]      = Kp->FindRef(Name);
+		if (Kv)      Ep->KvArr[i]      = Kv->FindRef(Name);
+		if (Damping) Ep->DampingArr[i] = Damping->FindRef(Name);
+	}
+	if (ActuatorMode)
+	{
+		if (*ActuatorMode == TEXT("position"))
+			Ep->ActuatorMode = FRobotEndpoint::EURSActuatorMode::Position;
+		else if (*ActuatorMode == TEXT("torque"))
+			Ep->ActuatorMode = FRobotEndpoint::EURSActuatorMode::Torque;
+	}
+	Ep->bGainsDirty.store(true, std::memory_order_release);
+}
+
 TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 {
-	FScopeLock Lock(&EndpointMutex);
+	// no lock needed;
 	TArray<FString> Ids;
 	Ids.Reserve(Endpoints.Num());
 	for (const FRobotEndpoint& Ep : Endpoints)
@@ -624,282 +850,117 @@ TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 
 bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotState& OutState)
 {
-	FScopeLock EndpointLock(&EndpointMutex);
-	FRobotEndpoint* Ep = FindEndpoint(ActorId);
-	if (!Ep) return false;
-
-	AAMjManager* ManagerPtr = Manager.Get();
-	if (!ManagerPtr || !ManagerPtr->PhysicsEngine) return false;
-
-	// Lazy-resolve the normalized head/camera link body by reading link (body)
-	// names from the compiled model. UMjCamera is UE-side only (ncam==0), so
-	// the head link is identified by its body name, scoped to this robot's
-	// subtree. The camera-bearing head link is "head_link" (mos9) or
-	// "head_pitch_link" (pi_plus).
-	if (Ep->HeadCameraBodyId < 0 && Ep->RootBodyId > 0)
+	// Find endpoint index and read the lock-free triple-buffer snapshot.
+	int32 Ri = INDEX_NONE;
 	{
-		if (const mjModel* M = ManagerPtr->PhysicsEngine->GetModel())
-		{
-			auto IsInSubtree = [M](int32 BodyId, int32 RootId) -> bool {
-				for (int32 b = BodyId; b > 0; b = M->body_parentid[b])
-				{
-					if (b == RootId) return true;
-				}
-				return false;
-			};
-			int32 Fallback = -1;
-			for (int32 b = 1; b < M->nbody; ++b)
-			{
-				if (!IsInSubtree(b, Ep->RootBodyId)) continue;
-				const char* Bn = mj_id2name(M, mjOBJ_BODY, b);
-				if (!Bn) continue;
-				const FString Norm = URSoccerLab::FRobotNames::NormalizeRobotComponentName(FString(Bn), Ep->ActorId);
-				if (Norm.EndsWith(TEXT("head_link")) || Norm.EndsWith(TEXT("head_pitch_link")))
-				{
-					Ep->HeadCameraBodyId = b;
-					break;
-				}
-				if (Fallback < 0 && Norm.Contains(TEXT("head"))
-					&& !Norm.Contains(TEXT("neck")) && !Norm.Contains(TEXT("yaw")))
-				{
-					Fallback = b;
-				}
-			}
-			if (Ep->HeadCameraBodyId < 0)
-			{
-				Ep->HeadCameraBodyId = Fallback;
-			}
-		}
+		// no lock needed;
+		const FRobotEndpoint* Ep = FindEndpoint(ActorId);
+		if (!Ep) return false;
+		Ri = Endpoints.IndexOfByPredicate([&](const FRobotEndpoint& E) { return &E == Ep; });
 	}
+	if (Ri == INDEX_NONE || !Snapshots.IsValidIndex(Ri)) return false;
 
-	const double NowSec = FPlatformTime::Seconds();
+	const FRobotSnapshot& S = Snapshots[Ri].Front();
 
+	// Dynamic data from snapshot (lock-free read)
 	OutState = FURSRobotState();
 	OutState.ActorId = ActorId;
-	OutState.bCommandTimedOut = !Ep->bHasCommand || (NowSec - Ep->LastCommandTimeSec > CommandTimeoutSec);
+	OutState.SimTime = S.SimTime;
+	OutState.bCommandTimedOut = S.bCommandTimedOut;
 
-	bool bHaveSnapshot = false;
-	ManagerPtr->PhysicsEngine->WithRenderState(
-		[&](const FMjRenderSnapshot& Snapshot)
+	OutState.BasePos = FVector(S.BasePos[0], S.BasePos[1], S.BasePos[2]);
+	OutState.BaseQuat = FQuat(S.BaseQuat[1], S.BaseQuat[2], S.BaseQuat[3], S.BaseQuat[0]);
+	for (int32 i = 0; i < 6 && i < 6; ++i) OutState.BaseVel.Add(S.BaseVel[i]);
+
+	for (int32 i = 0; i < S.JointCount; ++i)
+	{
+		OutState.JointQpos.Add(S.JointQpos[i]);
+		OutState.JointQvel.Add(S.JointQvel[i]);
+	}
+
+	for (int32 i = 0; i < S.ActuatorCount; ++i)
+	{
+		OutState.MotorCommand.Add(S.ActuatorCmds[i]);
+	}
+
+	OutState.bHasCameraImu = S.bHasCameraImu;
+	if (S.bHasCameraImu)
+	{
+		OutState.HeadQuat = FQuat(S.HeadQuat[1], S.HeadQuat[2], S.HeadQuat[3], S.HeadQuat[0]);
+		OutState.HeadAngVel = FVector(S.HeadAngVel[0], S.HeadAngVel[1], S.HeadAngVel[2]);
+	}
+
+	OutState.bPrivSelfPos = S.bPrivSelfPos;
+	OutState.bPrivBallPosRelated = S.bPrivBallPosRelated;
+	OutState.bPrivBallVelRelated = S.bPrivBallVelRelated;
+	OutState.bPrivAllPos = S.bPrivAllPos;
+	OutState.SelfPos = FVector(S.SelfPos[0], S.SelfPos[1], S.SelfPos[2]);
+	OutState.BallPosRelated = FVector(S.BallPosRelated[0], S.BallPosRelated[1], S.BallPosRelated[2]);
+	OutState.BallVelRelated = FVector(S.BallVelRelated[0], S.BallVelRelated[1], S.BallVelRelated[2]);
+
+	// Static data from endpoint (brief lock)
+	{
+		// no lock needed;
+		const FRobotEndpoint* Ep = FindEndpoint(ActorId);
+		if (!Ep) return false;
+
+		// Resolve head camera body (lazy, one-time)
+		if (Ep->HeadCameraBodyId < 0 && Ep->RootBodyId > 0)
 		{
-			if (Snapshot.FrameId == 0)
+			if (AAMjManager* Mgr = Manager.Get())
 			{
-				return;
-			}
-			bHaveSnapshot = true;
-			OutState.SimTime = Snapshot.SimTime;
-
-			// Find root joint for base pose.
-			if (Ep->RootBodyId > 0
-				&& Snapshot.XPos.IsValidIndex(Ep->RootBodyId * 3 + 2)
-				&& Snapshot.XQuat.IsValidIndex(Ep->RootBodyId * 4 + 3))
-			{
-				const int32 PosAdr = Ep->RootBodyId * 3;
-				const int32 QuatAdr = Ep->RootBodyId * 4;
-				OutState.BasePos = FVector(
-					Snapshot.XPos[PosAdr],
-					Snapshot.XPos[PosAdr + 1],
-					Snapshot.XPos[PosAdr + 2]);
-				OutState.BaseQuat = FQuat(
-					Snapshot.XQuat[QuatAdr + 1],
-					Snapshot.XQuat[QuatAdr + 2],
-					Snapshot.XQuat[QuatAdr + 3],
-					Snapshot.XQuat[QuatAdr]);
-			}
-			else if (Ep->RootQposAdr >= 0)
-			{
-				const int32 Adr = Ep->RootQposAdr;
-				if (Snapshot.QPos.IsValidIndex(Adr + 6))
+				if (const mjModel* Mm = Mgr->PhysicsEngine ? Mgr->PhysicsEngine->GetModel() : nullptr)
 				{
-					OutState.BasePos = FVector(
-						Snapshot.QPos[Adr],
-						Snapshot.QPos[Adr + 1],
-						Snapshot.QPos[Adr + 2]);
-					OutState.BaseQuat = FQuat(
-						Snapshot.QPos[Adr + 4],
-						Snapshot.QPos[Adr + 5],
-						Snapshot.QPos[Adr + 6],
-						Snapshot.QPos[Adr + 3]);
-				}
-			}
-
-			// Base velocity from the free joint.
-			for (const FJointInfo& JointInfo : Ep->Joints)
-			{
-				if (JointInfo.JointType != mjJNT_FREE
-					|| JointInfo.DofAdr < 0
-					|| JointInfo.DofSize < 6)
-				{
-					continue;
-				}
-				const int32 DofAdr = JointInfo.DofAdr;
-				if (Snapshot.QVel.IsValidIndex(DofAdr + 5))
-				{
-					for (int32 Idx = 0; Idx < 6; ++Idx)
+					auto InTree = [Mm](int32 b, int32 root) -> bool {
+						for (int32 p = b; p > 0; p = Mm->body_parentid[p]) if (p == root) return true;
+						return false; };
+					int32 Fb = -1;
+					for (int32 b = 1; b < Mm->nbody; ++b)
 					{
-						OutState.BaseVel.Add(Snapshot.QVel[DofAdr + Idx]);
+						if (!InTree(b, Ep->RootBodyId)) continue;
+						const char* Bn = mj_id2name(Mm, mjOBJ_BODY, b);
+						if (!Bn) continue;
+						FString Norm = URSoccerLab::FRobotNames::NormalizeRobotComponentName(FString(Bn), Ep->ActorId);
+						if (Norm.EndsWith(TEXT("head_link")) || Norm.EndsWith(TEXT("head_pitch_link")))
+						{ const_cast<FRobotEndpoint*>(Ep)->HeadCameraBodyId = b; break; }
+						if (Fb < 0 && Norm.Contains(TEXT("head")) && !Norm.Contains(TEXT("neck")) && !Norm.Contains(TEXT("yaw")))
+							Fb = b;
 					}
+					if (Ep->HeadCameraBodyId < 0) const_cast<FRobotEndpoint*>(Ep)->HeadCameraBodyId = Fb;
 				}
-				break;
-			}
-
-			// Joints (non-root only — free-joint data is in base).
-			for (const FJointInfo& JointInfo : Ep->Joints)
-			{
-				if (JointInfo.JointType == mjJNT_FREE
-					|| JointInfo.QposAdr < 0
-					|| JointInfo.DofAdr < 0)
-				{
-					continue;
-				}
-
-				OutState.JointNames.Add(JointInfo.Name);
-				const int32 QposBegin = JointInfo.QposAdr;
-				const int32 QposEnd = QposBegin + JointInfo.QposSize;
-				for (int32 Idx = QposBegin;
-					Idx < QposEnd && Snapshot.QPos.IsValidIndex(Idx);
-					++Idx)
-				{
-					OutState.JointQpos.Add(Snapshot.QPos[Idx]);
-				}
-
-			const int32 QvelBegin = JointInfo.DofAdr;
-			const int32 QvelEnd = QvelBegin + JointInfo.DofSize;
-			for (int32 Idx = QvelBegin;
-				Idx < QvelEnd && Snapshot.QVel.IsValidIndex(Idx);
-				++Idx)
-			{
-				OutState.JointQvel.Add(Snapshot.QVel[Idx]);
 			}
 		}
 
-		// Privileged positions, resolved from the same snapshot. Each actor's
-		// world position is read from its cached root body id.
-		OutState.bPrivSelfPos = Ep->Privilege.bSelfPos;
-		OutState.bPrivBallPosRelated = Ep->Privilege.bBallPosRelated;
-		OutState.bPrivBallVelRelated = Ep->Privilege.bBallVelRelated;
-		OutState.bPrivAllPos = Ep->Privilege.bAllPos;
+		for (const FJointInfo& Ji : Ep->Joints)
+			if (Ji.JointType != mjJNT_FREE) OutState.JointNames.Add(Ji.Name);
+
+		for (const FActuatorInfo& Ai : Ep->Actuators)
+			OutState.ActuatorNames.Add(Ai.Name);
+
 		OutState.Noise = Ep->Noise;
 
-		// Yaw-only quaternion extracted from the base orientation. Both
-		// ball_pos_related and ball_vel_related express the ball in this
-		// horizontal frame (matching the kick teacher's _yaw_quat convention).
-		FQuat YawQuat = FQuat::Identity;
+		for (const FCameraEntry& Ce : Ep->Cameras)
 		{
-			const float W = (float)OutState.BaseQuat.W;
-			const float X = (float)OutState.BaseQuat.X;
-			const float Y = (float)OutState.BaseQuat.Y;
-			const float Z = (float)OutState.BaseQuat.Z;
-			const float Yaw = FMath::Atan2(2.f * (W * Z + X * Y), 1.f - 2.f * (Y * Y + Z * Z));
-			const float Half = 0.5f * Yaw;
-			YawQuat = FQuat(0.f, 0.f, FMath::Sin(Half), FMath::Cos(Half)); // (X,Y,Z,W)
-		}
-		const FQuat YawInv = YawQuat.Inverse();
-
-		if (Ep->Privilege.bSelfPos)
-		{
-			OutState.SelfPos = OutState.BasePos;
-		}
-		if (Ep->Privilege.bBallPosRelated || Ep->Privilege.bBallVelRelated)
-		{
-			const int32* BallBodyPtr = ActorRootBodyIds.Find(TEXT("ball"));
-			if (BallBodyPtr)
+			if (const UMjCamera* Cam = Ce.Camera.Get())
 			{
-				const int32 BallBody = *BallBodyPtr;
-				const int32 PosAdr = BallBody * 3;
-				if (Snapshot.XPos.IsValidIndex(PosAdr + 2) && Snapshot.CVel.IsValidIndex(BallBody * 6 + 5))
-				{
-					const FVector BallWorldPos(Snapshot.XPos[PosAdr], Snapshot.XPos[PosAdr + 1], Snapshot.XPos[PosAdr + 2]);
-					if (Ep->Privilege.bBallPosRelated)
-					{
-						OutState.BallPosRelated = YawInv.RotateVector(BallWorldPos - OutState.BasePos);
-					}
-					if (Ep->Privilege.bBallVelRelated)
-					{
-						// mjData.cvel linear part is in the ball's body frame;
-						// rotate to world by the ball's world quat, then into
-						// the robot's yaw frame.
-						const int32 VelAdr = BallBody * 6 + 3;
-						const int32 QuatAdr = BallBody * 4;
-						const FVector BallVelBody(Snapshot.CVel[VelAdr], Snapshot.CVel[VelAdr + 1], Snapshot.CVel[VelAdr + 2]);
-						FQuat BallQuat = FQuat::Identity;
-						if (Snapshot.XQuat.IsValidIndex(QuatAdr + 3))
-						{
-							BallQuat = FQuat(
-								Snapshot.XQuat[QuatAdr + 1],
-								Snapshot.XQuat[QuatAdr + 2],
-								Snapshot.XQuat[QuatAdr + 3],
-								Snapshot.XQuat[QuatAdr]);
-						}
-						const FVector BallVelWorld = BallQuat.RotateVector(BallVelBody);
-						OutState.BallVelRelated = YawInv.RotateVector(BallVelWorld);
-					}
-				}
-			}
-		}
-		if (Ep->Privilege.bAllPos)
-		{
-			for (const TPair<FString, int32>& Pair : ActorRootBodyIds)
-			{
-				const int32 PosAdr = Pair.Value * 3;
-				if (!Snapshot.XPos.IsValidIndex(PosAdr + 2)) continue;
-				OutState.AllPos.Add(Pair.Key,
-					FVector(Snapshot.XPos[PosAdr], Snapshot.XPos[PosAdr + 1], Snapshot.XPos[PosAdr + 2]));
+				FURSCameraInfo Ci;
+				Ci.Name = Ce.Name;
+				Ci.Format = Cam->CaptureMode == EMjCameraMode::Depth ? TEXT("float32_depth") : TEXT("bgra8");
+				Ci.Width = Cam->resolution.Num() > 0 ? Cam->resolution[0] : 0;
+				Ci.Height = Cam->resolution.Num() > 1 ? Cam->resolution[1] : 0;
+				OutState.Cameras.Add(MoveTemp(Ci));
 			}
 		}
 
-		// Camera/head IMU: orientation and body-frame angular velocity of the
-		// link that carries the eye cameras (the normalized head link).
-		if (Ep->HeadCameraBodyId > 0)
+		if (S.bPrivAllPos && S.ActorCount > 0)
 		{
-			const int32 HB = Ep->HeadCameraBodyId;
-			const int32 QuatAdr = HB * 4;
-			const int32 VelAdr = HB * 6;
-			if (Snapshot.XQuat.IsValidIndex(QuatAdr + 3))
+			int32 Ai = 0;
+			for (const auto& Pair : ActorRootBodyIds)
 			{
-				OutState.HeadQuat = FQuat(
-					Snapshot.XQuat[QuatAdr + 1],
-					Snapshot.XQuat[QuatAdr + 2],
-					Snapshot.XQuat[QuatAdr + 3],
-					Snapshot.XQuat[QuatAdr]);
-				OutState.bHasCameraImu = true;
+				if (Ai >= S.ActorCount) break;
+				OutState.AllPos.Add(Pair.Key, FVector(S.ActorPos[Ai][0], S.ActorPos[Ai][1], S.ActorPos[Ai][2]));
+				++Ai;
 			}
-			if (Snapshot.CVel.IsValidIndex(VelAdr + 2))
-			{
-				// CVel angular part is already in the body (head) frame — the
-				// natural gyroscope reading.
-				OutState.HeadAngVel = FVector(Snapshot.CVel[VelAdr], Snapshot.CVel[VelAdr + 1], Snapshot.CVel[VelAdr + 2]);
-			}
-		}
-	});
-	if (!bHaveSnapshot)
-	{
-		return false;
-	}
-
-	// Actuators
-	for (const FActuatorInfo& ActInfo : Ep->Actuators)
-	{
-		OutState.ActuatorNames.Add(ActInfo.Name);
-	}
-	const TArray<float> CurrentCmd = OutState.bCommandTimedOut
-		? TArray<float>() : Ep->LatestCommand;
-	for (int32 Idx = 0; Idx < Ep->Actuators.Num(); ++Idx)
-	{
-		OutState.MotorCommand.Add(OutState.bCommandTimedOut ? 0.0 : (Idx < CurrentCmd.Num() ? CurrentCmd[Idx] : 0.0));
-	}
-
-	// Cameras
-	for (const FCameraEntry& CamEntry : Ep->Cameras)
-	{
-		if (const UMjCamera* Cam = CamEntry.Camera.Get())
-		{
-			FURSCameraInfo CamInfo;
-			CamInfo.Name = CamEntry.Name;
-			CamInfo.Format = Cam->CaptureMode == EMjCameraMode::Depth ? TEXT("float32_depth") : TEXT("bgra8");
-			CamInfo.Width = Cam->resolution.Num() > 0 ? Cam->resolution[0] : 0;
-			CamInfo.Height = Cam->resolution.Num() > 1 ? Cam->resolution[1] : 0;
-			OutState.Cameras.Add(MoveTemp(CamInfo));
 		}
 	}
 
@@ -908,7 +969,8 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 
 void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FString, float>& NamedValues)
 {
-	FScopeLock Lock(&EndpointMutex);
+	// No lock — LatestCommand values are plain floats (atomic on x86),
+	// bHasCommand / LastCommandTimeSec are std::atomic.
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
 
@@ -929,14 +991,14 @@ void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FS
 
 	if (bChangedAny)
 	{
-		Ep->LastCommandTimeSec = FPlatformTime::Seconds();
-		Ep->bHasCommand = true;
+		Ep->LastCommandTimeSec.store(FPlatformTime::Seconds(), std::memory_order_release);
+		Ep->bHasCommand.store(true, std::memory_order_release);
 	}
 }
 
 bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 {
-	FScopeLock Lock(&EndpointMutex);
+	// no lock needed;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -966,7 +1028,7 @@ bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 
 bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, const FString& CameraName)
 {
-	FScopeLock Lock(&EndpointMutex);
+	// no lock needed;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1000,7 +1062,7 @@ bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, 
 
 bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FString& CameraName) const
 {
-	FScopeLock Lock(&EndpointMutex);
+	// no lock needed;
 	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1017,7 +1079,7 @@ bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FS
 
 bool UURSRobotCoreComponent::ConsumeCameraFrame(const FString& ActorId, const FString& CameraName, TArray<FColor>& OutPixels)
 {
-	FScopeLock Lock(&EndpointMutex);
+	// no lock needed;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1044,7 +1106,7 @@ bool UURSRobotCoreComponent::ConsumeDepthCameraFrame(
 	const FString& CameraName,
 	TArray<float>& OutDepthMeters)
 {
-	FScopeLock Lock(&EndpointMutex);
+	// no lock needed;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1139,7 +1201,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 	}
 
 	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-	FScopeLock EndpointLock(&EndpointMutex);
+	// no lock needed;
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -1294,8 +1356,8 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 					Act->SetNetworkControl(Target);
 				}
 			}
-			Ep->LastCommandTimeSec = FPlatformTime::Seconds();
-			Ep->bHasCommand = true;
+			Ep->LastCommandTimeSec.store(FPlatformTime::Seconds(), std::memory_order_release);
+			Ep->bHasCommand.store(true, std::memory_order_release);
 		}
 
 		mj_forward(Model, Data);
@@ -1322,7 +1384,7 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 	}
 
 	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-	FScopeLock EndpointLock(&EndpointMutex);
+	// no lock needed;
 	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -1487,7 +1549,7 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 	bool bHasEndpoint = false;
 	TArray<FString> NonRootJointNames;
 	{
-		FScopeLock Lock(&EndpointMutex);
+		// no lock needed;
 		if (const FRobotEndpoint* Endpoint = FindEndpoint(ActorId))
 		{
 			bHasEndpoint = true;

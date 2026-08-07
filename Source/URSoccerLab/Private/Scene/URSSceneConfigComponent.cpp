@@ -12,6 +12,7 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Scene/URSObjectTypeRegistry.h"
+#include "Transport/URSTcpTransportComponent.h"
 
 using namespace URSoccerLab;
 
@@ -158,6 +159,7 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s), %d object(s)."),
 		SpawnedRobots.Num(), SpawnedObjects.Num());
 	ApplyRenderConfig();
+	ApplyPhysicsConfig();
 	OnSceneConfigApplied.Broadcast();
 	return true;
 }
@@ -511,6 +513,47 @@ void UURSSceneConfigComponent::HideImportedFieldGeoms(AMjArticulation* Articulat
 			Geom->SetGeomVisibility(false);
 		}
 	}
+}
+
+void UURSSceneConfigComponent::ApplyPhysicsConfig()
+{
+	const double Dt = ActiveConfig.MujocoDt;
+	const double StateHz = ActiveConfig.StateFreq;
+	const double CamHz = ActiveConfig.CameraFreq;
+
+	if (Dt <= 0.0 && StateHz <= 0.0 && CamHz <= 0.0) return;
+
+	GetWorld()->GetTimerManager().SetTimerForNextTick([this, Dt, StateHz, CamHz]()
+	{
+		if (Dt > 0.0)
+		{
+			for (TActorIterator<AAMjManager> It(GetWorld()); It; ++It)
+			{
+				if (It->PhysicsEngine && It->PhysicsEngine->GetModel())
+				{
+					It->PhysicsEngine->GetModel()->opt.timestep = Dt;
+					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] physics timestep = %.6f (%.0f Hz)"), Dt, 1.0 / Dt);
+				}
+				break;
+			}
+		}
+		if ((StateHz > 0.0 || CamHz > 0.0) && GetOwner())
+		{
+			if (auto* T = GetOwner()->FindComponentByClass<UURSTcpTransportComponent>())
+			{
+				if (StateHz > 0.0)
+				{
+					T->StateRateHz = StateHz;
+					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] state rate = %.0f Hz"), StateHz);
+				}
+				if (CamHz > 0.0)
+				{
+					T->CameraRateHz = CamHz;
+					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] camera rate = %.0f Hz"), CamHz);
+				}
+			}
+		}
+	});
 }
 
 void UURSSceneConfigComponent::ApplyRenderConfig()

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ursoccerlab.gains import MOS9
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient, AdminClient
 
@@ -126,6 +127,8 @@ def main() -> int:
     policy = OnnxPolicy(str(args.policy))
     client = RobotClient(args.host, args.robot_port)
     observer = RobotClient(args.host, args.observer_port) if args.observer_port else None
+    for c in [c for c in (client, observer) if c]:
+        c.set_controller_params(**MOS9, actuator_mode="position")
     cmd = np.asarray([args.vx, args.vy, args.wz], dtype=np.float32)
 
     # ── Wait for first state ────────────────────────────────────────────────

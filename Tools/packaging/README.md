@@ -87,41 +87,51 @@ The staged build lands in `Saved/StagedBuilds/Linux/`. Key config requirements
 
 ### 3. Assemble the AppImage (on the host)
 
+The `package_appimage.py` packager handles AppDir assembly, third-party lib
+staging, external-lib stripping, and AppRun generation in one step:
+
 ```bash
-ST=Saved/StagedBuilds/Linux
-# AppRun: redirects Saved/ to a writable user dir; passes all args through
-cat > "$ST/AppRun" <<'EOF'
-#!/usr/bin/env sh
-HERE="$(dirname "$(readlink -f "$0")")"
-USERDIR="${URS_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/URSoccerLab}"
-mkdir -p "$USERDIR"
-chmod +x "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" 2>/dev/null
-exec "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" URSoccerLab -UserDir="$USERDIR/" "$@"
-EOF
-chmod +x "$ST/AppRun"
-# Minimal .desktop + icon for appimagetool metadata
-echo -e '[Desktop Entry]\nType=Application\nName=URSoccerLab\nExec=URSoccerLab\nIcon=URSoccerLab\nTerminal=true' > "$ST/URSoccerLab.desktop"
-ARCH=x86_64 appimagetool "$ST" dist/URSoccerLab-Linux-x86_64.AppImage
+# Point at the staged build and run the appdir + image phases
+python Tools/packaging/package_appimage.py appdir
+python Tools/packaging/package_appimage.py image
 ```
+
+The packager reads the staged build from `build/packaged/LinuxNoEditor/URSoccerLab/`
+(or `ArchivedBuilds/Linux/` if cooked via the container). Output:
+`dist/URSoccerLab-Linux-x86_64.AppImage`.
+
+The generated AppRun:
+- **Requires** `-URSSceneConfig=<path>` (exits with an error if absent).
+- Bakes in `-RenderOffscreen -NoSound -ExecCmds="MjCamera.AutoReadback 0,DisableAllScreenMessages"`.
+- Sets up `LD_LIBRARY_PATH` for all bundled plugin libs.
+- Redirects writable `Saved/` to `~/.local/share/URSoccerLab/`.
+- Forwards all additional user args after the baked ones.
 
 ### 4. Usage
 
 ```bash
+# Start the simulator (Terminal 1)
 ./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/scene.json \
-  -dc_cluster -dc_dev_mono -dc_cfg=match_4_rgb.ndisplay -dc_node=node_0 \
-  -URSNDisplayCameras -URSNDisplayCameraCount=4 \
-  -RenderOffscreen -NoSound
-# Then connect a Python client to TCP port 10000 (walker) / 10001 (observer)
+  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+
+# Run a Python client (Terminal 2)
+cd py_example
+uv run python examples/standing/standing.py --port 10000 10001 --duration 5
 ```
+
+TCP ports: `robot_rp0` = 10000, `robot_rp1` = 10001, admin = 11000.
+If FUSE is unavailable on the host, append `--appimage-extract-and-run`.
 
 ## Known issues
 
-- **Observer camera (robot_rp1) gap in packaged build**: the nDisplay camera
-  binder's `TryBindCameras` disables all MjCamera SceneCaptures before
-  confirming the full binding succeeds. If the binding doesn't complete (timing
-  gap with the second robot's cameras), the observer's cameras are left
-  disabled without nDisplay coverage. This does NOT affect editor-based
-  launches (`run_scene.py`). Walker (robot_rp0) cameras always work.
-- The `write_video` helper gracefully skips empty frame lists (warns instead
-  of crashing), so examples that save observer video don't abort on this gap.
+- **nDisplay render manager**: the nDisplay camera binder does not initialise
+  in standalone packaged binaries (`GetRenderMgr()` returns null). The
+  simulator falls back to per-actor MjCamera readback, which works correctly
+  for all robots and cameras. nDisplay flags (`-dc_cluster`, `-dc_cfg`, etc.)
+  are not needed and not baked into the AppRun.
+- **`write_video`** gracefully skips empty frame lists (warns instead of
+  crashing), so examples that save observer video don't abort if no frames
+  arrive.
+- **FUSE**: if the host's FUSE setup prevents the AppImage from mounting
+  (silent exit, no output), use `--appimage-extract-and-run` as a fallback.
+  This extracts the squashfs to a temp directory first (~3 s overhead).

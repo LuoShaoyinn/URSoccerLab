@@ -39,6 +39,7 @@ from policy import (  # noqa: E402
     load_policy,
     observation,
 )
+from ursoccerlab.gains import PI_PLUS  # noqa: E402
 from ursoccerlab.media import camera_to_rgb, write_video  # noqa: E402
 from ursoccerlab.tcp import AdminClient, RobotClient  # noqa: E402
 
@@ -248,6 +249,8 @@ def main() -> int:
     vision: VisionWorker | None = None
     client = RobotClient(args.host, args.port)
     observer = RobotClient(args.host, args.observer_port)
+    for c in (client, observer):
+        c.set_controller_params(**PI_PLUS, actuator_mode="position")
     latest_state: dict | None = None
     body_actuators: list[str] | None = None
     head_yaw_actuator: str | None = None

@@ -217,6 +217,40 @@ class RobotClient:
     def send_command(self, named_values: dict[str, float]):
         self.conn.send_json(named_values)
 
+    def set_controller_params(
+        self,
+        kp: dict[str, float] | None = None,
+        kv: dict[str, float] | None = None,
+        damping: dict[str, float] | None = None,
+        actuator_mode: str | None = None,
+    ):
+        """Set persistent controller parameters.
+
+        All arguments are optional — only the ones provided are updated;
+        existing values for omitted arguments remain unchanged.
+
+        Args:
+            kp: Per-actuator proportional gain (position mode).
+            kv: Per-actuator derivative gain (position mode).
+            damping: Per-actuator extra velocity damping (both modes).
+            actuator_mode: ``"position"`` or ``"torque"``.
+
+        In **position** mode the simulator computes
+        ``torque = kp * (target - qpos) - (kv + damping) * qvel`` per actuator.
+        In **torque** mode the command value IS the applied torque
+        (damping is still subtracted if non-zero).
+        """
+        params: dict = {}
+        if kp is not None:
+            params["kp"] = kp
+        if kv is not None:
+            params["kv"] = kv
+        if damping is not None:
+            params["damping"] = damping
+        if actuator_mode is not None:
+            params["actuator_mode"] = actuator_mode
+        self.conn.send_json(params)
+
     def recv(self):
         """Yield ``(kind, data)`` tuples for state, RGB, depth, or legacy camera."""
         for ftype, payload in self.conn.recv_frames():

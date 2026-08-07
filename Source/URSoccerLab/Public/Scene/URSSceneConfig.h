@@ -125,6 +125,16 @@ struct URSOCCERLAB_API FURSSceneConfig
 	FString Version = TEXT("urs_scene_v1");
 	FURSVisionConfig Vision;
 	FURSRenderConfig Render;
+
+	// Physics timestep override. 0 = use MJCF default.
+	double MujocoDt = 0.0;
+
+	// State publish rate (Hz). 0 = use transport default (60).
+	double StateFreq = 0.0;
+
+	// Camera publish rate (Hz). 0 = use vision config default.
+	double CameraFreq = 0.0;
+
 	TArray<FURSRobotSpawn> Robots;
 	TArray<FURSObjectSpawn> Objects;
 };

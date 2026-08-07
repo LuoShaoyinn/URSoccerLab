@@ -51,7 +51,7 @@ THIRD_PARTY = {
 INSTALL_ROOT = ROOT / "Plugins/UnrealRoboticsLab/third_party/install"
 
 # Host-provided libs we must NOT bundle (external Vulkan / GPU drivers).
-EXTERNAL_PATTERNS = ("libvulkan", "libGL.", "libEGL.", "libglapi", "libnvidia", "libdrm")
+EXTERNAL_PATTERNS = ("libGL.", "libEGL.", "libglapi", "libnvidia", "libdrm")
 
 
 def log(msg: str) -> None:
@@ -91,30 +91,49 @@ def phase_cook() -> int:
 
 
 # --------------------------------------------------------------------------- #
-APPRUN = """#!/usr/bin/env sh
+APPRUN = r"""#!/usr/bin/env sh
 # URSoccerLab AppImage launcher.
 # Bundles the UE game + robot/field content + runtime libs (MuJoCo, ZMQ, CoACD).
 # Vulkan + GPU driver are provided by the HOST (AMD or NVIDIA); not bundled.
-set -e
+set -eu
 HERE="$(dirname "$(readlink -f "$0")")"
 
-# Gather all bundled lib dirs (engine + every plugin's Binaries/Linux).
-LIBS="$HERE/Engine/Binaries/Linux:$HERE/Binaries/Linux"
-for d in \\
-  "$HERE"/Engine/Plugins/*/*/Binaries/Linux \\
-  "$HERE"/Engine/Plugins/*/Binaries/Linux \\
-  "$HERE"/Plugins/*/*/Binaries/Linux \\
+# --- Require scene config ---
+has_scene=0
+for arg in "$@"; do
+  case "$arg" in
+    -URSSceneConfig=*) has_scene=1; break ;;
+  esac
+done
+if [ "$has_scene" -eq 0 ]; then
+  echo "ERROR: -URSSceneConfig=<path> is required." >&2
+  echo "Usage: $0 -URSSceneConfig=/path/to/scene.json [additional UE args]" >&2
+  exit 1
+fi
+
+# Gather all bundled lib dirs (game + engine + every plugin).
+LIBS="$HERE/URSoccerLab/Binaries/Linux:$HERE/Engine/Binaries/Linux"
+for d in \
+  "$HERE"/Engine/Plugins/*/*/Binaries/Linux \
+  "$HERE"/Engine/Plugins/*/Binaries/Linux \
+  "$HERE"/Plugins/*/*/Binaries/Linux \
   "$HERE"/Plugins/*/Binaries/Linux ; do
   [ -d "$d" ] && LIBS="$LIBS:$d"
 done
-export LD_LIBRARY_PATH="$LIBS:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$LIBS:${LD_LIBRARY_PATH:-}"
 
-# Redirect the writable Saved/ tree (logs, generated nDisplay configs) to user data.
+# Redirect the writable Saved/ tree.
 SAVE="${URS_SAVE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/URSoccerLab}"
 mkdir -p "$SAVE"
 
-# Forward every user arg (e.g. -URSSceneConfig=... -dc_cluster -dc_cfg=...).
-exec "$HERE/Binaries/Linux/URSoccerLab" -saved="$SAVE" "$@"
+# Launch with baked runtime flags.
+chmod +x "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" 2>/dev/null || true
+exec "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" URSoccerLab \
+  -saved="$SAVE" \
+  -RenderOffscreen \
+  -NoSound \
+  -ExecCmds="DisableAllScreenMessages" \
+  "$@"
 """
 
 

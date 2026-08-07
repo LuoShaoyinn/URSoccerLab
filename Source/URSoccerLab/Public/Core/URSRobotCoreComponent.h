@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Scene/URSSceneConfig.h"
+#include "URSSnapshot.h"
 #include "URSRobotCoreComponent.generated.h"
 
 class AAMjManager;
@@ -147,6 +148,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "URSoccerLab")
 	void SubmitCommand(const FString& ActorId, const TMap<FString, float>& NamedValues);
 
+	void SubmitControllerParams(const FString& ActorId,
+		const TMap<FString, double>* Kp,
+		const TMap<FString, double>* Kv,
+		const TMap<FString, double>* Damping,
+		const FString* ActuatorMode);
+
 	UFUNCTION(BlueprintCallable, Category = "URSoccerLab")
 	bool RequestCameraReadback(const FString& ActorId);
 
@@ -217,6 +224,56 @@ private:
 
 	struct FRobotEndpoint
 	{
+		FRobotEndpoint() = default;
+		FRobotEndpoint(FRobotEndpoint&& Other)
+			: ActorId(MoveTemp(Other.ActorId))
+			, Articulation(MoveTemp(Other.Articulation))
+			, Actuators(MoveTemp(Other.Actuators))
+			, ActuatorNameToIndex(MoveTemp(Other.ActuatorNameToIndex))
+			, Joints(MoveTemp(Other.Joints))
+			, RootBodyId(Other.RootBodyId)
+			, RootQposAdr(Other.RootQposAdr)
+			, Cameras(MoveTemp(Other.Cameras))
+			, HeadCameraBodyId(Other.HeadCameraBodyId)
+			, LatestCommand(MoveTemp(Other.LatestCommand))
+			, LastNamedValues(MoveTemp(Other.LastNamedValues))
+			, LastCommandTimeSec(Other.LastCommandTimeSec.load())
+			, bHasCommand(Other.bHasCommand.load())
+			, ActuatorMode(Other.ActuatorMode)
+			, bGainsDirty(Other.bGainsDirty.load())
+			, PoseLock(MoveTemp(Other.PoseLock))
+			, Privilege(MoveTemp(Other.Privilege))
+			, Noise(MoveTemp(Other.Noise))
+		{
+			FMemory::Memcpy(KpArr, Other.KpArr, sizeof(KpArr));
+			FMemory::Memcpy(KvArr, Other.KvArr, sizeof(KvArr));
+			FMemory::Memcpy(DampingArr, Other.DampingArr, sizeof(DampingArr));
+		}
+		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
+		{
+			ActorId = MoveTemp(Other.ActorId);
+			Articulation = MoveTemp(Other.Articulation);
+			Actuators = MoveTemp(Other.Actuators);
+			ActuatorNameToIndex = MoveTemp(Other.ActuatorNameToIndex);
+			Joints = MoveTemp(Other.Joints);
+			RootBodyId = Other.RootBodyId;
+			RootQposAdr = Other.RootQposAdr;
+			Cameras = MoveTemp(Other.Cameras);
+			HeadCameraBodyId = Other.HeadCameraBodyId;
+			LatestCommand = MoveTemp(Other.LatestCommand);
+			LastNamedValues = MoveTemp(Other.LastNamedValues);
+			LastCommandTimeSec.store(Other.LastCommandTimeSec.load());
+			bHasCommand.store(Other.bHasCommand.load());
+			ActuatorMode = Other.ActuatorMode;
+			FMemory::Memcpy(KpArr, Other.KpArr, sizeof(KpArr));
+			FMemory::Memcpy(KvArr, Other.KvArr, sizeof(KvArr));
+			FMemory::Memcpy(DampingArr, Other.DampingArr, sizeof(DampingArr));
+			bGainsDirty.store(Other.bGainsDirty.load());
+			PoseLock = MoveTemp(Other.PoseLock);
+			Privilege = MoveTemp(Other.Privilege);
+			Noise = MoveTemp(Other.Noise);
+			return *this;
+		}
 		FString ActorId;
 		TWeakObjectPtr<AMjArticulation> Articulation;
 
@@ -235,8 +292,17 @@ private:
 
 		TArray<float> LatestCommand;
 		TMap<FString, float> LastNamedValues;
-		double LastCommandTimeSec = 0.0;
-		bool bHasCommand = false;
+		std::atomic<double> LastCommandTimeSec{0.0};
+		std::atomic<bool> bHasCommand{false};
+
+		// --- Controller parameters (runtime-tunable via JSON) ---
+		enum class EURSActuatorMode : uint8 { Torque, Position };
+		static constexpr int32 MAX_GAINS = 40;
+		double KpArr[MAX_GAINS] = {0};
+		double KvArr[MAX_GAINS] = {0};
+		double DampingArr[MAX_GAINS] = {0};
+		EURSActuatorMode ActuatorMode = EURSActuatorMode::Position;
+		std::atomic<bool> bGainsDirty{false};
 
 		FPoseLock PoseLock;
 		URSoccerLab::FURSPrivilegeConfig Privilege;
@@ -244,14 +310,12 @@ private:
 	};
 
 	TArray<FRobotEndpoint> Endpoints;
-	// Maps every spawned actor_id (robots and objects) to its MuJoCo root body
-	// id, used to resolve privileged world positions from the render snapshot.
+	// One triple buffer per robot (physics writes, game reads, lock-free)
+	TArray<TTripleBuffer<FRobotSnapshot>> Snapshots;
 	TMap<FString, int32> ActorRootBodyIds;
-	// Endpoint metadata and command/pose-lock state are shared by the game
-	// thread and the asynchronous MuJoCo pre-step callback. Lock ordering for
-	// operations that also touch live mjData is:
-	// PhysicsEngine::CallbackMutex -> EndpointMutex.
-	mutable FCriticalSection EndpointMutex;
+	// Sequence lock for endpoint array rebuilds (rare). Physics thread reads
+	// seq before/after iteration; if changed, skips that step.
+	std::atomic<uint32> EndpointSeq{0};
 	TWeakObjectPtr<AAMjManager> Manager;
 	TWeakObjectPtr<UObject> SceneConfigComp;
 	bool bCallbacksRegistered = false;
@@ -267,8 +331,10 @@ private:
 	void InitializeConfiguredObjectPoses();
 	void RegisterPhysicsCallbacks();
 	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);
+	void PublishSnapshots(struct mjModel_* Model, struct mjData_* Data);
 
 	void ApplyCommands(double NowSec);
+	void ApplyControllerGains(struct mjModel_* Model);
 	void ApplyPoseLocks(struct mjModel_* Model, struct mjData_* Data);
 
 	FRobotEndpoint* FindEndpoint(const FString& ActorId);

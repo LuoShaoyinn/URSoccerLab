@@ -97,4 +97,5 @@ private:
 	void ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId);
 	void HideImportedFieldGeoms(AMjArticulation* Articulation);
 	void ApplyRenderConfig();
+	void ApplyPhysicsConfig();
 };

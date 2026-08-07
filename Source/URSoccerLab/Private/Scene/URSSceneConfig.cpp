@@ -300,6 +300,10 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 		return false;
 	}
 
+	Root->TryGetNumberField(TEXT("mujoco_dt"), Out.MujocoDt);
+	Root->TryGetNumberField(TEXT("state_freq"), Out.StateFreq);
+	Root->TryGetNumberField(TEXT("camera_freq"), Out.CameraFreq);
+
 	const TArray<TSharedPtr<FJsonValue>>* RobotsArr = nullptr;
 	if (!Root->TryGetArrayField(TEXT("robots"), RobotsArr))
 	{

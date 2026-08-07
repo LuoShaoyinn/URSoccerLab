@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ursoccerlab.gains import detect_gains
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient
 
@@ -62,6 +63,22 @@ def main() -> int:
         return 1
 
     for i in range(n):
+        gains = detect_gains(list(actuator_sets[i]))
+        if gains:
+            clients[i].set_controller_params(**gains, actuator_mode="position")
+
+    # Snapshot the initial joint positions as the hold target.
+    # Sending 0 for all joints would fight the standing pose (knees bent,
+    # hips angled) and topple the robot.
+    hold_targets: list[dict[str, float]] = [{} for _ in range(n)]
+    for i in range(n):
+        joints = latest_states[i].get("joints", {})
+        for act_name in actuator_sets[i]:
+            jname = act_name.replace("_servo", "")
+            j = joints.get(jname)
+            hold_targets[i][act_name] = j["qpos"] if j else 0.0
+
+    for i in range(n):
         print(f"[standing] robot {i} (port {args.port[i]}): {len(actuator_sets[i])} actuators", flush=True)
 
     print(f"[standing] static capture for {args.duration:.0f}s ...", flush=True)
@@ -74,7 +91,7 @@ def main() -> int:
             pump(i)
         if now >= next_cmd:
             for i in range(n):
-                clients[i].send_command({a: 0.0 for a in actuator_sets[i]})
+                clients[i].send_command(hold_targets[i])
             next_cmd = now + interval
         else:
             time.sleep(0.001)

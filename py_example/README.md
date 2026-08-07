@@ -47,6 +47,54 @@ JPEG-compressed RGB cameras at 30 Hz. Worker threads encode images, then queue
 completed frames back to the game thread; only the game thread writes the
 socket.
 
+## Controller Parameters — actuator mode and PD gains
+
+All robot actuators are `<motor>` (torque) in the MJCF. By default the
+simulator starts in **torque** mode: each command value is the applied torque
+in N·m. To use **position** mode (the value is a target angle in radians and
+the simulator runs a PD law internally), call `set_controller_params`:
+
+```python
+from ursoccerlab import RobotClient, PI_PLUS
+
+client = RobotClient('127.0.0.1', 10000)
+client.set_controller_params(**PI_PLUS, actuator_mode="position")
+client.send_command({'l_hip_pitch_joint_servo': 0.15})
+```
+
+The PD law per actuator is:
+
+```
+torque = kp * (target − qpos) − (kv + damping) * qvel
+```
+
+| Parameter | Type | Keys | Effect |
+|-----------|------|------|--------|
+| `kp` | `dict[str, float]` | actuator name → gain | Proportional (position) gain. Only used in position mode. |
+| `kv` | `dict[str, float]` | actuator name → gain | Derivative (velocity) gain. Only used in position mode. |
+| `damping` | `dict[str, float]` | actuator name → gain | Extra velocity damping. Applied in **both** modes. |
+| `actuator_mode` | `str` | `"position"` or `"torque"` | Selects whether commands are position targets or raw torques. |
+
+All arguments are optional — only the ones provided are updated; existing
+values for omitted arguments persist. Settings are **sticky**: once set, they
+remain in effect until changed again.
+
+Gain presets that reproduce the original MJCF `<position>` behaviour:
+
+```python
+from ursoccerlab import PI_PLUS   # 22-DOF Unitree Pi
+from ursoccerlab import MOS9      # 20-DOF MOS9
+```
+
+For multi-robot scenes with mixed types, `detect_gains` inspects the actuator
+names from a received state and returns the matching preset:
+
+```python
+from ursoccerlab.gains import detect_gains
+gains = detect_gains(list(state["actuators"].keys()))
+client.set_controller_params(**gains, actuator_mode="position")
+```
+
 ## AdminClient — set_pose, reset, lock_pose
 
 ```python
@@ -60,39 +108,60 @@ admin.close()
 ## Run A Scene
 
 Each example lives in its own folder under `examples/<name>/` together with the
-scene it expects as `scene.json`. Always launch the runtime through the
-production nDisplay atlas backend (`Tools/runtime/run_scene.py`); it generates
-the nDisplay viewport config from the scene's robot/camera count and starts a
-single-node cluster session, so the `URSDisplayClusterCameraBinderComponent`
-owns camera capture. Do **not** launch a plain `-game` session — that falls
-back to the per-actor MjCamera readback path, which is not supported for the
-examples.
+scene it expects as `scene.json`. The simulator is started in one terminal; the
+Python client runs in a second terminal against the TCP ports it opens.
 
-### Unreal Engine path
+### Option A — AppImage (recommended, no Unreal Engine needed)
 
-Point the runtime tools at your UnrealEditor build with the `URS_UE` environment
-variable (all `Tools/runtime/*.py` launchers read it; `--ue` overrides it for a
-single run):
+```bash
+# Terminal 1 — start the simulator (headless, offscreen)
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+```
+
+The scene JSON path is **required** — the AppImage exits with an error if it is
+not provided. All other runtime flags (`-RenderOffscreen`, `-NoSound`, camera
+readback config) are baked into the AppRun script. Writable data (logs, crash
+reports) goes to `~/.local/share/URSoccerLab/`.
+
+The AppImage needs a Vulkan-capable GPU and FUSE support on the host. If FUSE
+is unavailable, append `--appimage-extract-and-run`.
+
+### Option B — From source (development, needs Unreal Editor)
 
 ```bash
 export URS_UE="$HOME/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
-```
 
-### Start the simulator
-
-From the project root, in one terminal (this is a foreground process — it runs
-headless, always offscreen via `-RenderOffscreen`):
-
-```bash
 uv run --project py_example python Tools/runtime/run_scene.py \
   --scene-config py_example/examples/move_head/scene.json
 ```
 
-Then, in a second terminal, run the client from `py_example/`. Each client uses
-TCP only. `robot_rp0` is port `10000`; `robot_rp1` is port `10001`. Port
-`11000` is one optional global administration connection, not a second
-per-robot stream. Output files go under `py_example/out/` and are ignored by
-Git. Each example folder is self-contained (no cross-imports between examples).
+This launches the UE editor in `-game` (PIE) mode with nDisplay atlas backend.
+Use this path when iterating on C++ or asset changes.
+
+### Port mapping
+
+| Robot | TCP port |
+|-------|----------|
+| `robot_rp0` | 10000 |
+| `robot_rp1` | 10001 |
+| admin (set_pose, reset) | 11000 |
+
+Each per-robot port is a single bidirectional TCP connection: commands go in,
+state + camera frames come out (state at 60 Hz, JPEG RGB at 30 Hz).
+
+### Running a client
+
+In a second terminal, from `py_example/`:
+
+```bash
+uv run python examples/standing/standing.py --port 10000 10001 --duration 5
+```
+
+All examples auto-detect the robot type from the first state message and call
+`set_controller_params` with the appropriate PD gains before sending any motor
+commands (see [Controller Parameters](#controller-parameters--actuator-mode-and-pd-gains)
+above). Output videos go under `py_example/out/` (gitignored).
 
 
 ## 1. Head Motion
@@ -100,35 +169,51 @@ Git. Each example folder is self-contained (no cross-imports between examples).
 Two standing robots face one another. Both heads sweep while the legs remain
 uncommanded. Both left-eye videos are recorded.
 
+**Start the simulator** (terminal 1):
+
 ```bash
+# AppImage
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/move_head/scene.json
+
+# or from source
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config py_example/examples/move_head/scene.json
+```
+
+**Run the client** (terminal 2):
+
+```bash
+cd py_example
 uv run python examples/move_head/move_head.py \
   --port 10000 10001 --duration 10 \
   --video out/head_motion
 ```
 
 Scene: `examples/move_head/scene.json` (`two_robots_face_to_face`, pi_plus).
-For a mos9 variant, point the runtime at `Config/examples/mos9_face_to_face.json`.
-
-For a single robot:
-
-```bash
-uv run python examples/move_head/move_head.py \
-  --port 10000 --duration 10 \
-  --video out/head_solo
-```
+For a mos9 variant, use `Config/examples/mos9_face_to_face.json` as the scene
+config when starting the simulator.
 
 ## 2. Standing
 
 The same scene, but neither robot receives a head command. All actuators are
 held at 0 (static capture):
 
+**Start**:
+
 ```bash
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+```
+
+**Client**:
+
+```bash
+cd py_example
 uv run python examples/standing/standing.py \
   --port 10000 10001 --duration 5 \
   --video out/standing
 ```
-
-Scene: `examples/standing/scene.json`.
 
 ## 3. MOS9 Walking
 
@@ -136,24 +221,25 @@ Run the MOS9 AMP walking policy (ONNX, walk_v11_terrain). The walker follows
 the policy while an observer robot stands still and records the walk from its
 left-eye camera.
 
+**Start**:
+
 ```bash
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/mos9_walk/scene.json
+```
+
+**Client**:
+
+```bash
+cd py_example
 uv run python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 --vx 0.4 --duration 15 \
   --video out/mos9_walker.mp4 --observer-video out/mos9_observer.mp4
 ```
 
-Scene: `examples/mos9_walk/scene.json`. Requires
-`refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx`.
-
-For solo walking (no observer):
-
-```bash
-uv run python examples/mos9_walk/mos9_walk.py \
-  --robot-port 10000 --observer-port 0 --vx 0.4 --duration 15 \
-  --video out/mos9_walker.mp4
-```
-
-Use `Config/examples/mos9_solo.json` in the runtime command for solo mode.
+Requires `py_example/models/policies/mos9_walk_v11_5500.onnx` (vendored via
+Git LFS). For solo walking (no observer), pass `--observer-port 0` and use
+`Config/examples/mos9_solo.json` as the scene config.
 
 ## 4. Pi Plus Walking
 
@@ -161,7 +247,17 @@ Use `Config/examples/mos9_solo.json` in the runtime command for solo mode.
 `(0, 3)` facing the walker. The policy sends motor commands only to `robot_rp0`
 and records both left-eye cameras:
 
+**Start**:
+
 ```bash
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/pi_walk/scene.json
+```
+
+**Client** (requires `torch_rocm` or `torch_cuda` extra):
+
+```bash
+cd py_example
 uv sync --extra vision --extra torch_rocm
 uv run --extra vision --extra torch_rocm python examples/pi_walk/pi_walk.py \
   --vx 0.35 --duration 15 \
@@ -169,37 +265,10 @@ uv run --extra vision --extra torch_rocm python examples/pi_walk/pi_walk.py \
   --observer-video out/observer.mp4
 ```
 
-Scene: `examples/pi_walk/scene.json`. It requires
-`refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt`.
-The policy was trained against the older mos-brain Pi model. It is useful for
-exercising the TCP motor and camera path, but is not a validated gait for the
-current Pi MJCF until its dynamics and actuator calibration are matched or the
-policy is retrained.
-
-## YOLO Left-Eye Inference
-
-Install the optional vision extra, start a scene, and run the trained YOLO26
-checkpoint on camera index 0 (the robot's left eye):
-
-```bash
-uv sync --extra vision
-uv run --extra vision python examples/yolo_left_eye/yolo_left_eye.py \
-  --port 10000 --out out/yolo_left_eye
-```
-
-For repeatable inference on an existing capture:
-
-```bash
-uv run --extra vision python examples/yolo_left_eye/yolo_left_eye.py \
-  --image out/yolo/camera.png --out out/yolo_saved_frame
-```
-
-Scene: `examples/yolo_left_eye/scene.json`. The example defaults to
-`refs/vision/models/yolo26/yolo26s_best.onnx` and writes `left_eye.png`,
-`annotated.png`, and `detections.json`. Use
-`--model ../refs/vision/models/yolo26/yolo26n_best.onnx` for the nano model.
-This inspection example uses ONNX Runtime on CPU; the deployment code under
-`refs/vision` converts the same checkpoint to TensorRT.
+Requires `py_example/models/policies/pi_plus_model_40000.pt` (vendored via
+Git LFS). The policy was trained against the older mos-brain Pi model — useful
+for exercising the TCP motor and camera path, but not a validated gait for the
+current Pi MJCF.
 
 ### Look at the ball and dribble
 
@@ -212,18 +281,27 @@ inference runs on a latest-frame-only worker, independent of the 50 Hz policy
 loop. The detector is the Ultralytics COCO `yolo26s.pt` checkpoint (class 32 =
 sports ball); resize/NMS are handled by Ultralytics, defaulting to the ROCm GPU:
 
+**Start**:
+
 ```bash
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/dribble/scene.json
+```
+
+**Client** (requires `vision` + `torch_rocm` extras):
+
+```bash
+cd py_example
 uv sync --extra vision --extra torch_rocm
 uv run --extra vision --extra torch_rocm \
   python examples/dribble/dribble.py \
   --ultralytics-device 0 --duration 10
 ```
 
-Scene: `examples/dribble/scene.json`. At startup the example resets `robot_rp0`
-and the ball through the admin endpoint so warm-up cannot leave stale scene
-state; pass `--no-reset-at-start` to preserve the live poses. The example
-writes raw and annotated videos plus an external observer video and JSON
-detection/control trace under `out/dribble/`.
+At startup the example resets `robot_rp0` and the ball through the admin
+endpoint; pass `--no-reset-at-start` to preserve the live poses. Output (raw
+and annotated videos, observer video, JSON detection trace) goes under
+`out/dribble/`.
 
 ## Layout
 
@@ -233,7 +311,6 @@ examples/move_head/                    head-sweep capture (scene.json)
 examples/standing/                     static standing capture (scene.json)
 examples/mos9_walk/                    MOS9 AMP walk policy (scene.json)
 examples/pi_walk/                      Pi Plus walk policy (scene.json)
-examples/yolo_left_eye/                YOLO26 inference inspection (scene.json)
 examples/dribble/                      look-at-ball + dribble (policy.py + scene.json)
 Config/examples/                       alternative/general scene configs
 tests/                                 protocol and camera parser tests

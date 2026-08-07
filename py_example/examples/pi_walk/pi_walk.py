@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ursoccerlab.gains import PI_PLUS
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient
 
@@ -156,6 +157,8 @@ def main() -> int:
     policy = load_policy(args.policy)
     client = RobotClient(args.host, args.robot_port)
     observer = RobotClient(args.host, args.observer_port)
+    for c in (client, observer):
+        c.set_controller_params(**PI_PLUS, actuator_mode="position")
     command = np.asarray([np.clip(args.vx, -1.5, 1.5), 0.0, 0.0], dtype=np.float32)
     history = np.zeros(OBS_STEP_DIM * OBS_HISTORY, dtype=np.float32)
     last_action = np.zeros(20, dtype=np.float32)

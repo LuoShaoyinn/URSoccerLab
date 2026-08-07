@@ -43,6 +43,8 @@ URSoccerLab disables URLab's legacy ZMQ, shared-memory, and RPC listeners.
 | `py_example/` | Python 3.12 client library and runnable examples |
 | `Tools/editor/` | Unreal asset-import and scene-building utilities |
 | `Tools/runtime/` | Launchers, smoke tests, and profiling tools |
+| `Tools/packaging/` | AppImage cook + packaging pipeline |
+| `dist/` | Built AppImage (gitignored) |
 | `docs/` | Architecture and protocol references |
 
 `Assets` and `Content` have different roles: source MJCF/GLB files are edited
@@ -74,22 +76,33 @@ UE_ROOT=/path/to/Unreal_Engine_5.7.4
   URSoccerLabEditor Linux Development "$PWD/URSoccerLab.uproject" -WaitMutex
 ```
 
-## Run a scene
+## Quick start (AppImage)
+
+The prebuilt AppImage bundles the cooked simulator (binary + assets + MuJoCo /
+ZMQ / CoACD). No Unreal Engine installation needed — only a Vulkan-capable GPU
+and FUSE on the host.
 
 ```bash
-UE_ROOT=/path/to/Unreal_Engine_5.7.4
-"$UE_ROOT/Engine/Binaries/Linux/UnrealEditor" \
-  "$PWD/URSoccerLab.uproject" /Game/Levels/URS_SoccerField \
-  -game -RenderOffscreen -unattended -nop4 -nosplash -NoSound \
-  -URSSceneConfig="$PWD/Config/examples/two_robots_face_to_face.json"
+# Terminal 1 — start the simulator (headless)
+./dist/URSoccerLab-Linux-x86_64.AppImage \
+  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+
+# Terminal 2 — run a Python client
+cd py_example && uv sync && uv run python examples/standing/standing.py \
+  --port 10000 --duration 5
 ```
 
-The production multi-camera path uses an nDisplay atlas. The helper chooses
-and generates the matching layout for a scene config:
+The scene JSON is **required**. Runtime flags (`-RenderOffscreen`, `-NoSound`,
+camera readback) are baked into the AppRun. See
+[`Tools/packaging/README.md`](Tools/packaging/README.md) to rebuild the
+AppImage from source.
+
+## Run a scene (from source)
 
 ```bash
+export URS_UE=/path/to/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor
 uv run --project py_example python Tools/runtime/run_scene.py \
-  --scene-config Config/examples/six_robots_stereo_rgb.json
+  --scene-config py_example/examples/move_head/scene.json
 ```
 
 ## Python examples
@@ -97,19 +110,20 @@ uv run --project py_example python Tools/runtime/run_scene.py \
 ```bash
 cd py_example
 uv sync
-uv run python examples/standing.py
-uv run python examples/move_head.py
+uv run python examples/standing/standing.py --port 10000 --duration 5
+uv run python examples/move_head/move_head.py --port 10000 --duration 10
 ```
 
-The walking example needs one mutually exclusive PyTorch backend:
+Walking examples need one mutually exclusive PyTorch backend:
 
 ```bash
 uv sync --extra torch_rocm   # or torch_cpu / torch_cuda
-uv run --extra torch_rocm python examples/walk_policy.py --duration 15
+uv run --extra torch_rocm python examples/pi_walk/pi_walk.py --duration 15
+uv run python examples/mos9_walk/mos9_walk.py --vx 0.4 --duration 15
 ```
 
 See [the Python guide](py_example/README.md) for scene selection, output files,
-and client API examples.
+controller parameters (PD gains / actuator mode), and client API examples.
 
 ## Validation
 

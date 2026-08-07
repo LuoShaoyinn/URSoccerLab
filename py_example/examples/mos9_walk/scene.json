@@ -17,8 +17,17 @@
     {
       "actor_id": "robot_mos9",
       "type": "mos9",
-      "translation_m": [-3.0, 0.0, 0.53],
-      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0],
+      "translation_m": [
+        -3.0,
+        0.0,
+        0.53
+      ],
+      "rotation_quat_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
       "privilege": {
         "self_pos": true,
         "ball_pos_related": true,
@@ -29,16 +38,37 @@
     {
       "actor_id": "robot_observer",
       "type": "mos9",
-      "translation_m": [0.0, 3.0, 0.53],
-      "rotation_quat_xyzw": [0.0, 0.0, -0.7071, 0.7071]
+      "translation_m": [
+        0.0,
+        3.0,
+        0.53
+      ],
+      "rotation_quat_xyzw": [
+        0.0,
+        0.0,
+        -0.7071,
+        0.7071
+      ]
     }
   ],
   "objects": [
     {
       "actor_id": "ball",
       "type": "soccer_ball",
-      "translation_m": [0.0, 0.0, 0.075],
-      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+      "translation_m": [
+        0.0,
+        0.0,
+        0.075
+      ],
+      "rotation_quat_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
     }
-  ]
+  ],
+  "mujoco_dt": 0.002,
+  "camera_freq": 30,
+  "state_freq": 60
 }

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ursoccerlab.gains import detect_gains
 from ursoccerlab.media import camera_to_rgb, write_video
 from ursoccerlab.tcp import RobotClient
 
@@ -78,6 +79,21 @@ def main(default_mode: str = "sweep") -> int:
         return 1
 
     for i in range(n):
+        gains = detect_gains(list(actuator_sets[i]))
+        if gains:
+            clients[i].set_controller_params(**gains, actuator_mode="position")
+
+    # Snapshot initial joint positions as the hold target for body joints
+    # (so the PD holds the standing pose instead of fighting it).
+    body_hold: list[dict[str, float]] = [{} for _ in range(n)]
+    for i in range(n):
+        joints = latest_states[i].get("joints", {})
+        for act_name in actuator_sets[i]:
+            jname = act_name.replace("_servo", "")
+            j = joints.get(jname)
+            body_hold[i][act_name] = j["qpos"] if j else 0.0
+
+    for i in range(n):
         print(f"[demo] robot {i} (port {args.port[i]}): "
               f"{len(actuator_sets[i])} actuators", flush=True)
         if args.mode == "sweep":
@@ -111,7 +127,7 @@ def main(default_mode: str = "sweep") -> int:
                 for a in actuator_sets[i]:
                     if a == hy or a == hp:
                         continue
-                    cmd[a] = 0.0
+                    cmd[a] = body_hold[i].get(a, 0.0)
                 if hy and hp:
                     sign = 1.0 if i == 0 else -1.0
                     cmd[hy] = sign * head_yaw
