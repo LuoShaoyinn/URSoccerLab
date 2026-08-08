@@ -13,6 +13,9 @@ void URSNetworkThread::Start(TArray<FRobotEndpoint>&& InEndpoints, int32 AdminPo
 	StateRateHz = InStateRateHz;
 	CameraRateHz = InCameraRateHz;
 
+	UE_LOG(LogTemp, Warning, TEXT("[NET] Start: %d endpoints, state=%.1f cam=%.1f"),
+		Endpoints.Num(), StateRateHz, CameraRateHz);
+
 	// Open TCP listeners
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
@@ -70,15 +73,17 @@ void URSNetworkThread::EnqueueCameraFrame(int32 RobotIdx, uint8 FrameType,
 uint32 URSNetworkThread::FRunnableImpl::Run()
 {
 	const double Interval = Owner->StateRateHz > 0 ? 1.0 / Owner->StateRateHz : 0.001;
+	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop start: interval=%.4f stateHz=%.1f"), Interval, Owner->StateRateHz);
+	uint32 LoopCount = 0;
 	while (Owner->bRunning.load(std::memory_order_acquire))
 	{
-		double T0 = FPlatformTime::Seconds();
 		Owner->Tick();
-		double Elapsed = FPlatformTime::Seconds() - T0;
-		double SleepTime = Interval - Elapsed;
-		if (SleepTime > 0.001)
-			FPlatformProcess::Sleep(SleepTime);
+		++LoopCount;
+		if (LoopCount == 10)
+			UE_LOG(LogTemp, Warning, TEXT("[NET] 10 loops done"));
+		FPlatformProcess::Sleep(Interval);
 	}
+	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop exit: %d total loops"), LoopCount);
 	return 0;
 }
 
@@ -239,22 +244,17 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx, int32 ClientIdx,
 
 void URSNetworkThread::PublishStates()
 {
-	const double Now = FPlatformTime::Seconds();
-	const double Interval = StateRateHz > 0 ? 1.0 / StateRateHz : 0.0;
-	if (Interval <= 0 || Now - LastStateTime < Interval) return;
-	LastStateTime = Now;
-
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
 		if (Ep.Clients.Num() == 0) continue;
 
-		const FRobotSnapshot& Snap = Ep.StateBuf->Front();
-		TArray<uint8> Json = URSJsonBuilder::BuildStateJson(Snap, Ep.Meta);
-
+		// TEMP: hardcoded JSON to isolate BuildStateJson issues
+		static const uint8 HardcodedJson[] = "{\"sim_time\":1.0,\"command_timed_out\":false}";
+		const int32 JsonLen = sizeof(HardcodedJson) - 1;
 		for (auto& Client : Ep.Clients)
 		{
 			if (Client.bConnected)
-				EnqueueFrame(Client.WriteBuf, 0x00, Json.GetData(), Json.Num());
+				EnqueueFrame(Client.WriteBuf, 0x00, HardcodedJson, JsonLen);
 		}
 	}
 }
