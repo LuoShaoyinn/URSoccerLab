@@ -17,6 +17,23 @@ class URSNetworkThread
 public:
 	struct FRobotEndpoint
 	{
+		FRobotEndpoint() = default;
+		FRobotEndpoint(FRobotEndpoint&& Other)
+			: ActorId(MoveTemp(Other.ActorId))
+			, Listener(MoveTemp(Other.Listener))
+			, Clients(MoveTemp(Other.Clients))
+			, StateBuf(Other.StateBuf), CmdBuf(Other.CmdBuf), GainBuf(Other.GainBuf)
+			, Meta(MoveTemp(Other.Meta))
+		{}
+		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
+		{
+			ActorId = MoveTemp(Other.ActorId);
+			Listener = MoveTemp(Other.Listener);
+			Clients = MoveTemp(Other.Clients);
+			StateBuf = Other.StateBuf; CmdBuf = Other.CmdBuf; GainBuf = Other.GainBuf;
+			Meta = MoveTemp(Other.Meta);
+			return *this;
+		}
 		FString ActorId;
 
 		// TCP listener + accepted clients
@@ -60,7 +77,7 @@ public:
 	URSNetworkThread();
 	~URSNetworkThread();
 
-	void Start(TArray<FRobotEndpoint> InEndpoints, int32 AdminPort,
+	void Start(TArray<FRobotEndpoint>&& InEndpoints, int32 AdminPort,
 		double InStateRateHz, double InCameraRateHz);
 	void Stop();
 	bool IsRunning() const { return bRunning.load(); }

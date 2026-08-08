@@ -1,11 +1,12 @@
 #include "Network/URSNetworkThread.h"
 #include "Misc/CommandLine.h"
+#include <yyjson.h>
 #include "HAL/PlatformTime.h"
 
 URSNetworkThread::URSNetworkThread() {}
 URSNetworkThread::~URSNetworkThread() { Stop(); }
 
-void URSNetworkThread::Start(TArray<FRobotEndpoint> InEndpoints, int32 AdminPort,
+void URSNetworkThread::Start(TArray<FRobotEndpoint>&& InEndpoints, int32 AdminPort,
 	double InStateRateHz, double InCameraRateHz)
 {
 	Endpoints = MoveTemp(InEndpoints);
@@ -98,7 +99,7 @@ void URSNetworkThread::AcceptConnections()
 		while (Ep.Listener.HasNewConnection())
 		{
 			FRobotEndpoint::FClient NewClient;
-			if (Ep.Listener.Accept(NewClient))
+			if (Ep.Listener.Accept(NewClient.Socket))
 			{
 				NewClient.bConnected = true;
 				Ep.Clients.Add(MoveTemp(NewClient));

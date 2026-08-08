@@ -1,4 +1,5 @@
 #pragma once
+#include "Core/URSBuffers.h"
 
 #include "CoreMinimal.h"
 
@@ -41,7 +42,6 @@ public:
 // Read by the game / network thread to build state JSON.
 // ---------------------------------------------------------------------------
 static constexpr int32 URS_MAX_JOINTS = 40;
-static constexpr int32 URS_MAX_ACTUATORS = 40;
 static constexpr int32 URS_MAX_ACTORS = 24;
 
 struct FRobotSnapshot

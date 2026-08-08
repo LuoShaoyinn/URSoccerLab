@@ -32,7 +32,7 @@ class URSTripleBuffer
 	T Items[3];
 	std::atomic<int32_t> Published;  // -1 = nothing published yet
 	int32_t BackIdx;                 // producer-private
-	int32_t FrontIdx;                // consumer-private
+	mutable int32_t FrontIdx;                // consumer-private
 
 public:
 	URSTripleBuffer()

@@ -1,275 +1,518 @@
 #include "Transport/URSTcpTransportComponent.h"
+#include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "Core/URSRobotCoreComponent.h"
 #include "NDisplay/URSDisplayClusterCameraBinderComponent.h"
 #include "Scene/URSSceneConfigComponent.h"
+#include "Network/URSNetworkThread.h"
+#include "Network/URSJson.h"
+#include "Transport/URSTcpProtocol.h"
 
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "Interfaces/IPv4/IPv4Address.h"
-
 #include "Dom/JsonObject.h"
-#include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
-
-#include <yyjson.h>
-
+#include "Policies/CondensedJsonPrintPolicy.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Async/Async.h"
 #include "Misc/CommandLine.h"
-#include "Misc/Compression.h"
-#include "Misc/Parse.h"
-#include "Modules/ModuleManager.h"
-
-namespace
-{
-struct FURSImageEntry
-{
-	FString CameraName;
-	uint8 Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
-	uint8 PixelFormat = URSoccerLab::TcpProtocol::PixelFormatBgra8;
-	uint16 Width = 0;
-	uint16 Height = 0;
-	uint32 UncompressedBytes = 0;
-	TArray<uint8> Data;
-};
-
-struct FURSRawRgbImage
-{
-	FString CameraName;
-	uint16 Width = 0;
-	uint16 Height = 0;
-	TArray<FColor> Pixels;
-};
-
-void AppendU16Le(TArray<uint8>& Out, const uint16 Value)
-{
-	Out.Add(static_cast<uint8>(Value & 0xff));
-	Out.Add(static_cast<uint8>((Value >> 8) & 0xff));
-}
-
-void AppendU32Le(TArray<uint8>& Out, const uint32 Value)
-{
-	Out.Add(static_cast<uint8>(Value & 0xff));
-	Out.Add(static_cast<uint8>((Value >> 8) & 0xff));
-	Out.Add(static_cast<uint8>((Value >> 16) & 0xff));
-	Out.Add(static_cast<uint8>((Value >> 24) & 0xff));
-}
-
-void AppendF64Le(TArray<uint8>& Out, const double Value)
-{
-	static_assert(PLATFORM_LITTLE_ENDIAN, "URS image protocol currently requires a little-endian host");
-	uint8 Bytes[sizeof(double)];
-	FMemory::Memcpy(Bytes, &Value, sizeof(double));
-	Out.Append(Bytes, sizeof(double));
-}
-
-TArray<uint8> BuildImageMessage(
-	const uint32 Sequence,
-	const double SimTime,
-	const TArray<FURSImageEntry>& Entries)
-{
-	TArray<uint8> Packed;
-	Packed.Add(URSoccerLab::TcpProtocol::ImageMessageVersion);
-	Packed.Add(static_cast<uint8>(FMath::Min(Entries.Num(), 255)));
-	AppendU16Le(Packed, 0); // reserved flags
-	AppendU32Le(Packed, Sequence);
-	AppendF64Le(Packed, SimTime);
-
-	for (const FURSImageEntry& Entry : Entries)
-	{
-		FTCHARToUTF8 CameraNameUtf8(*Entry.CameraName);
-		const int32 NameLength = FMath::Min(CameraNameUtf8.Length(), 255);
-		Packed.Add(static_cast<uint8>(NameLength));
-		Packed.Append(reinterpret_cast<const uint8*>(CameraNameUtf8.Get()), NameLength);
-		Packed.Add(Entry.Codec);
-		Packed.Add(Entry.PixelFormat);
-		Packed.Add(0); // reserved
-		AppendU16Le(Packed, Entry.Width);
-		AppendU16Le(Packed, Entry.Height);
-		AppendU32Le(Packed, Entry.UncompressedBytes);
-		AppendU32Le(Packed, static_cast<uint32>(Entry.Data.Num()));
-		Packed.Append(Entry.Data);
-	}
-	return Packed;
-}
-
-const FURSCameraInfo* FindCameraInfo(const FURSRobotState& State, const FString& Name)
-{
-	return State.Cameras.FindByPredicate(
-		[&Name](const FURSCameraInfo& Info) { return Info.Name == Name; });
-}
-} // namespace
+#include "HAL/PlatformTime.h"
 
 UURSTcpTransportComponent::UURSTcpTransportComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
-	NoiseRng.Initialize(1973);
 }
 
 void UURSTcpTransportComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	AsyncVisionState = MakeShared<FAsyncVisionState, ESPMode::ThreadSafe>();
-	ImageWrapperModule =
-		&FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+	ImageWrapperModule = &FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
 
 	if (AActor* Owner = GetOwner())
 	{
-		if (const UURSSceneConfigComponent* SceneConfig =
-			Owner->FindComponentByClass<UURSSceneConfigComponent>())
-		{
+		if (const UURSSceneConfigComponent* SceneConfig = Owner->FindComponentByClass<UURSSceneConfigComponent>())
 			VisionConfig = SceneConfig->GetActiveConfig().Vision;
-		}
+
+		Core = Owner->FindComponentByClass<UURSRobotCoreComponent>();
+		NDisplayBinder = Owner->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
+		if (Core.IsValid())
+			Core->OnRobotsChanged.AddDynamic(this, &UURSTcpTransportComponent::OnRobotsChanged);
 	}
+
 	CameraRateHz = VisionConfig.Rgb.RateHz;
-	CameraCompress = VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg
-		? TEXT("jpeg") : TEXT("raw");
+	CameraCompress = VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg ? TEXT("jpeg") : TEXT("raw");
 	JpegQuality = VisionConfig.Rgb.JpegQuality;
 	DepthRateHz = VisionConfig.Depth.RateHz;
-	switch (VisionConfig.Depth.Compression)
-	{
-	case URSoccerLab::EURSDepthCompression::RawFloat32:
-		DepthCompress = TEXT("raw_f32");
-		break;
-	case URSoccerLab::EURSDepthCompression::RawUint16Millimeters:
-		DepthCompress = TEXT("raw_u16_mm");
-		break;
-	case URSoccerLab::EURSDepthCompression::ZlibUint16Millimeters:
-	default:
-		DepthCompress = TEXT("zlib_u16_mm");
-		break;
-	}
 
 	double RequestedCameraRateHz = CameraRateHz;
 	if (FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), RequestedCameraRateHz))
-	{
 		CameraRateHz = FMath::Clamp(RequestedCameraRateHz, 1.0, 120.0);
-	}
 
-	FString RequestedCameraCompress;
-	if (FParse::Value(FCommandLine::Get(), TEXT("URSCameraCompress="), RequestedCameraCompress))
-	{
-		RequestedCameraCompress.ToLowerInline();
-		if (RequestedCameraCompress == TEXT("jpeg") || RequestedCameraCompress == TEXT("raw"))
-		{
-			CameraCompress = MoveTemp(RequestedCameraCompress);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[URS TCP] Ignoring unsupported camera codec '%s'; expected jpeg or raw."),
-				*RequestedCameraCompress);
-		}
-	}
+	UE_LOG(LogTemp, Log, TEXT("[URS TCP] Vision: mode=stereo_rgb rgb=%.0fHz/%s(q=%d) depth=%.0fHz/%s"),
+		CameraRateHz, *CameraCompress, JpegQuality, DepthRateHz, *DepthCompress);
 
-	int32 RequestedJpegQuality = JpegQuality;
-	if (FParse::Value(FCommandLine::Get(), TEXT("URSJpegQuality="), RequestedJpegQuality))
-	{
-		JpegQuality = FMath::Clamp(RequestedJpegQuality, 1, 100);
-	}
-
-	double RequestedDepthRateHz = DepthRateHz;
-	if (FParse::Value(FCommandLine::Get(), TEXT("URSDepthRateHz="), RequestedDepthRateHz))
-	{
-		DepthRateHz = FMath::Clamp(RequestedDepthRateHz, 1.0, 120.0);
-	}
-
-	FString RequestedDepthCompress;
-	if (FParse::Value(FCommandLine::Get(), TEXT("URSDepthCompress="), RequestedDepthCompress))
-	{
-		RequestedDepthCompress.ToLowerInline();
-		if (RequestedDepthCompress == TEXT("raw_f32")
-			|| RequestedDepthCompress == TEXT("raw_u16_mm")
-			|| RequestedDepthCompress == TEXT("zlib_u16_mm"))
-		{
-			DepthCompress = MoveTemp(RequestedDepthCompress);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[URS TCP] Ignoring unsupported depth codec '%s'."),
-				*RequestedDepthCompress);
-		}
-	}
-	bLogCameraStats = FParse::Param(FCommandLine::Get(), TEXT("URSCameraStats"));
-	CameraStatsWindowStartSec = FPlatformTime::Seconds();
-	NextRgbTimeSec = CameraStatsWindowStartSec;
-	NextDepthTimeSec = CameraStatsWindowStartSec;
-
-	UE_LOG(LogTemp, Log,
-		TEXT("[URS TCP] Vision transport: mode=%s rgb=%.2fHz/%s(q=%d) depth=%.2fHz/%s stats=%s."),
-		VisionConfig.Mode == URSoccerLab::EURSVisionMode::Rgbd ? TEXT("rgbd") : TEXT("stereo_rgb"),
-		CameraRateHz, *CameraCompress, JpegQuality,
-		DepthRateHz, *DepthCompress,
-		bLogCameraStats ? TEXT("on") : TEXT("off"));
-
-	if (bAutoStart)
-	{
-		StartTransport();
-	}
+	if (bAutoStart) StartTransport();
 }
 
 void UURSTcpTransportComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (AsyncVisionState.IsValid())
-	{
-		AsyncVisionState->bAcceptResults.Store(false);
-		AsyncVisionState.Reset();
-	}
 	StopTransport();
 	Super::EndPlay(EndPlayReason);
 }
 
 bool UURSTcpTransportComponent::StartTransport()
 {
-	if (AActor* Owner = GetOwner())
+	// Admin listener on game thread
+	auto* SSS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	AdminListenerSock = SSS->CreateSocket(NAME_Stream, TEXT("URS-Admin"), false);
+	if (AdminListenerSock)
 	{
-		Core = Owner->FindComponentByClass<UURSRobotCoreComponent>();
-		NDisplayBinder =
-			Owner->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
+		AdminListenerSock->SetReuseAddr();
+		AdminListenerSock->SetNonBlocking(true);
+		TSharedRef<FInternetAddr> Addr = SSS->GetLocalBindAddr(*GLog);
+		Addr->SetPort(AdminPort);
+		if (AdminListenerSock->Bind(*Addr) && AdminListenerSock->Listen(16))
+			UE_LOG(LogTemp, Log, TEXT("[URS TCP] Admin listening on port %d"), AdminPort);
 	}
 
-	if (!Core.IsValid())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[URS TCP] No UURSRobotCoreComponent found."));
-		return false;
-	}
-
-	Core->OnRobotsChanged.AddDynamic(this, &UURSTcpTransportComponent::OnRobotsChanged);
-
-	RebuildListeners();
-	UE_LOG(LogTemp, Log, TEXT("[URS TCP] Transport started."));
+	RebuildNetworkThread();
 	return true;
-}
-
-void UURSTcpTransportComponent::OnRobotsChanged()
-{
-	RebuildListeners();
 }
 
 void UURSTcpTransportComponent::StopTransport()
 {
-	for (FRobotListener& L : RobotListeners)
+	bVisionAccept.store(false);
+	if (NetThread)
 	{
-		CloseListener(L);
+		NetThread->Stop();
+		delete NetThread; NetThread = nullptr;
 	}
-	RobotListeners.Reset();
-	CloseListener(AdminListener);
+	CloseSocket(AdminListenerSock);
+	for (auto& C : AdminClients)
+		CloseSocket(C.Socket);
+	AdminClients.Empty();
 }
 
-void UURSTcpTransportComponent::CloseListener(FRobotListener& Listener)
+void UURSTcpTransportComponent::RebuildNetworkThread()
 {
-	for (FTcpClient& C : Listener.Clients)
+	if (!Core.IsValid()) return;
+
+	TArray<FString> RobotIds = Core->GetRobotIds();
+	if (RobotIds.Num() == 0) return;
+
+	// Stop existing network thread
+	if (NetThread) { NetThread->Stop(); delete NetThread; NetThread = nullptr; }
+
+	// Build network thread endpoints
+	TArray<URSNetworkThread::FRobotEndpoint> NetEndpoints;
+	auto& CoreEndpoints = Core->GetEndpoints();
+
+	for (int32 Ri = 0; Ri < CoreEndpoints.Num(); ++Ri)
 	{
-		CloseSocket(C.Socket);
+		URSNetworkThread::FRobotEndpoint NE;
+		NE.ActorId = CoreEndpoints[Ri].ActorId;
+
+		// Wire triple buffer pointers
+		NE.StateBuf = &CoreEndpoints[Ri].StateBuffer;
+		NE.CmdBuf = &CoreEndpoints[Ri].CmdBuffer;
+		NE.GainBuf = &CoreEndpoints[Ri].GainBuffer;
+
+		// Build metadata for JSON
+		for (const auto& Ji : CoreEndpoints[Ri].Joints)
+			if (Ji.JointType != mjJNT_FREE)
+				NE.Meta.JointNames.Add(Ji.Name);
+		for (const auto& Ai : CoreEndpoints[Ri].Actuators)
+			NE.Meta.ActuatorNames.Add(Ai.Name);
+		for (const auto& Ce : CoreEndpoints[Ri].Cameras)
+		{
+			if (auto* Cam = Ce.Camera.Get())
+			{
+				NE.Meta.CameraNames.Add(Ce.Name);
+				NE.Meta.CameraWidths.Add(Cam->resolution.Num() > 0 ? Cam->resolution[0] : 0);
+				NE.Meta.CameraHeights.Add(Cam->resolution.Num() > 1 ? Cam->resolution[1] : 0);
+				NE.Meta.CameraFormats.Add(Cam->CaptureMode == EMjCameraMode::Depth ? TEXT("float32_depth") : TEXT("bgra8"));
+			}
+		}
+
+		NE.Meta.bPrivSelfPos = CoreEndpoints[Ri].Privilege.bSelfPos;
+		NE.Meta.bPrivBallPosRelated = CoreEndpoints[Ri].Privilege.bBallPosRelated;
+		NE.Meta.bPrivBallVelRelated = CoreEndpoints[Ri].Privilege.bBallVelRelated;
+		NE.Meta.bPrivAllPos = CoreEndpoints[Ri].Privilege.bAllPos;
+		NE.Meta.Noise = { CoreEndpoints[Ri].Noise.Qpos, CoreEndpoints[Ri].Noise.Qvel, CoreEndpoints[Ri].Noise.Qtor,
+			CoreEndpoints[Ri].Noise.ImuQuat, CoreEndpoints[Ri].Noise.ImuAngVel,
+			CoreEndpoints[Ri].Noise.CameraImuQuat, CoreEndpoints[Ri].Noise.CameraImuAngVel,
+			CoreEndpoints[Ri].Noise.SelfPos, CoreEndpoints[Ri].Noise.BallPosRelated,
+			CoreEndpoints[Ri].Noise.BallVelRelated, CoreEndpoints[Ri].Noise.AllPos };
+
+		// Open TCP listener for this robot
+		int32 Port = RobotBasePort + Ri;
+		NE.Listener.Listen(Port);
+		UE_LOG(LogTemp, Log, TEXT("[URS TCP] Robot '%s' listening on port %d"), *NE.ActorId, Port);
+
+		NetEndpoints.Add(MoveTemp(NE));
 	}
-	Listener.Clients.Reset();
-	CloseSocket(Listener.ListenerSocket);
-	Listener.ListenerSocket = nullptr;
+
+	// Start network thread
+	NetThread = new URSNetworkThread();
+	NetThread->Start(MoveTemp(NetEndpoints), AdminPort, StateRateHz, CameraRateHz);
+
+	// Build camera state for game thread
+	CameraStates.Empty();
+	for (int32 Ri = 0; Ri < CoreEndpoints.Num(); ++Ri)
+		CameraStates.Add({ CoreEndpoints[Ri].ActorId, false });
+}
+
+void UURSTcpTransportComponent::OnRobotsChanged()
+{
+	RebuildNetworkThread();
+}
+
+void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFn)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFn);
+	TickAdmin();
+	TickCameraCapture();
+	DrainCompletedVision();
+}
+
+// ============================================================================
+// Camera capture (game thread only — uses UE render API)
+// ============================================================================
+
+void UURSTcpTransportComponent::TickCameraCapture()
+{
+	if (!Core.IsValid() || !NetThread) return;
+	const double Now = FPlatformTime::Seconds();
+	const bool bUseNDisplay = NDisplayBinder.IsValid() && NDisplayBinder->IsReady();
+
+	// Request camera readback at CameraRateHz
+	const double RgbInterval = CameraRateHz > 0 ? 1.0 / CameraRateHz : 0;
+	if (RgbInterval > 0 && Now >= NextRgbTimeSec)
+	{
+		do { NextRgbTimeSec += RgbInterval; } while (NextRgbTimeSec <= Now);
+
+		auto& Endpoints = Core->GetEndpoints();
+		for (int32 Ri = 0; Ri < Endpoints.Num(); ++Ri)
+		{
+			if (Ri >= CameraStates.Num()) break;
+			if (!bUseNDisplay)
+			{
+				Core->RequestNamedCameraReadback(Endpoints[Ri].ActorId, VisionConfig.LeftCamera);
+				if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
+					Core->RequestNamedCameraReadback(Endpoints[Ri].ActorId, VisionConfig.RightCamera);
+			}
+		}
+	}
+
+	// Consume ready camera frames → encode → push to network thread
+	if (bUseNDisplay) return; // nDisplay path handles its own encoding
+
+	auto& Endpoints = Core->GetEndpoints();
+	for (int32 Ri = 0; Ri < Endpoints.Num(); ++Ri)
+	{
+		TArray<FString> CamNames = { VisionConfig.LeftCamera };
+		if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
+			CamNames.Add(VisionConfig.RightCamera);
+
+		bool bAllReady = true;
+		for (const FString& Cn : CamNames)
+			bAllReady = bAllReady && Core->IsCameraFrameReady(Endpoints[Ri].ActorId, Cn);
+
+		if (!bAllReady) continue;
+
+		// Consume pixels for all cameras
+		struct FRawImage {
+			TArray<FColor> Pixels;
+			int32 Width = 0, Height = 0;
+			FString Name;
+		};
+		TArray<FRawImage> Images;
+		bool bValid = true;
+		for (const FString& Cn : CamNames)
+		{
+			FRawImage Img;
+			Img.Name = Cn;
+			if (Core->ConsumeCameraFrame(Endpoints[Ri].ActorId, Cn, Img.Pixels))
+			{
+				if (Img.Pixels.Num() > 0)
+				{
+					Img.Width = FMath::Sqrt((float)Img.Pixels.Num() * (4.0f / 3.0f)); // estimate
+					Img.Height = Img.Pixels.Num() / FMath::Max(1, Img.Width);
+					// Better: get from camera resolution
+					for (const auto& Ce : Endpoints[Ri].Cameras)
+					{
+						if (Ce.Name == Cn && Ce.Camera.IsValid())
+						{
+							Img.Width = Ce.Camera->resolution.Num() > 0 ? Ce.Camera->resolution[0] : 0;
+							Img.Height = Ce.Camera->resolution.Num() > 1 ? Ce.Camera->resolution[1] : 0;
+							break;
+						}
+					}
+				}
+				Images.Add(MoveTemp(Img));
+			}
+			else { bValid = false; break; }
+		}
+
+		if (!bValid || Images.Num() != CamNames.Num()) continue;
+
+		// Build v2 image message and encode (async)
+		const uint8 ImageMsgVersion = 0x02;
+		const uint8 ImageCount = Images.Num();
+		const uint16 Flags = 0;
+		const uint32 Sequence = 0; // TODO: track per-robot sequence
+		static uint32 GlobalSeq = 0;
+		uint32 Seq = GlobalSeq++;
+
+		// For now, encode synchronously (simpler — async can be re-added)
+		TArray<uint8> Payload;
+		Payload.Add(ImageMsgVersion);
+		Payload.Add(ImageCount);
+		Payload.Append((uint8*)&Flags, 2);
+		Payload.Append((uint8*)&Seq, 4);
+		// sim_time from latest state snapshot
+		double SimTime = Endpoints[Ri].StateBuffer.Front().SimTime;
+		Payload.Append((uint8*)&SimTime, 8);
+
+		for (const FRawImage& Img : Images)
+		{
+			FTCHARToUTF8 NameConv(*Img.Name);
+			uint8 NameLen = (uint8)NameConv.Length();
+			Payload.Add(NameLen);
+			Payload.Append((uint8*)NameConv.Get(), NameLen);
+
+			uint8 Codec = (CameraCompress == TEXT("jpeg")) ? 0x01 : 0x00;
+			Payload.Add(Codec); // codec
+			Payload.Add(0x00);  // pixel format (BGRA8)
+			Payload.Add(0x00);  // reserved
+
+			uint16 W = (uint16)Img.Width, H = (uint16)Img.Height;
+			Payload.Append((uint8*)&W, 2);
+			Payload.Append((uint8*)&H, 2);
+
+			if (Codec == 0x01 && ImageWrapperModule)
+			{
+				// JPEG encode
+				TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule->CreateImageWrapper(EImageFormat::JPEG);
+				if (Wrapper.IsValid() && Wrapper->SetRaw(Img.Pixels.GetData(), Img.Pixels.Num() * 4,
+					Img.Width, Img.Height, ERGBFormat::BGRA, 8))
+				{
+					TArray64<uint8> JpegData = Wrapper->GetCompressed(JpegQuality);
+					uint32 RawLen = Img.Pixels.Num() * 4;
+					uint32 DataLen = JpegData.Num();
+					Payload.Append((uint8*)&RawLen, 4);
+					Payload.Append((uint8*)&DataLen, 4);
+					Payload.Append(JpegData.GetData(), JpegData.Num());
+				}
+			}
+			else
+			{
+				// Raw BGRA
+				uint32 RawLen = Img.Pixels.Num() * 4;
+				uint32 DataLen = RawLen;
+				Payload.Append((uint8*)&RawLen, 4);
+				Payload.Append((uint8*)&DataLen, 4);
+				Payload.Append((uint8*)Img.Pixels.GetData(), DataLen);
+			}
+		}
+
+		// Push to network thread
+		NetThread->EnqueueCameraFrame(Ri, URSoccerLab::TcpProtocol::TypeRgb, Payload.GetData(), Payload.Num());
+	}
+}
+
+void UURSTcpTransportComponent::DrainCompletedVision()
+{
+	// Currently encoding is synchronous in TickCameraCapture
+	// This is for async encode results if we switch back to async
+}
+
+// ============================================================================
+// Admin (game thread — needs CallbackMutex for SetPose etc.)
+// ============================================================================
+
+void UURSTcpTransportComponent::TickAdmin()
+{
+	if (!AdminListenerSock) return;
+
+	// Accept new admin connections
+	auto* SSS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	bool bPending = false;
+	AdminListenerSock->HasPendingConnection(bPending);
+	while (bPending)
+	{
+		TSharedRef<FInternetAddr> Remote = SSS->CreateInternetAddr();
+		FSocket* ClientSock = AdminListenerSock->Accept(*Remote, TEXT("URS-Admin-C"));
+		if (ClientSock)
+		{
+			ClientSock->SetNonBlocking(true);
+			FAdminClient NewClient;
+			NewClient.Socket = ClientSock;
+			AdminClients.Add(MoveTemp(NewClient));
+		}
+		AdminListenerSock->HasPendingConnection(bPending);
+	}
+
+	// Process admin clients
+	uint8 RecvBuf[65536];
+	for (int32 Ci = AdminClients.Num() - 1; Ci >= 0; --Ci)
+	{
+		auto& Client = AdminClients[Ci];
+		int32 BytesRead = 0;
+		while (Client.Socket->Recv(RecvBuf, sizeof(RecvBuf), BytesRead))
+		{
+			if (BytesRead > 0)
+				Client.ReadBuf.Append(RecvBuf, BytesRead);
+			else break;
+		}
+		if (Client.Socket->GetConnectionState() == SCS_ConnectionError)
+		{
+			CloseSocket(Client.Socket);
+			AdminClients.RemoveAt(Ci);
+			continue;
+		}
+
+		// Parse frames
+		int32 Consumed = 0;
+		while (Client.ReadBuf.Num() - Consumed >= 5)
+		{
+			const uint8* D = Client.ReadBuf.GetData() + Consumed;
+			int32 FrameLen = (D[0] << 24) | (D[1] << 16) | (D[2] << 8) | D[3];
+			if (FrameLen < 1 || FrameLen > 16*1024*1024) { CloseSocket(Client.Socket); AdminClients.RemoveAt(Ci); break; }
+			if (Client.ReadBuf.Num() - Consumed < 4 + FrameLen) break;
+
+			if (D[4] == 0x00) // JSON
+			{
+				FUTF8ToTCHAR Conv((const ANSICHAR*)(D + 5), FrameLen - 1);
+				FString JsonStr(Conv.Length(), Conv.Get());
+				ProcessAdminJson(Client, JsonStr);
+			}
+			Consumed += 4 + FrameLen;
+		}
+		if (Consumed > 0) Client.ReadBuf.RemoveAt(0, Consumed);
+
+		// Flush writes
+		if (Client.WriteBuf.Num() > 0)
+		{
+			int32 Sent = 0;
+			Client.Socket->Send(Client.WriteBuf.GetData(), Client.WriteBuf.Num(), Sent);
+			if (Sent > 0) Client.WriteBuf.RemoveAt(0, Sent);
+		}
+	}
+}
+
+void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FString& JsonStr)
+{
+	TSharedPtr<FJsonObject> Root;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid()) return;
+
+	auto SendReply = [&](TSharedPtr<FJsonObject> ReplyObj)
+	{
+		FString ReplyStr;
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ReplyStr);
+		FJsonSerializer::Serialize(ReplyObj.ToSharedRef(), W);
+		FTCHARToUTF8 Utf8(*ReplyStr);
+		int32 FrameLen = 1 + Utf8.Length();
+		Client.WriteBuf.Add((FrameLen >> 24) & 0xFF);
+		Client.WriteBuf.Add((FrameLen >> 16) & 0xFF);
+		Client.WriteBuf.Add((FrameLen >> 8) & 0xFF);
+		Client.WriteBuf.Add(FrameLen & 0xFF);
+		Client.WriteBuf.Add(0x00);
+		Client.WriteBuf.Append((const uint8*)Utf8.Get(), Utf8.Length());
+	};
+
+	FString Command;
+	if (!Root->TryGetStringField(TEXT("command"), Command)) return;
+
+	if (Command == TEXT("set_pose") && Core.IsValid())
+	{
+		FString ActorId;
+		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		const TArray<TSharedPtr<FJsonValue>>* Trans;
+		FVector TransV = FVector::ZeroVector;
+		if (Root->TryGetArrayField(TEXT("translation_m"), Trans) && Trans->Num() >= 3)
+			TransV = FVector((*Trans)[0]->AsNumber(), (*Trans)[1]->AsNumber(), (*Trans)[2]->AsNumber());
+		FQuat RotQuat = FQuat::Identity;
+		const TArray<TSharedPtr<FJsonValue>>* Rot;
+		if (Root->TryGetArrayField(TEXT("rotation_quat_xyzw"), Rot) && Rot->Num() >= 4)
+			RotQuat = FQuat((*Rot)[1]->AsNumber(), (*Rot)[2]->AsNumber(), (*Rot)[3]->AsNumber(), (*Rot)[0]->AsNumber());
+		TArray<float> JointQpos;
+		const TArray<TSharedPtr<FJsonValue>>* JQ;
+		if (Root->TryGetArrayField(TEXT("joint_qpos"), JQ))
+			for (const auto& V : *JQ) JointQpos.Add(V->AsNumber());
+
+		FURSPoseResult Result = Core->SetPose(ActorId, &TransV, &RotQuat, &JointQpos);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), Result.bOk);
+		SendReply(Reply);
+	}
+	else if (Command == TEXT("reset") && Core.IsValid())
+	{
+		FString ActorId;
+		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		FURSPoseResult Result = Core->ResetRobot(ActorId);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), Result.bOk);
+		SendReply(Reply);
+	}
+	else if (Command == TEXT("get_pose") && Core.IsValid())
+	{
+		FString ActorId;
+		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		FURSPoseResult Result = Core->GetPose(ActorId);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), Result.bOk);
+		if (Result.bOk)
+		{
+			Reply->SetArrayField(TEXT("base_pos"), {
+				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.X),
+				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Y),
+				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Z) });
+			Reply->SetArrayField(TEXT("base_quat"), {
+				MakeShared<FJsonValueNumber>(Result.AppliedRotation.X),
+				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Y),
+				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Z),
+				MakeShared<FJsonValueNumber>(Result.AppliedRotation.W) });
+			TArray<TSharedPtr<FJsonValue>> JQ;
+			for (float Q : Result.AppliedJointQpos) JQ.Add(MakeShared<FJsonValueNumber>(Q));
+			Reply->SetArrayField(TEXT("joint_qpos"), JQ);
+		}
+		SendReply(Reply);
+	}
+	else if (Command == TEXT("lock_pose") && Core.IsValid())
+	{
+		FString ActorId;
+		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		FVector Trans = FVector::ZeroVector; FQuat Rot = FQuat::Identity; TArray<float> JQ;
+		const TArray<TSharedPtr<FJsonValue>>* T;
+		if (Root->TryGetArrayField(TEXT("translation_m"), T) && T->Num() >= 3)
+			Trans = FVector((*T)[0]->AsNumber(), (*T)[1]->AsNumber(), (*T)[2]->AsNumber());
+		const TArray<TSharedPtr<FJsonValue>>* R;
+		if (Root->TryGetArrayField(TEXT("rotation_quat_xyzw"), R) && R->Num() >= 4)
+			Rot = FQuat((*R)[1]->AsNumber(), (*R)[2]->AsNumber(), (*R)[3]->AsNumber(), (*R)[0]->AsNumber());
+		const TArray<TSharedPtr<FJsonValue>>* J;
+		if (Root->TryGetArrayField(TEXT("joint_qpos"), J))
+			for (const auto& V : *J) JQ.Add(V->AsNumber());
+		Core->SetPoseLock(ActorId, true, &Trans, &Rot, &JQ);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), true);
+		SendReply(Reply);
+	}
+	else if (Command == TEXT("unlock_pose") && Core.IsValid())
+	{
+		FString ActorId;
+		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		Core->SetPoseLock(ActorId, false);
+		auto Reply = MakeShared<FJsonObject>();
+		Reply->SetBoolField(TEXT("ok"), true);
+		SendReply(Reply);
+	}
 }
 
 void UURSTcpTransportComponent::CloseSocket(FSocket* Sock)
@@ -278,1300 +521,4 @@ void UURSTcpTransportComponent::CloseSocket(FSocket* Sock)
 	{
 		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Sock);
 	}
-}
-
-void UURSTcpTransportComponent::RebuildListeners()
-{
-	StopTransport();
-
-	TArray<FString> RobotIds = Core->GetRobotIds();
-	LastKnownRobots = RobotIds;
-	if (!URSoccerLab::TcpProtocol::IsValidPortLayout(
-		RobotBasePort, RobotIds.Num(), AdminPort))
-	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[URS TCP] Invalid port layout: robot range starts at %d for %d robot(s), admin=%d."),
-			RobotBasePort, RobotIds.Num(), AdminPort);
-		return;
-	}
-
-	ISocketSubsystem* SSS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-
-	auto CreateListener = [&](int32 Port) -> FSocket*
-	{
-		FSocket* ListenSock = SSS->CreateSocket(NAME_Stream, TEXT("URS"), false);
-		if (!ListenSock) return nullptr;
-		// Keep simulator endpoints process-exclusive. On Linux Unreal's
-		// SetReuseAddr() also enables SO_REUSEPORT, which lets two Unreal
-		// instances accept different connections on the same robot/admin ports
-		// and silently mixes state, commands, and camera frames across worlds.
-		ListenSock->SetNonBlocking(true);
-
-		TSharedRef<FInternetAddr> Addr = SSS->CreateInternetAddr();
-		Addr->SetIp(0);
-		Addr->SetPort(Port);
-		if (!ListenSock->Bind(*Addr))
-		{
-			UE_LOG(LogTemp, Error, TEXT("[URS TCP] Failed to bind port %d"), Port);
-			CloseSocket(ListenSock);
-			return nullptr;
-		}
-		if (!ListenSock->Listen(16))
-		{
-			UE_LOG(LogTemp, Error, TEXT("[URS TCP] Failed to listen on port %d"), Port);
-			CloseSocket(ListenSock);
-			return nullptr;
-		}
-		return ListenSock;
-	};
-
-	for (int32 i = 0; i < RobotIds.Num(); ++i)
-	{
-		FRobotListener L;
-		L.ActorId = RobotIds[i];
-		L.Generation = ++ListenerGenerationCounter;
-		L.ListenerSocket = CreateListener(RobotBasePort + i);
-		if (L.ListenerSocket)
-		{
-			UE_LOG(LogTemp, Log, TEXT("[URS TCP] Robot '%s' listening on port %d"), *RobotIds[i], RobotBasePort + i);
-		}
-		RobotListeners.Add(MoveTemp(L));
-	}
-
-	AdminListener.ActorId = TEXT("admin");
-	AdminListener.ListenerSocket = CreateListener(AdminPort);
-	if (AdminListener.ListenerSocket)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[URS TCP] Admin listening on port %d"), AdminPort);
-	}
-}
-
-void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFn)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFn);
-
-	if (!Core.IsValid())
-	{
-		return;
-	}
-	if (!NDisplayBinder.IsValid() && GetOwner())
-	{
-		NDisplayBinder =
-			GetOwner()->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
-	}
-
-	TArray<FString> CurrentRobots = Core->GetRobotIds();
-	if (CurrentRobots != LastKnownRobots)
-	{
-		RebuildListeners();
-	}
-
-	for (FRobotListener& L : RobotListeners)
-	{
-		AcceptNewConnections(L);
-		ReadFromClients(L);
-	}
-	AcceptNewConnections(AdminListener);
-	ReadFromClients(AdminListener);
-
-	TickStatePublish();
-	const double CameraPublishStartSec = FPlatformTime::Seconds();
-	// Clear completed bounded jobs before deciding whether this render tick
-	// can accept another frame. Draining afterwards artificially limits a
-	// fast encoder to every second game frame.
-	DrainCompletedVisionPackets();
-	TickCameraPublish();
-	DrainCompletedVisionPackets();
-	CameraStatsPublishSec += FPlatformTime::Seconds() - CameraPublishStartSec;
-	FlushAllWrites();
-
-	if (bLogCameraStats)
-	{
-		++CameraStatsTickCount;
-		const double Now = FPlatformTime::Seconds();
-		const double WindowSec = Now - CameraStatsWindowStartSec;
-		if (WindowSec >= 1.0)
-		{
-			UE_LOG(LogTemp, Log,
-				TEXT("[URS CameraStats] tick_hz=%.2f message_hz=%.2f camera_hz=%.2f ")
-				TEXT("publish_ms_per_sec=%.2f encode_ms_per_sec=%.2f payload_mib_per_sec=%.3f"),
-				static_cast<double>(CameraStatsTickCount) / WindowSec,
-				static_cast<double>(CameraStatsMessageCount) / WindowSec,
-				static_cast<double>(CameraStatsEntryCount) / WindowSec,
-				CameraStatsPublishSec * 1000.0 / WindowSec,
-				CameraStatsEncodeSec * 1000.0 / WindowSec,
-				static_cast<double>(CameraStatsPayloadBytes) / WindowSec / (1024.0 * 1024.0));
-
-			CameraStatsWindowStartSec = Now;
-			CameraStatsPublishSec = 0.0;
-			CameraStatsEncodeSec = 0.0;
-			CameraStatsTickCount = 0;
-			CameraStatsMessageCount = 0;
-			CameraStatsEntryCount = 0;
-			CameraStatsPayloadBytes = 0;
-		}
-	}
-}
-
-void UURSTcpTransportComponent::AcceptNewConnections(FRobotListener& Listener)
-{
-	if (!Listener.ListenerSocket) return;
-
-	ISocketSubsystem* SSS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-	TSharedRef<FInternetAddr> RemoteAddr = SSS->CreateInternetAddr();
-	while (true)
-	{
-		FSocket* ClientSock = Listener.ListenerSocket->Accept(*RemoteAddr, TEXT("URS Client"));
-		if (!ClientSock) break;
-
-		ClientSock->SetNonBlocking(true);
-		ClientSock->SetNoDelay();
-		FTcpClient Client;
-		Client.Socket = ClientSock;
-		Listener.Clients.Add(MoveTemp(Client));
-		UE_LOG(LogTemp, Log, TEXT("[URS TCP] Client connected to '%s' (%d total)"),
-			*Listener.ActorId, Listener.Clients.Num());
-	}
-}
-
-void UURSTcpTransportComponent::ReadFromClients(FRobotListener& Listener)
-{
-	for (int32 Idx = Listener.Clients.Num() - 1; Idx >= 0; --Idx)
-	{
-		FTcpClient& Client = Listener.Clients[Idx];
-		FSocket* Sock = Client.Socket;
-		if (!Sock)
-		{
-			Listener.Clients.RemoveAt(Idx);
-			continue;
-		}
-
-		uint8 TmpBuf[8192];
-		int32 BytesRead = 0;
-		while (Sock->Recv(TmpBuf, sizeof(TmpBuf), BytesRead))
-		{
-			if (BytesRead <= 0) break;
-			Client.ReadBuffer.Append(TmpBuf, BytesRead);
-		}
-
-		if (Sock->GetConnectionState() == SCS_ConnectionError)
-		{
-			CloseSocket(Sock);
-			Listener.Clients.RemoveAt(Idx);
-			continue;
-		}
-
-		bool bBadFrame = false;
-		while (Client.ReadBuffer.Num() >= 5)
-		{
-			const uint32 FrameLen =
-				(static_cast<uint32>(Client.ReadBuffer[0]) << 24) |
-				(static_cast<uint32>(Client.ReadBuffer[1]) << 16) |
-				(static_cast<uint32>(Client.ReadBuffer[2]) << 8) |
-				 static_cast<uint32>(Client.ReadBuffer[3]);
-
-			if (FrameLen < 1 || FrameLen > 16 * 1024 * 1024)
-			{
-				bBadFrame = true;
-				break;
-			}
-			if (static_cast<uint32>(Client.ReadBuffer.Num()) < 4u + FrameLen) break;
-
-			uint8 FrameType = Client.ReadBuffer[4];
-			const int32 PayloadSize = FrameLen - 1;
-			const uint8* PayloadData = PayloadSize > 0 ? Client.ReadBuffer.GetData() + 5 : nullptr;
-
-			if (FrameType == URSoccerLab::TcpProtocol::TypeJson && PayloadSize > 0)
-			{
-				FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(PayloadData), PayloadSize);
-				FString JsonStr(Converter.Length(), Converter.Get());
-				if (Listener.ActorId == TEXT("admin"))
-				{
-					ProcessAdminRequest(Client, JsonStr);
-				}
-				else
-				{
-					ProcessCommand(Listener.ActorId, JsonStr);
-				}
-			}
-
-			Client.ReadBuffer.RemoveAt(0, 4 + FrameLen);
-		}
-
-		if (bBadFrame)
-		{
-			CloseSocket(Sock);
-			Listener.Clients.RemoveAt(Idx);
-		}
-	}
-}
-
-void UURSTcpTransportComponent::ProcessCommand(const FString& ActorId, const FString& JsonStr)
-{
-	FTCHARToUTF8 Utf8(*JsonStr);
-	yyjson_doc* Doc = yyjson_read((const char*)Utf8.Get(), Utf8.Length(), YYJSON_READ_NOFLAG);
-	if (!Doc) return;
-	yyjson_val* Root = yyjson_doc_get_root(Doc);
-	if (!Root || !yyjson_is_obj(Root)) { yyjson_doc_free(Doc); return; }
-
-	// Check for controller params
-	yyjson_val* KpVal = yyjson_obj_get(Root, "kp");
-	if (KpVal || yyjson_obj_get(Root, "kv") || yyjson_obj_get(Root, "damping") ||
-		yyjson_obj_get(Root, "actuator_mode"))
-	{
-		auto ParseGainMap = [&](const char* Key, TMap<FString, double>& Out)
-		{
-			yyjson_val* Obj = yyjson_obj_get(Root, Key);
-			if (!Obj || !yyjson_is_obj(Obj)) return;
-			yyjson_obj_iter Iter;
-			yyjson_obj_iter_init(Obj, &Iter);
-			yyjson_val* KeyVal;
-			while ((KeyVal = yyjson_obj_iter_next(&Iter)))
-			{
-				yyjson_val* V = yyjson_obj_iter_get_val(KeyVal);
-				if (yyjson_is_num(V))
-				{
-					const char* K = yyjson_get_str(KeyVal);
-					const size_t KLen = yyjson_get_len(KeyVal);
-					Out.Add(FString(UTF8_TO_TCHAR(K)), yyjson_get_num(V));
-				}
-			}
-		};
-
-		TMap<FString, double> KpMap, KvMap, DampingMap;
-		ParseGainMap("kp", KpMap);
-		ParseGainMap("kv", KvMap);
-		ParseGainMap("damping", DampingMap);
-
-		FString Mode;
-		const FString* ModePtr = nullptr;
-		yyjson_val* ModeVal = yyjson_obj_get(Root, "actuator_mode");
-		if (ModeVal && yyjson_is_str(ModeVal))
-		{
-			Mode = FString(UTF8_TO_TCHAR(yyjson_get_str(ModeVal)));
-			if (!Mode.IsEmpty()) ModePtr = &Mode;
-		}
-
-		Core->SubmitControllerParams(ActorId,
-			KpMap.Num()      > 0 ? &KpMap      : nullptr,
-			KvMap.Num()      > 0 ? &KvMap      : nullptr,
-			DampingMap.Num() > 0 ? &DampingMap : nullptr,
-			ModePtr);
-		yyjson_doc_free(Doc);
-		return;
-	}
-
-	// Regular actuator commands
-	TMap<FString, float> NamedValues;
-	yyjson_obj_iter Iter;
-	yyjson_obj_iter_init(Root, &Iter);
-	yyjson_val* KeyVal;
-	while ((KeyVal = yyjson_obj_iter_next(&Iter)))
-	{
-		yyjson_val* V = yyjson_obj_iter_get_val(KeyVal);
-		if (yyjson_is_num(V))
-		{
-			const double Num = yyjson_get_num(V);
-			if (FMath::IsFinite(Num))
-				NamedValues.Add(FString(UTF8_TO_TCHAR(yyjson_get_str(KeyVal))), static_cast<float>(Num));
-		}
-	}
-
-	Core->SubmitCommand(ActorId, NamedValues);
-	yyjson_doc_free(Doc);
-}
-
-void UURSTcpTransportComponent::ProcessAdminRequest(FTcpClient& Client, const FString& JsonStr)
-{
-	TSharedPtr<FJsonObject> Root;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
-
-	auto SendReply = [&Client, this](TSharedPtr<FJsonObject> ReplyObj)
-	{
-		FString ReplyStr;
-		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
-			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ReplyStr);
-		FJsonSerializer::Serialize(ReplyObj.ToSharedRef(), W);
-
-		FTCHARToUTF8 Utf8(*ReplyStr);
-		EnqueueFrame(Client, URSoccerLab::TcpProtocol::TypeJson,
-			reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
-	};
-
-	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
-	{
-		auto Err = MakeShared<FJsonObject>();
-		Err->SetBoolField(TEXT("ok"), false);
-		Err->SetStringField(TEXT("error"), TEXT("bad_json"));
-		SendReply(Err);
-		return;
-	}
-
-	FString Command;
-	if (!Root->TryGetStringField(TEXT("command"), Command) || Command.IsEmpty())
-	{
-		auto Err = MakeShared<FJsonObject>();
-		Err->SetBoolField(TEXT("ok"), false);
-		Err->SetStringField(TEXT("error"), TEXT("missing_command"));
-		SendReply(Err);
-		return;
-	}
-
-	const TSharedPtr<FJsonObject>* ArgsPtr = nullptr;
-	TSharedPtr<FJsonObject> DefaultArgsObj;
-	if (!Root->TryGetObjectField(TEXT("args"), ArgsPtr) || !ArgsPtr || !ArgsPtr->IsValid())
-	{
-		DefaultArgsObj = MakeShared<FJsonObject>();
-		ArgsPtr = &DefaultArgsObj;
-	}
-	const TSharedPtr<FJsonObject>& Args = *ArgsPtr;
-
-	FString ActorId;
-	if (!Args->TryGetStringField(TEXT("actor_id"), ActorId) || ActorId.IsEmpty())
-	{
-		auto Err = MakeShared<FJsonObject>();
-		Err->SetBoolField(TEXT("ok"), false);
-		Err->SetStringField(TEXT("error"), TEXT("missing_actor_id"));
-		SendReply(Err);
-		return;
-	}
-
-	if (Command == TEXT("set_pose"))
-	{
-		TOptional<FVector> Trans;
-		TOptional<FQuat> Rot;
-		TOptional<TArray<float>> JointQpos;
-
-		const TArray<TSharedPtr<FJsonValue>>* TArr;
-		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr)
-		{
-			if (TArr->Num() != 3)
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
-				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("translation_m must have 3 elements, got %d"), TArr->Num()));
-				SendReply(Err);
-				return;
-			}
-			double Tx = (*TArr)[0]->AsNumber();
-			double Ty = (*TArr)[1]->AsNumber();
-			double Tz = (*TArr)[2]->AsNumber();
-			if (!FMath::IsFinite(Tx) || !FMath::IsFinite(Ty) || !FMath::IsFinite(Tz))
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
-				Err->SetStringField(TEXT("message"), TEXT("translation_m contains NaN or infinity"));
-				SendReply(Err);
-				return;
-			}
-			Trans = FVector(Tx, Ty, Tz);
-		}
-		const TArray<TSharedPtr<FJsonValue>>* RArr;
-		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr)
-		{
-			if (RArr->Num() != 4)
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
-				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("rotation_quat_xyzw must have 4 elements, got %d"), RArr->Num()));
-				SendReply(Err);
-				return;
-			}
-			double Rx = (*RArr)[0]->AsNumber();
-			double Ry = (*RArr)[1]->AsNumber();
-			double Rz = (*RArr)[2]->AsNumber();
-			double Rw = (*RArr)[3]->AsNumber();
-			if (!FMath::IsFinite(Rx) || !FMath::IsFinite(Ry) || !FMath::IsFinite(Rz) || !FMath::IsFinite(Rw))
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
-				Err->SetStringField(TEXT("message"), TEXT("rotation_quat_xyzw contains NaN or infinity"));
-				SendReply(Err);
-				return;
-			}
-			const double QuatLenSq = Rx * Rx + Ry * Ry + Rz * Rz + Rw * Rw;
-			if (QuatLenSq < KINDA_SMALL_NUMBER)
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
-				Err->SetStringField(TEXT("message"), TEXT("rotation_quat_xyzw is zero-length"));
-				SendReply(Err);
-				return;
-			}
-			const double InvLen = 1.0 / FMath::Sqrt(QuatLenSq);
-			Rot = FQuat(Rx * InvLen, Ry * InvLen, Rz * InvLen, Rw * InvLen);
-		}
-		const TArray<TSharedPtr<FJsonValue>>* JArr;
-		if (Args->TryGetArrayField(TEXT("joint_qpos"), JArr) && JArr)
-		{
-			TArray<float> Qpos;
-			for (const auto& V : *JArr)
-			{
-				double Val = V->AsNumber();
-				if (!FMath::IsFinite(Val))
-				{
-					auto Err = MakeShared<FJsonObject>();
-					Err->SetBoolField(TEXT("ok"), false);
-					Err->SetStringField(TEXT("error"), TEXT("invalid_joint_qpos"));
-					Err->SetStringField(TEXT("message"), TEXT("joint_qpos contains NaN or infinity"));
-					SendReply(Err);
-					return;
-				}
-				Qpos.Add(static_cast<float>(Val));
-			}
-			JointQpos = MoveTemp(Qpos);
-		}
-
-		FURSPoseResult Result = Core->SetPose(ActorId,
-			Trans.IsSet() ? &Trans.GetValue() : nullptr,
-			Rot.IsSet() ? &Rot.GetValue() : nullptr,
-			JointQpos.IsSet() ? &JointQpos.GetValue() : nullptr);
-
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), Result.bOk);
-		Reply->SetStringField(TEXT("command"), TEXT("set_pose"));
-		if (Result.bOk)
-		{
-			auto ResObj = MakeShared<FJsonObject>();
-			ResObj->SetStringField(TEXT("actor_id"), ActorId);
-			ResObj->SetArrayField(TEXT("translation_m"), {
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.X),
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Y),
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Z) });
-			ResObj->SetArrayField(TEXT("rotation_quat_xyzw"), {
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.X),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Y),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Z),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.W) });
-			TArray<TSharedPtr<FJsonValue>> Jqpos;
-			for (float v : Result.AppliedJointQpos) Jqpos.Add(MakeShared<FJsonValueNumber>(v));
-			ResObj->SetArrayField(TEXT("joint_qpos"), Jqpos);
-			ResObj->SetNumberField(TEXT("sim_time"), Result.SimTime);
-			Reply->SetObjectField(TEXT("result"), ResObj);
-		}
-		else
-		{
-			Reply->SetStringField(TEXT("error"), Result.Error);
-			Reply->SetStringField(TEXT("message"), Result.Message);
-		}
-		SendReply(Reply);
-	}
-	else if (Command == TEXT("get_pose"))
-	{
-		FURSPoseResult Result = Core->GetPose(ActorId);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), Result.bOk);
-		Reply->SetStringField(TEXT("command"), TEXT("get_pose"));
-		if (Result.bOk)
-		{
-			auto ResObj = MakeShared<FJsonObject>();
-			ResObj->SetStringField(TEXT("actor_id"), ActorId);
-			ResObj->SetArrayField(TEXT("translation_m"), {
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.X),
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Y),
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Z) });
-			ResObj->SetArrayField(TEXT("rotation_quat_xyzw"), {
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.X),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Y),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Z),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.W) });
-			TArray<TSharedPtr<FJsonValue>> Jqpos;
-			for (float v : Result.AppliedJointQpos) Jqpos.Add(MakeShared<FJsonValueNumber>(v));
-			ResObj->SetArrayField(TEXT("joint_qpos"), Jqpos);
-			ResObj->SetNumberField(TEXT("sim_time"), Result.SimTime);
-			Reply->SetObjectField(TEXT("result"), ResObj);
-		}
-		else
-		{
-			Reply->SetStringField(TEXT("error"), Result.Error);
-			Reply->SetStringField(TEXT("message"), Result.Message);
-		}
-		SendReply(Reply);
-	}
-	else if (Command == TEXT("reset"))
-	{
-		FURSPoseResult Result = Core->ResetRobot(ActorId);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), Result.bOk);
-		Reply->SetStringField(TEXT("command"), TEXT("reset"));
-		if (Result.bOk)
-		{
-			auto ResObj = MakeShared<FJsonObject>();
-			ResObj->SetStringField(TEXT("actor_id"), ActorId);
-			ResObj->SetNumberField(TEXT("sim_time"), Result.SimTime);
-			Reply->SetObjectField(TEXT("result"), ResObj);
-		}
-		else
-		{
-			Reply->SetStringField(TEXT("error"), Result.Error);
-			Reply->SetStringField(TEXT("message"), Result.Message);
-		}
-		SendReply(Reply);
-	}
-	else if (Command == TEXT("lock_pose"))
-	{
-		TOptional<FVector> Trans;
-		TOptional<FQuat> Rot;
-		TOptional<TArray<float>> JointQpos;
-		const TArray<TSharedPtr<FJsonValue>>* TArr;
-		if (Args->TryGetArrayField(TEXT("translation_m"), TArr) && TArr)
-		{
-			if (TArr->Num() != 3)
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
-				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("translation_m must have 3 elements, got %d"), TArr->Num()));
-				SendReply(Err);
-				return;
-			}
-			double Tx = (*TArr)[0]->AsNumber(), Ty = (*TArr)[1]->AsNumber(), Tz = (*TArr)[2]->AsNumber();
-			if (!FMath::IsFinite(Tx) || !FMath::IsFinite(Ty) || !FMath::IsFinite(Tz))
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_translation"));
-				SendReply(Err);
-				return;
-			}
-			Trans = FVector(Tx, Ty, Tz);
-		}
-		const TArray<TSharedPtr<FJsonValue>>* RArr;
-		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RArr) && RArr)
-		{
-			if (RArr->Num() != 4)
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
-				Err->SetStringField(TEXT("message"), FString::Printf(TEXT("rotation_quat_xyzw must have 4 elements, got %d"), RArr->Num()));
-				SendReply(Err);
-				return;
-			}
-			double Rx = (*RArr)[0]->AsNumber(), Ry = (*RArr)[1]->AsNumber(), Rz = (*RArr)[2]->AsNumber(), Rw = (*RArr)[3]->AsNumber();
-			if (!FMath::IsFinite(Rx) || !FMath::IsFinite(Ry) || !FMath::IsFinite(Rz) || !FMath::IsFinite(Rw))
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
-				SendReply(Err);
-				return;
-			}
-			const double LenSq = Rx * Rx + Ry * Ry + Rz * Rz + Rw * Rw;
-			if (LenSq < KINDA_SMALL_NUMBER)
-			{
-				auto Err = MakeShared<FJsonObject>();
-				Err->SetBoolField(TEXT("ok"), false);
-				Err->SetStringField(TEXT("error"), TEXT("invalid_rotation"));
-				SendReply(Err);
-				return;
-			}
-			const double InvLen = 1.0 / FMath::Sqrt(LenSq);
-			Rot = FQuat(Rx * InvLen, Ry * InvLen, Rz * InvLen, Rw * InvLen);
-		}
-		const TArray<TSharedPtr<FJsonValue>>* JArr;
-		if (Args->TryGetArrayField(TEXT("joint_qpos"), JArr) && JArr)
-		{
-			TArray<float> Qpos;
-			for (const auto& V : *JArr)
-			{
-				double Val = V->AsNumber();
-				if (!FMath::IsFinite(Val))
-				{
-					auto Err = MakeShared<FJsonObject>();
-					Err->SetBoolField(TEXT("ok"), false);
-					Err->SetStringField(TEXT("error"), TEXT("invalid_joint_qpos"));
-					SendReply(Err);
-					return;
-				}
-				Qpos.Add(static_cast<float>(Val));
-			}
-			JointQpos = MoveTemp(Qpos);
-		}
-		FURSPoseResult LockResult = Core->SetPoseLock(ActorId, true,
-			Trans.IsSet() ? &Trans.GetValue() : nullptr,
-			Rot.IsSet() ? &Rot.GetValue() : nullptr,
-			JointQpos.IsSet() ? &JointQpos.GetValue() : nullptr);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), LockResult.bOk);
-		Reply->SetStringField(TEXT("command"), TEXT("lock_pose"));
-		if (!LockResult.bOk)
-		{
-			Reply->SetStringField(TEXT("error"), LockResult.Error);
-			Reply->SetStringField(TEXT("message"), LockResult.Message);
-		}
-		SendReply(Reply);
-	}
-	else if (Command == TEXT("unlock_pose"))
-	{
-		FURSPoseResult UnlockResult = Core->SetPoseLock(ActorId, false);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), UnlockResult.bOk);
-		Reply->SetStringField(TEXT("command"), TEXT("unlock_pose"));
-		if (!UnlockResult.bOk)
-		{
-			Reply->SetStringField(TEXT("error"), UnlockResult.Error);
-			Reply->SetStringField(TEXT("message"), UnlockResult.Message);
-		}
-		SendReply(Reply);
-	}
-	else
-	{
-		auto Err = MakeShared<FJsonObject>();
-		Err->SetBoolField(TEXT("ok"), false);
-		Err->SetStringField(TEXT("error"), TEXT("unknown_command"));
-		Err->SetStringField(TEXT("message"), FString::Printf(TEXT("Unknown command: %s"), *Command));
-		SendReply(Err);
-	}
-}
-
-void UURSTcpTransportComponent::TickStatePublish()
-{
-	const double Now = FPlatformTime::Seconds();
-	const double Interval = StateRateHz > 0 ? 1.0 / StateRateHz : 0.0;
-	if (Interval <= 0 || Now - LastStateTimeSec < Interval) return;
-	LastStateTimeSec = Now;
-
-	for (FRobotListener& L : RobotListeners)
-	{
-		if (L.Clients.Num() == 0) continue;
-
-		FString Json = BuildStateJson(L.ActorId);
-		FTCHARToUTF8 Utf8(*Json);
-		SendToClients(L, URSoccerLab::TcpProtocol::TypeJson, reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
-	}
-}
-
-void UURSTcpTransportComponent::SendToClients(FRobotListener& Listener, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize)
-{
-	for (int32 Idx = Listener.Clients.Num() - 1; Idx >= 0; --Idx)
-	{
-		FTcpClient& Client = Listener.Clients[Idx];
-		if (!Client.Socket)
-		{
-			Listener.Clients.RemoveAt(Idx);
-			continue;
-		}
-		// Latest-frame-only: if the previous frame hasn't fully flushed yet,
-		// drop this one. This makes the channel behave like UDP (latest-wins)
-		// over TCP — a slow client never accumulates stale data. Camera frames
-		// are already gated by bRgbEncodeInFlight; state frames get the same
-		// treatment here.
-		if (Client.WriteBuffer.Num() > 0)
-		{
-			continue;
-		}
-		EnqueueFrame(Client, FrameType, PayloadData, PayloadSize);
-	}
-}
-
-void UURSTcpTransportComponent::EnqueueFrame(FTcpClient& Client, uint8 FrameType, const uint8* PayloadData, int32 PayloadSize)
-{
-	const uint32 FrameLen = 1 + PayloadSize;
-	const int32 OldNum = Client.WriteBuffer.Num();
-	Client.WriteBuffer.AddUninitialized(5 + PayloadSize);
-	uint8* Dest = Client.WriteBuffer.GetData() + OldNum;
-	Dest[0] = (FrameLen >> 24) & 0xFF;
-	Dest[1] = (FrameLen >> 16) & 0xFF;
-	Dest[2] = (FrameLen >> 8) & 0xFF;
-	Dest[3] = FrameLen & 0xFF;
-	Dest[4] = FrameType;
-	if (PayloadSize > 0)
-	{
-		FMemory::Memcpy(Dest + 5, PayloadData, PayloadSize);
-	}
-}
-
-bool UURSTcpTransportComponent::FlushClientWrites(FTcpClient& Client)
-{
-	if (!Client.Socket || Client.WriteBuffer.Num() == 0) return true;
-
-	int32 TotalSent = 0;
-	while (TotalSent < Client.WriteBuffer.Num())
-	{
-		int32 BytesSent = 0;
-		const int32 Remaining = Client.WriteBuffer.Num() - TotalSent;
-		const bool bOk = Client.Socket->Send(
-			Client.WriteBuffer.GetData() + TotalSent, Remaining, BytesSent);
-
-		if (!bOk || BytesSent <= 0)
-		{
-			const ESocketConnectionState State = Client.Socket->GetConnectionState();
-			if (State == SCS_ConnectionError)
-			{
-				return false;
-			}
-			break;
-		}
-		TotalSent += BytesSent;
-	}
-
-	if (TotalSent > 0)
-	{
-		Client.WriteBuffer.RemoveAt(0, TotalSent);
-	}
-	return true;
-}
-
-void UURSTcpTransportComponent::FlushAllWrites()
-{
-	for (FRobotListener& L : RobotListeners)
-	{
-		for (int32 Idx = L.Clients.Num() - 1; Idx >= 0; --Idx)
-		{
-			FTcpClient& Client = L.Clients[Idx];
-			if (!FlushClientWrites(Client))
-			{
-				CloseSocket(Client.Socket);
-				L.Clients.RemoveAt(Idx);
-			}
-		}
-	}
-
-	for (int32 Idx = AdminListener.Clients.Num() - 1; Idx >= 0; --Idx)
-	{
-		FTcpClient& Client = AdminListener.Clients[Idx];
-		if (!FlushClientWrites(Client))
-		{
-			CloseSocket(Client.Socket);
-			AdminListener.Clients.RemoveAt(Idx);
-		}
-	}
-}
-
-void UURSTcpTransportComponent::TickCameraPublish()
-{
-	const double Now = FPlatformTime::Seconds();
-	auto AdvanceClock = [Now](double& NextTime, const double RateHz) -> bool
-	{
-		const double Interval = RateHz > 0.0 ? 1.0 / RateHz : 0.0;
-		if (Interval <= 0.0 || Now < NextTime)
-		{
-			return false;
-		}
-		// Preserve a fixed-rate phase. Resetting to Now quantizes sensor
-		// rates against the game tick and unnecessarily lowers throughput.
-		do
-		{
-			NextTime += Interval;
-		}
-		while (NextTime <= Now);
-		return true;
-	};
-
-	const bool bRequestRgb = AdvanceClock(NextRgbTimeSec, CameraRateHz);
-	const bool bRequestDepth =
-		VisionConfig.Mode == URSoccerLab::EURSVisionMode::Rgbd
-		&& AdvanceClock(NextDepthTimeSec, DepthRateHz);
-	const bool bUseNDisplay =
-		NDisplayBinder.IsValid() && NDisplayBinder->IsReady();
-	const bool bAnyVisionClient = RobotListeners.ContainsByPredicate(
-		[](const FRobotListener& Listener)
-		{
-			return !Listener.Clients.IsEmpty();
-		});
-
-	if (bRequestRgb || bRequestDepth)
-	{
-		if (bRequestRgb && bUseNDisplay && bAnyVisionClient)
-		{
-			NDisplayBinder->RequestRgbFrame();
-		}
-		for (FRobotListener& Listener : RobotListeners)
-		{
-			if (Listener.Clients.IsEmpty()) continue;
-			if (bRequestRgb && !bUseNDisplay)
-			{
-				Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.LeftCamera);
-				if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
-				{
-					Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.RightCamera);
-				}
-			}
-			if (bRequestDepth)
-			{
-				Core->RequestNamedCameraReadback(Listener.ActorId, VisionConfig.RightCamera);
-			}
-		}
-	}
-
-	for (FRobotListener& Listener : RobotListeners)
-	{
-		if (Listener.Clients.IsEmpty()) continue;
-
-		FURSRobotState State;
-		if (!Core->GetRobotState(Listener.ActorId, State)) continue;
-
-		TArray<FString> RgbCameraNames{VisionConfig.LeftCamera};
-		if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
-		{
-			RgbCameraNames.Add(VisionConfig.RightCamera);
-		}
-
-		const uint64 NDisplaySequence = bUseNDisplay
-			? NDisplayBinder->GetLatestRgbFrameSequence()
-			: 0;
-		bool bRgbReady = bUseNDisplay
-			? NDisplaySequence > Listener.LastNDisplayRgbSequence
-			: true;
-		if (!bUseNDisplay)
-		{
-			for (const FString& CameraName : RgbCameraNames)
-			{
-				bRgbReady =
-					bRgbReady
-					&& Core->IsCameraFrameReady(Listener.ActorId, CameraName);
-			}
-		}
-		if (bRgbReady && !Listener.bRgbEncodeInFlight)
-		{
-			TArray<FURSRawRgbImage> RawImages;
-			bool bValidRgbSet = true;
-			uint64 CopiedNDisplaySequence = 0;
-			for (const FString& CameraName : RgbCameraNames)
-			{
-				const FURSCameraInfo* Info = FindCameraInfo(State, CameraName);
-				TArray<FColor> Pixels;
-				int32 Width = Info ? Info->Width : 0;
-				int32 Height = Info ? Info->Height : 0;
-				uint64 ImageNDisplaySequence = 0;
-				const bool bGotPixels = bUseNDisplay
-					? NDisplayBinder->CopyRgbFrame(
-						Listener.ActorId,
-						CameraName,
-						Listener.LastNDisplayRgbSequence,
-						Pixels,
-						Width,
-						Height,
-						ImageNDisplaySequence)
-					: Core->ConsumeCameraFrame(
-						Listener.ActorId,
-						CameraName,
-						Pixels);
-				if (!Info || !bGotPixels || Pixels.Num() != Width * Height
-					|| (bUseNDisplay && CopiedNDisplaySequence != 0
-						&& CopiedNDisplaySequence != ImageNDisplaySequence))
-				{
-					bValidRgbSet = false;
-					break;
-				}
-				CopiedNDisplaySequence = ImageNDisplaySequence;
-
-				FURSRawRgbImage& Raw = RawImages.AddDefaulted_GetRef();
-				Raw.CameraName = CameraName;
-				Raw.Width = static_cast<uint16>(Width);
-				Raw.Height = static_cast<uint16>(Height);
-				Raw.Pixels = MoveTemp(Pixels);
-			}
-
-			if (bValidRgbSet && RawImages.Num() == RgbCameraNames.Num()
-				&& AsyncVisionState.IsValid() && ImageWrapperModule)
-			{
-				if (bUseNDisplay)
-				{
-					Listener.LastNDisplayRgbSequence = CopiedNDisplaySequence;
-				}
-				Listener.bRgbEncodeInFlight = true;
-				const FString ActorId = Listener.ActorId;
-				const uint64 Generation = Listener.Generation;
-				const uint32 Sequence = Listener.NextRgbSequence++;
-				const double SimTime = State.SimTime;
-				const bool bUseJpeg = CameraCompress == TEXT("jpeg");
-				const int32 Quality = JpegQuality;
-				IImageWrapperModule* WrapperModule = ImageWrapperModule;
-				TSharedPtr<FAsyncVisionState, ESPMode::ThreadSafe> AsyncState =
-					AsyncVisionState;
-
-				Async(EAsyncExecution::ThreadPool,
-					[ActorId, Generation, Sequence, SimTime, bUseJpeg, Quality,
-					 WrapperModule, AsyncState, Images = MoveTemp(RawImages)]() mutable
-					{
-						const double EncodeStartSec = FPlatformTime::Seconds();
-						FCompletedVisionPacket Completed;
-						Completed.ActorId = ActorId;
-						Completed.ListenerGeneration = Generation;
-						Completed.FrameType = URSoccerLab::TcpProtocol::TypeRgb;
-
-						TArray<FURSImageEntry> Entries;
-						bool bSuccess = !Images.IsEmpty();
-						for (FURSRawRgbImage& Raw : Images)
-						{
-							FURSImageEntry& Entry = Entries.AddDefaulted_GetRef();
-							Entry.CameraName = MoveTemp(Raw.CameraName);
-							Entry.PixelFormat = URSoccerLab::TcpProtocol::PixelFormatBgra8;
-							Entry.Width = Raw.Width;
-							Entry.Height = Raw.Height;
-							Entry.UncompressedBytes =
-								static_cast<uint32>(Raw.Pixels.Num() * sizeof(FColor));
-
-							if (bUseJpeg)
-							{
-								TSharedPtr<IImageWrapper> Wrapper(
-									WrapperModule->CreateImageWrapper(EImageFormat::JPEG));
-								if (Wrapper.IsValid() && Wrapper->SetRaw(
-									reinterpret_cast<const uint8*>(Raw.Pixels.GetData()),
-									Entry.UncompressedBytes,
-									Raw.Width,
-									Raw.Height,
-									ERGBFormat::BGRA,
-									8))
-								{
-									Entry.Data = Wrapper->GetCompressed(Quality);
-									Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecJpeg;
-								}
-							}
-							else
-							{
-								Entry.Data.Append(
-									reinterpret_cast<const uint8*>(Raw.Pixels.GetData()),
-									Entry.UncompressedBytes);
-								Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
-							}
-							bSuccess = bSuccess && !Entry.Data.IsEmpty();
-							Completed.ImagePayloadBytes += Entry.Data.Num();
-						}
-
-						Completed.EntryCount = Entries.Num();
-						Completed.bSuccess = bSuccess;
-						if (bSuccess)
-						{
-							Completed.Payload =
-								BuildImageMessage(Sequence, SimTime, Entries);
-						}
-						Completed.EncodeSeconds =
-							FPlatformTime::Seconds() - EncodeStartSec;
-						if (AsyncState->bAcceptResults.Load())
-						{
-							AsyncState->CompletedPackets.Enqueue(MoveTemp(Completed));
-						}
-					});
-			}
-		}
-
-		if (VisionConfig.Mode != URSoccerLab::EURSVisionMode::Rgbd
-			|| Listener.bDepthEncodeInFlight
-			|| !Core->IsCameraFrameReady(Listener.ActorId, VisionConfig.RightCamera))
-		{
-			continue;
-		}
-
-		const FURSCameraInfo* Info = FindCameraInfo(State, VisionConfig.RightCamera);
-		TArray<float> DepthMeters;
-		if (!Info
-			|| !Core->ConsumeDepthCameraFrame(
-				Listener.ActorId, VisionConfig.RightCamera, DepthMeters)
-			|| DepthMeters.Num() != Info->Width * Info->Height)
-		{
-			continue;
-		}
-
-		if (AsyncVisionState.IsValid())
-		{
-			Listener.bDepthEncodeInFlight = true;
-			const FString ActorId = Listener.ActorId;
-			const uint64 Generation = Listener.Generation;
-			const uint32 Sequence = Listener.NextDepthSequence++;
-			const double SimTime = State.SimTime;
-			const FString Compression = DepthCompress;
-			const FString CameraName = VisionConfig.LeftCamera;
-			const uint16 Width = static_cast<uint16>(Info->Width);
-			const uint16 Height = static_cast<uint16>(Info->Height);
-			const double MaxDepthMeters = VisionConfig.Depth.MaxDepthMeters;
-			TSharedPtr<FAsyncVisionState, ESPMode::ThreadSafe> AsyncState =
-				AsyncVisionState;
-
-			Async(EAsyncExecution::ThreadPool,
-				[ActorId, Generation, Sequence, SimTime, Compression, CameraName,
-				 Width, Height, MaxDepthMeters, AsyncState,
-				 Depth = MoveTemp(DepthMeters)]() mutable
-				{
-					const double EncodeStartSec = FPlatformTime::Seconds();
-					FCompletedVisionPacket Completed;
-					Completed.ActorId = ActorId;
-					Completed.ListenerGeneration = Generation;
-					Completed.FrameType = URSoccerLab::TcpProtocol::TypeDepth;
-					Completed.EntryCount = 1;
-
-					FURSImageEntry Entry;
-					Entry.CameraName = CameraName;
-					Entry.Width = Width;
-					Entry.Height = Height;
-					if (Compression == TEXT("raw_f32"))
-					{
-						Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
-						Entry.PixelFormat =
-							URSoccerLab::TcpProtocol::PixelFormatDepthFloat32Meters;
-						Entry.UncompressedBytes =
-							static_cast<uint32>(Depth.Num() * sizeof(float));
-						Entry.Data.Append(
-							reinterpret_cast<const uint8*>(Depth.GetData()),
-							Entry.UncompressedBytes);
-					}
-					else
-					{
-						TArray<uint8> Quantized;
-						Quantized.SetNumUninitialized(Depth.Num() * sizeof(uint16));
-						const double MaxMillimeters = MaxDepthMeters * 1000.0;
-						for (int32 Index = 0; Index < Depth.Num(); ++Index)
-						{
-							const double Millimeters = FMath::IsFinite(Depth[Index])
-								? FMath::Clamp(
-									static_cast<double>(Depth[Index]) * 1000.0,
-									0.0,
-									MaxMillimeters)
-								: 0.0;
-							const uint16 Value =
-								static_cast<uint16>(FMath::RoundToInt(Millimeters));
-							Quantized[Index * 2] =
-								static_cast<uint8>(Value & 0xff);
-							Quantized[Index * 2 + 1] =
-								static_cast<uint8>((Value >> 8) & 0xff);
-						}
-
-						Entry.PixelFormat =
-							URSoccerLab::TcpProtocol::PixelFormatDepthUint16Millimeters;
-						Entry.UncompressedBytes =
-							static_cast<uint32>(Quantized.Num());
-						if (Compression == TEXT("zlib_u16_mm"))
-						{
-							int32 CompressedSize =
-								FCompression::CompressMemoryBound(
-									NAME_Zlib, Quantized.Num());
-							Entry.Data.SetNumUninitialized(CompressedSize);
-							if (FCompression::CompressMemory(
-								NAME_Zlib,
-								Entry.Data.GetData(),
-								CompressedSize,
-								Quantized.GetData(),
-								Quantized.Num(),
-								COMPRESS_BiasSpeed))
-							{
-								Entry.Data.SetNum(
-									CompressedSize, EAllowShrinking::No);
-								Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecZlib;
-							}
-							else
-							{
-								Entry.Data = MoveTemp(Quantized);
-								Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
-							}
-						}
-						else
-						{
-							Entry.Data = MoveTemp(Quantized);
-							Entry.Codec = URSoccerLab::TcpProtocol::ImageCodecRaw;
-						}
-					}
-
-					Completed.bSuccess = !Entry.Data.IsEmpty();
-					Completed.ImagePayloadBytes = Entry.Data.Num();
-					if (Completed.bSuccess)
-					{
-						TArray<FURSImageEntry> Entries{MoveTemp(Entry)};
-						Completed.Payload =
-							BuildImageMessage(Sequence, SimTime, Entries);
-					}
-					Completed.EncodeSeconds =
-						FPlatformTime::Seconds() - EncodeStartSec;
-					if (AsyncState->bAcceptResults.Load())
-					{
-						AsyncState->CompletedPackets.Enqueue(MoveTemp(Completed));
-					}
-				});
-		}
-	}
-}
-
-void UURSTcpTransportComponent::DrainCompletedVisionPackets()
-{
-	if (!AsyncVisionState.IsValid())
-	{
-		return;
-	}
-
-	FCompletedVisionPacket Completed;
-	while (AsyncVisionState->CompletedPackets.Dequeue(Completed))
-	{
-		FRobotListener* Listener = RobotListeners.FindByPredicate(
-			[&Completed](const FRobotListener& Candidate)
-			{
-				return Candidate.ActorId == Completed.ActorId
-					&& Candidate.Generation == Completed.ListenerGeneration;
-			});
-		if (!Listener)
-		{
-			continue;
-		}
-
-		if (Completed.FrameType == URSoccerLab::TcpProtocol::TypeRgb)
-		{
-			Listener->bRgbEncodeInFlight = false;
-		}
-		else if (Completed.FrameType == URSoccerLab::TcpProtocol::TypeDepth)
-		{
-			Listener->bDepthEncodeInFlight = false;
-		}
-
-		CameraStatsEncodeSec += Completed.EncodeSeconds;
-		if (!Completed.bSuccess || Completed.Payload.IsEmpty())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[URS TCP] Vision encode failed for '%s' (type=0x%02x)."),
-				*Completed.ActorId,
-				Completed.FrameType);
-			continue;
-		}
-
-		CameraStatsEntryCount += Completed.EntryCount;
-		CameraStatsPayloadBytes += Completed.ImagePayloadBytes;
-		++CameraStatsMessageCount;
-		if (!Listener->Clients.IsEmpty())
-		{
-			SendToClients(
-				*Listener,
-				Completed.FrameType,
-				Completed.Payload.GetData(),
-				Completed.Payload.Num());
-		}
-	}
-}
-
-
-
-
-FString UURSTcpTransportComponent::BuildStateJson(const FString& ActorId)
-{
-	FURSRobotState State;
-	if (!Core->GetRobotState(ActorId, State)) return TEXT("{}");
-
-	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetNumberField(TEXT("sim_time"), State.SimTime);
-	Root->SetBoolField(TEXT("command_timed_out"), State.bCommandTimedOut);
-
-	auto Gaussian = [this]() -> double
-	{
-		const double U1 = FMath::Max(NoiseRng.GetFraction(), 1e-7);
-		const double U2 = NoiseRng.GetFraction();
-		return FMath::Sqrt(-2.0 * FMath::Loge(U1)) * FMath::Cos(2.0 * UE_DOUBLE_PI * U2);
-	};
-	auto Noisy = [&Gaussian](double V, double Sigma) -> double
-	{
-		return Sigma > 0.0 ? V + Gaussian() * Sigma : V;
-	};
-
-	auto BaseObj = MakeShared<FJsonObject>();
-	BaseObj->SetArrayField(TEXT("pos"), {
-		MakeShared<FJsonValueNumber>(State.BasePos.X),
-		MakeShared<FJsonValueNumber>(State.BasePos.Y),
-		MakeShared<FJsonValueNumber>(State.BasePos.Z) });
-	FQuat Quat = State.BaseQuat;
-	if (State.Noise.ImuQuat > 0.0)
-	{
-		const double S = State.Noise.ImuQuat;
-		Quat.W += Gaussian() * S; Quat.X += Gaussian() * S;
-		Quat.Y += Gaussian() * S; Quat.Z += Gaussian() * S;
-		Quat.Normalize();
-	}
-	BaseObj->SetArrayField(TEXT("quat"), {
-		MakeShared<FJsonValueNumber>(Quat.W), MakeShared<FJsonValueNumber>(Quat.X),
-		MakeShared<FJsonValueNumber>(Quat.Y), MakeShared<FJsonValueNumber>(Quat.Z) });
-	TArray<TSharedPtr<FJsonValue>> VelArr;
-	for (int32 i = 0; i < State.BaseVel.Num(); ++i)
-	{
-		double V = State.BaseVel[i];
-		if (State.Noise.ImuAngVel > 0.0 && i >= 3) V += Gaussian() * State.Noise.ImuAngVel;
-		VelArr.Add(MakeShared<FJsonValueNumber>(V));
-	}
-	BaseObj->SetArrayField(TEXT("vel"), VelArr);
-	Root->SetObjectField(TEXT("base"), BaseObj);
-
-	TSharedPtr<FJsonObject> JointsObj = MakeShared<FJsonObject>();
-	for (int32 i = 0; i < State.JointNames.Num(); ++i)
-	{
-		auto JObj = MakeShared<FJsonObject>();
-		JObj->SetNumberField(TEXT("qpos"), Noisy(State.JointQpos.IsValidIndex(i) ? State.JointQpos[i] : 0, State.Noise.Qpos));
-		JObj->SetNumberField(TEXT("qvel"), Noisy(State.JointQvel.IsValidIndex(i) ? State.JointQvel[i] : 0, State.Noise.Qvel));
-		JointsObj->SetObjectField(State.JointNames[i], JObj);
-	}
-	Root->SetObjectField(TEXT("joints"), JointsObj);
-
-	TSharedPtr<FJsonObject> ActsObj = MakeShared<FJsonObject>();
-	for (int32 i = 0; i < State.ActuatorNames.Num(); ++i)
-	{
-		ActsObj->SetNumberField(State.ActuatorNames[i],
-			Noisy(State.MotorCommand.IsValidIndex(i) ? State.MotorCommand[i] : 0, State.Noise.Qtor));
-	}
-	Root->SetObjectField(TEXT("actuators"), ActsObj);
-
-	TArray<TSharedPtr<FJsonValue>> CamerasArr;
-	for (const FURSCameraInfo& Cam : State.Cameras)
-	{
-		auto CamObj = MakeShared<FJsonObject>();
-		CamObj->SetStringField(TEXT("name"), Cam.Name);
-		CamObj->SetNumberField(TEXT("width"), Cam.Width);
-		CamObj->SetNumberField(TEXT("height"), Cam.Height);
-		CamObj->SetStringField(TEXT("format"), Cam.Format);
-		CamerasArr.Add(MakeShared<FJsonValueObject>(CamObj));
-	}
-	Root->SetArrayField(TEXT("cameras"), CamerasArr);
-
-	if (State.bHasCameraImu)
-	{
-		FQuat HQ = State.HeadQuat;
-		if (State.Noise.CameraImuQuat > 0.0)
-		{
-			const double S = State.Noise.CameraImuQuat;
-			HQ.W += Gaussian() * S; HQ.X += Gaussian() * S;
-			HQ.Y += Gaussian() * S; HQ.Z += Gaussian() * S;
-			HQ.Normalize();
-		}
-		auto Imu = MakeShared<FJsonObject>();
-		Imu->SetArrayField(TEXT("quat"), {
-			MakeShared<FJsonValueNumber>(HQ.W), MakeShared<FJsonValueNumber>(HQ.X),
-			MakeShared<FJsonValueNumber>(HQ.Y), MakeShared<FJsonValueNumber>(HQ.Z) });
-		Imu->SetArrayField(TEXT("ang_vel"), {
-			MakeShared<FJsonValueNumber>(Noisy(State.HeadAngVel.X, State.Noise.CameraImuAngVel)),
-			MakeShared<FJsonValueNumber>(Noisy(State.HeadAngVel.Y, State.Noise.CameraImuAngVel)),
-			MakeShared<FJsonValueNumber>(Noisy(State.HeadAngVel.Z, State.Noise.CameraImuAngVel)) });
-		Root->SetObjectField(TEXT("camera_imu"), Imu);
-	}
-
-	if (State.bPrivSelfPos)
-		Root->SetArrayField(TEXT("self_pos"), {
-			MakeShared<FJsonValueNumber>(Noisy(State.SelfPos.X, State.Noise.SelfPos)),
-			MakeShared<FJsonValueNumber>(Noisy(State.SelfPos.Y, State.Noise.SelfPos)),
-			MakeShared<FJsonValueNumber>(Noisy(State.SelfPos.Z, State.Noise.SelfPos)) });
-	if (State.bPrivBallPosRelated)
-		Root->SetArrayField(TEXT("ball_pos_related"), {
-			MakeShared<FJsonValueNumber>(Noisy(State.BallPosRelated.X, State.Noise.BallPosRelated)),
-			MakeShared<FJsonValueNumber>(Noisy(State.BallPosRelated.Y, State.Noise.BallPosRelated)),
-			MakeShared<FJsonValueNumber>(Noisy(State.BallPosRelated.Z, State.Noise.BallPosRelated)) });
-	if (State.bPrivBallVelRelated)
-		Root->SetArrayField(TEXT("ball_vel_related"), {
-			MakeShared<FJsonValueNumber>(Noisy(State.BallVelRelated.X, State.Noise.BallVelRelated)),
-			MakeShared<FJsonValueNumber>(Noisy(State.BallVelRelated.Y, State.Noise.BallVelRelated)),
-			MakeShared<FJsonValueNumber>(Noisy(State.BallVelRelated.Z, State.Noise.BallVelRelated)) });
-	if (State.bPrivAllPos)
-	{
-		auto AllPosObj = MakeShared<FJsonObject>();
-		for (const auto& Pair : State.AllPos)
-		{
-			AllPosObj->SetArrayField(Pair.Key, {
-				MakeShared<FJsonValueNumber>(Noisy(Pair.Value.X, State.Noise.AllPos)),
-				MakeShared<FJsonValueNumber>(Noisy(Pair.Value.Y, State.Noise.AllPos)),
-				MakeShared<FJsonValueNumber>(Noisy(Pair.Value.Z, State.Noise.AllPos)) });
-		}
-		Root->SetObjectField(TEXT("all_pos"), AllPosObj);
-	}
-
-	FString Json;
-	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
-		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
-	FJsonSerializer::Serialize(Root.ToSharedRef(), W);
-	return Json;
 }

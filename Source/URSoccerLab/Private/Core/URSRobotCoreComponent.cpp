@@ -325,7 +325,12 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 			Ep.ActuatorNameToIndex.Add(CleanName, Ep.Actuators.Num());
 			Ep.Actuators.Add(MoveTemp(Info));
 		}
-		Ep.LatestCommand.Init(0.0f, Ep.Actuators.Num());
+		// Initialize command buffer with zeros
+		FCommandSet& InitCmd = Ep.CmdBuffer.Back();
+		FMemory::Memzero(InitCmd.Targets, sizeof(InitCmd.Targets));
+		InitCmd.TimestampSec = 0.0;
+		InitCmd.bValid = false;
+		Ep.CmdBuffer.Publish();
 
 		TArray<UMjJoint*> Joints = Articulation->GetJoints();
 		Joints.RemoveAll([](UMjJoint* J) { return !J || J->GetMjID() < 0; });
@@ -447,15 +452,10 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		}
 	}
 	{
-		// no lock needed;
-		// Bump sequence lock (odd = writing)
 		uint32 OldSeq = EndpointSeq.load(std::memory_order_relaxed);
 		EndpointSeq.store(OldSeq | 1, std::memory_order_release);
 		Endpoints = MoveTemp(NewEndpoints);
 		ActorRootBodyIds = MoveTemp(NewActorRootBodyIds);
-		Snapshots.Reset();
-		Snapshots.AddDefaulted(NewEndpointCount);
-		// Done (even = stable)
 		EndpointSeq.store(OldSeq + 2, std::memory_order_release);
 	}
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Endpoint cache rebuilt: %d robot(s)."), NewEndpointCount);
@@ -481,36 +481,30 @@ void UURSRobotCoreComponent::RegisterPhysicsCallbacks()
 
 void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 {
-	// Sequence lock: if EndpointSeq is odd, a rebuild is in progress.
-	// If it changes during our work, the data might be inconsistent — skip.
 	const uint32 Seq1 = EndpointSeq.load(std::memory_order_acquire);
 	if (Seq1 & 1) return;
 
-	PublishSnapshots(Model, Data);
-	ApplyControllerGains(Model);
+	const int32 N = Endpoints.Num();
+	for (int32 Ri = 0; Ri < N; ++Ri)
+	{
+		PublishSnapshot(Model, Data, Ri);
+		ApplyGains(Model);
+	}
 	ApplyPoseLocks(Model, Data);
 	ApplyCommands(FPlatformTime::Seconds());
 
-	const uint32 Seq2 = EndpointSeq.load(std::memory_order_acquire);
-	if (Seq1 != Seq2)
-	{
-		// Rebuild happened during this step — our writes may have gone to
-		// stale data. The next step will use the fresh endpoints.
-	}
+	(void)EndpointSeq.load(std::memory_order_acquire); // seq check
 }
 
-void UURSRobotCoreComponent::PublishSnapshots(mjModel* Model, mjData* Data)
+void UURSRobotCoreComponent::PublishSnapshot(mjModel* Model, mjData* Data, int32 Ri)
 {
-	const int32 NumRobots = FMath::Min(Endpoints.Num(), Snapshots.Num());
-	for (int32 Ri = 0; Ri < NumRobots; ++Ri)
-	{
-		const FRobotEndpoint& Ep = Endpoints[Ri];
-		FRobotSnapshot& S = Snapshots[Ri].Back();
-		S = FRobotSnapshot{}; // zero
+	FRobotEndpoint& Ep = Endpoints[Ri];
+	FRobotSnapshot& S = Ep.StateBuffer.Back();
+	S = FRobotSnapshot{};
 
-		S.SimTime = Data->time;
-		S.bCommandTimedOut = !Ep.bHasCommand.load(std::memory_order_acquire) ||
-			(FPlatformTime::Seconds() - Ep.LastCommandTimeSec.load(std::memory_order_acquire) > CommandTimeoutSec);
+	S.SimTime = Data->time;
+	const FCommandSet& Cmd = Ep.CmdBuffer.Front();
+	S.bCommandTimedOut = !Cmd.bValid || (FPlatformTime::Seconds() - Cmd.TimestampSec > CommandTimeoutSec);
 
 		// Base pose from body world transforms
 		if (Ep.RootBodyId > 0)
@@ -550,7 +544,7 @@ void UURSRobotCoreComponent::PublishSnapshots(mjModel* Model, mjData* Data)
 		for (int32 Ai = 0; Ai < S.ActuatorCount; ++Ai)
 		{
 			S.ActuatorCmds[Ai] = S.bCommandTimedOut ? 0.0 :
-				(Ai < Ep.LatestCommand.Num() ? Ep.LatestCommand[Ai] : 0.0);
+				(Ai < URS_MAX_ACTUATORS ? Cmd.Targets[Ai] : 0.0);
 		}
 
 		// Camera IMU
@@ -625,13 +619,12 @@ void UURSRobotCoreComponent::PublishSnapshots(mjModel* Model, mjData* Data)
 				const int32 P = Pair.Value * 3;
 				S.ActorPos[S.ActorCount][0] = Data->xpos[P];
 				S.ActorPos[S.ActorCount][1] = Data->xpos[P+1];
-				S.ActorPos[S.ActorCount][2] = Data->xpos[P+2];
-				++S.ActorCount;
-			}
+			S.ActorPos[S.ActorCount][2] = Data->xpos[P+2];
+			++S.ActorCount;
 		}
-
-		Snapshots[Ri].Publish();
 	}
+
+	Ep.StateBuffer.Publish();
 }
 
 void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
@@ -680,6 +673,8 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 		}
 
 		// Sync actuator targets so PD controllers don't fight
+		FCommandSet& SyncCmd = Ep.CmdBuffer.Back();
+		FMemory::Memzero(SyncCmd.Targets, sizeof(SyncCmd.Targets));
 		for (int32 Ai = 0; Ai < Ep.Actuators.Num(); ++Ai)
 		{
 			int32 Am = Ep.Actuators[Ai].MjId;
@@ -688,12 +683,13 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 			if (Jm < 0 || Jm >= Model->njnt) continue;
 			int32 Qa = Model->jnt_qposadr[Jm];
 			Data->ctrl[Am] = Data->qpos[Qa];
-			Ep.LatestCommand[Ai] = static_cast<float>(Data->qpos[Qa]);
+			SyncCmd.Targets[Ai] = static_cast<float>(Data->qpos[Qa]);
 			if (UMjActuator* Act = Ep.Actuators[Ai].Actuator.Get())
 				Act->SetNetworkControl(static_cast<float>(Data->qpos[Qa]));
 		}
-		Ep.LastCommandTimeSec.store(FPlatformTime::Seconds(), std::memory_order_release);
-		Ep.bHasCommand.store(true, std::memory_order_release);
+		SyncCmd.TimestampSec = FPlatformTime::Seconds();
+		SyncCmd.bValid = true;
+		Ep.CmdBuffer.Publish();
 
 		mj_forward(Model, Data);
 	}
@@ -745,19 +741,13 @@ void UURSRobotCoreComponent::ApplyCommands(double NowSec)
 
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		const bool bTimedOut = !Ep.bHasCommand.load(std::memory_order_acquire) ||
-			(NowSec - Ep.LastCommandTimeSec.load(std::memory_order_acquire) > CommandTimeoutSec);
+		const FCommandSet& Cmd = Ep.CmdBuffer.Front();
+		const bool bTimedOut = !Cmd.bValid ||
+			(NowSec - Cmd.TimestampSec > CommandTimeoutSec);
 		const int32 Count = FMath::Min(Ep.Actuators.Num(), MAX_CMD);
 
-		if (bTimedOut)
-		{
-			for (int32 i = 0; i < Count; ++i) CmdBuf[i] = 0.0f;
-		}
-		else
-		{
-			for (int32 i = 0; i < Count; ++i)
-				CmdBuf[i] = i < Ep.LatestCommand.Num() ? Ep.LatestCommand[i] : 0.0f;
-		}
+		for (int32 i = 0; i < Count; ++i)
+			CmdBuf[i] = bTimedOut ? 0.0f : Cmd.Targets[i];
 
 		for (int32 Idx = 0; Idx < Count; ++Idx)
 		{
@@ -769,25 +759,23 @@ void UURSRobotCoreComponent::ApplyCommands(double NowSec)
 	}
 }
 
-void UURSRobotCoreComponent::ApplyControllerGains(mjModel* Model)
+void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 {
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		if (!Ep.bGainsDirty.load(std::memory_order_acquire)) continue;
-		Ep.bGainsDirty.store(false, std::memory_order_release);
+		const FGainSet& G = Ep.GainBuffer.Front();
+		if (!G.bValid) continue;
 
-		const bool bTorque = (Ep.ActuatorMode == FRobotEndpoint::EURSActuatorMode::Torque);
+		const bool bTorque = (G.Mode == 1);
 
-		for (const FActuatorInfo& Info : Ep.Actuators)
+		for (int32 Idx = 0; Idx < Ep.Actuators.Num(); ++Idx)
 		{
-			const int32 Am = Info.MjId;
+			const int32 Am = Ep.Actuators[Idx].MjId;
 			if (Am < 0 || Am >= Model->nu) continue;
+			if (Idx >= URS_MAX_ACTUATORS) continue;
 
 			mjtNum* gp = Model->actuator_gainprm + Am * mjNGAIN;
 			mjtNum* bp = Model->actuator_biasprm + Am * mjNBIAS;
-
-			const int32 Idx = Ep.Actuators.IndexOfByPredicate([&](const FActuatorInfo& A) { return A.MjId == Am; });
-			if (Idx < 0 || Idx >= FRobotEndpoint::MAX_GAINS) continue;
 
 			if (bTorque)
 			{
@@ -797,70 +785,33 @@ void UURSRobotCoreComponent::ApplyControllerGains(mjModel* Model)
 			}
 			else
 			{
-				const double Kp = Ep.KpArr[Idx];
-				const double Kv = Ep.KvArr[Idx];
-				const double Damp = Ep.DampingArr[Idx];
-				gp[0] = Kp;
-				bp[1] = -Kp;
-				bp[2] = -(Kv + Damp);
+				gp[0] = G.Kp[Idx];
+				bp[1] = -G.Kp[Idx];
+				bp[2] = -(G.Kv[Idx] + G.Damping[Idx]);
 			}
 		}
-	}
-}
 
-void UURSRobotCoreComponent::SubmitControllerParams(
-	const FString& ActorId,
-	const TMap<FString, double>* Kp,
-	const TMap<FString, double>* Kv,
-	const TMap<FString, double>* Damping,
-	const FString* ActuatorMode)
-{
-	FRobotEndpoint* Ep = FindEndpoint(ActorId);
-	if (!Ep) return;
-
-	const int32 N = FMath::Min(Ep->Actuators.Num(), (int32)FRobotEndpoint::MAX_GAINS);
-	for (int32 i = 0; i < N; ++i)
-	{
-		const FString& Name = Ep->Actuators[i].Name;
-		if (Kp)      Ep->KpArr[i]      = Kp->FindRef(Name);
-		if (Kv)      Ep->KvArr[i]      = Kv->FindRef(Name);
-		if (Damping) Ep->DampingArr[i] = Damping->FindRef(Name);
+		// Consume the gain set so we don't apply it every step
+		Ep.GainBuffer.Back() = FGainSet{};
+		Ep.GainBuffer.Publish(); // clear by publishing empty
 	}
-	if (ActuatorMode)
-	{
-		if (*ActuatorMode == TEXT("position"))
-			Ep->ActuatorMode = FRobotEndpoint::EURSActuatorMode::Position;
-		else if (*ActuatorMode == TEXT("torque"))
-			Ep->ActuatorMode = FRobotEndpoint::EURSActuatorMode::Torque;
-	}
-	Ep->bGainsDirty.store(true, std::memory_order_release);
 }
 
 TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 {
-	// no lock needed;
 	TArray<FString> Ids;
 	Ids.Reserve(Endpoints.Num());
 	for (const FRobotEndpoint& Ep : Endpoints)
-	{
 		Ids.Add(Ep.ActorId);
-	}
 	return Ids;
 }
 
 bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotState& OutState)
 {
-	// Find endpoint index and read the lock-free triple-buffer snapshot.
-	int32 Ri = INDEX_NONE;
-	{
-		// no lock needed;
-		const FRobotEndpoint* Ep = FindEndpoint(ActorId);
-		if (!Ep) return false;
-		Ri = Endpoints.IndexOfByPredicate([&](const FRobotEndpoint& E) { return &E == Ep; });
-	}
-	if (Ri == INDEX_NONE || !Snapshots.IsValidIndex(Ri)) return false;
+	int32 Ri = FindEndpointIndex(ActorId);
+	if (Ri == INDEX_NONE) return false;
 
-	const FRobotSnapshot& S = Snapshots[Ri].Front();
+	const FRobotSnapshot& S = Endpoints[Ri].StateBuffer.Front();
 
 	// Dynamic data from snapshot (lock-free read)
 	OutState = FURSRobotState();
@@ -969,31 +920,53 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 
 void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FString, float>& NamedValues)
 {
-	// No lock — LatestCommand values are plain floats (atomic on x86),
-	// bHasCommand / LastCommandTimeSec are std::atomic.
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
-
-	Ep->LastNamedValues = NamedValues;
-
-	bool bChangedAny = false;
+	FCommandSet& Cmd = Ep->CmdBuffer.Back();
+	const FCommandSet& Old = Ep->CmdBuffer.Front(); // preserve existing targets
+	FMemory::Memcpy(Cmd.Targets, Old.Targets, sizeof(Cmd.Targets));
 	for (const auto& Pair : NamedValues)
 	{
 		if (const int32* Idx = Ep->ActuatorNameToIndex.Find(Pair.Key))
-		{
-			if (FMath::IsFinite(Pair.Value))
-			{
-				Ep->LatestCommand[*Idx] = Pair.Value;
-				bChangedAny = true;
-			}
-		}
+			if (*Idx < URS_MAX_ACTUATORS && FMath::IsFinite(Pair.Value))
+				Cmd.Targets[*Idx] = Pair.Value;
 	}
+	Cmd.TimestampSec = FPlatformTime::Seconds();
+	Cmd.bValid = true;
+	Ep->CmdBuffer.Publish();
+}
 
-	if (bChangedAny)
+void UURSRobotCoreComponent::SubmitControllerParams(
+	const FString& ActorId,
+	const TMap<FString, double>* Kp,
+	const TMap<FString, double>* Kv,
+	const TMap<FString, double>* Damping,
+	const FString* ActuatorMode)
+{
+	FRobotEndpoint* Ep = FindEndpoint(ActorId);
+	if (!Ep) return;
+	FGainSet& G = Ep->GainBuffer.Back();
+	G = FGainSet{};
+	const int32 N = FMath::Min(Ep->Actuators.Num(), URS_MAX_ACTUATORS);
+	for (int32 i = 0; i < N; ++i)
 	{
-		Ep->LastCommandTimeSec.store(FPlatformTime::Seconds(), std::memory_order_release);
-		Ep->bHasCommand.store(true, std::memory_order_release);
+		const FString& Name = Ep->Actuators[i].Name;
+		if (Kp)      G.Kp[i]      = Kp->FindRef(Name);
+		if (Kv)      G.Kv[i]      = Kv->FindRef(Name);
+		if (Damping) G.Damping[i] = Damping->FindRef(Name);
 	}
+	if (ActuatorMode)
+		G.Mode = (*ActuatorMode == TEXT("torque")) ? 1 : 0;
+	G.bValid = true;
+	Ep->GainBuffer.Publish();
+}
+
+
+int32 UURSRobotCoreComponent::FindEndpointIndex(const FString& ActorId) const
+{
+	for (int32 i = 0; i < Endpoints.Num(); ++i)
+		if (Endpoints[i].ActorId == ActorId) return i;
+	return INDEX_NONE;
 }
 
 bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
@@ -1341,6 +1314,8 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 		// mj_forward so that derived quantities are consistent.
 		if (JointQpos)
 		{
+			FCommandSet& SyncCmd = Ep->CmdBuffer.Back();
+			FMemory::Memzero(SyncCmd.Targets, sizeof(SyncCmd.Targets));
 			for (int32 ActIdx = 0; ActIdx < Ep->Actuators.Num(); ++ActIdx)
 			{
 				int32 ActMjId = Ep->Actuators[ActIdx].MjId;
@@ -1350,14 +1325,13 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 				int32 QposAdr = Model->jnt_qposadr[JointMjId];
 				float Target = static_cast<float>(Data->qpos[QposAdr]);
 				Data->ctrl[ActMjId] = Target;
-				Ep->LatestCommand[ActIdx] = Target;
+				SyncCmd.Targets[ActIdx] = Target;
 				if (UMjActuator* Act = Ep->Actuators[ActIdx].Actuator.Get())
-				{
 					Act->SetNetworkControl(Target);
-				}
 			}
-			Ep->LastCommandTimeSec.store(FPlatformTime::Seconds(), std::memory_order_release);
-			Ep->bHasCommand.store(true, std::memory_order_release);
+			SyncCmd.TimestampSec = FPlatformTime::Seconds();
+			SyncCmd.bValid = true;
+			Ep->CmdBuffer.Publish();
 		}
 
 		mj_forward(Model, Data);

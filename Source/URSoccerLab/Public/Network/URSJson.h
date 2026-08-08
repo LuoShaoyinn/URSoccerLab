@@ -6,7 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "URSSnapshot.h"
-#include "URSBuffers.h"
+#include "Core/URSBuffers.h"
 
 struct yyjson_doc;
 struct yyjson_mut_doc;
