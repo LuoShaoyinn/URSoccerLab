@@ -72,16 +72,20 @@ void URSNetworkThread::EnqueueCameraFrame(int32 RobotIdx, uint8 FrameType,
 
 uint32 URSNetworkThread::FRunnableImpl::Run()
 {
-	const double Interval = Owner->StateRateHz > 0 ? 1.0 / Owner->StateRateHz : 0.001;
-	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop start: interval=%.4f stateHz=%.1f"), Interval, Owner->StateRateHz);
+	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop start"));
 	uint32 LoopCount = 0;
 	while (Owner->bRunning.load(std::memory_order_acquire))
 	{
-		Owner->Tick();
+		// Minimal loop: publish state + flush
+		Owner->PublishStates();
+		Owner->FlushWrites();
+		Owner->AcceptConnections();
 		++LoopCount;
-		if (LoopCount == 10)
-			UE_LOG(LogTemp, Warning, TEXT("[NET] 10 loops done"));
-		FPlatformProcess::Sleep(Interval);
+		if (LoopCount % 300 == 0)
+			UE_LOG(LogTemp, Warning, TEXT("[NET] %d loops, %d endpoints, clients=%d"),
+				LoopCount, (int32)Owner->Endpoints.Num(),
+				Owner->Endpoints.Num() > 0 ? Owner->Endpoints[0].Clients.Num() : -1);
+		FPlatformProcess::Sleep(0.016);
 	}
 	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop exit: %d total loops"), LoopCount);
 	return 0;
@@ -101,6 +105,16 @@ void URSNetworkThread::AcceptConnections()
 {
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
+		if (!Ep.Listener.IsValid())
+		{
+			static bool bLogged = false;
+			if (!bLogged)
+			{
+				bLogged = true;
+				UE_LOG(LogTemp, Error, TEXT("[NET] Listener INVALID for %s"), *Ep.ActorId);
+			}
+			continue;
+		}
 		while (Ep.Listener.HasNewConnection())
 		{
 			FRobotEndpoint::FClient NewClient;
@@ -108,6 +122,8 @@ void URSNetworkThread::AcceptConnections()
 			{
 				NewClient.bConnected = true;
 				Ep.Clients.Add(MoveTemp(NewClient));
+				UE_LOG(LogTemp, Warning, TEXT("[NET] Accepted client for %s, total=%d"),
+					*Ep.ActorId, Ep.Clients.Num());
 			}
 		}
 	}
@@ -248,13 +264,13 @@ void URSNetworkThread::PublishStates()
 	{
 		if (Ep.Clients.Num() == 0) continue;
 
-		// TEMP: hardcoded JSON to isolate BuildStateJson issues
-		static const uint8 HardcodedJson[] = "{\"sim_time\":1.0,\"command_timed_out\":false}";
-		const int32 JsonLen = sizeof(HardcodedJson) - 1;
+		const FRobotSnapshot& Snap = Ep.StateBuf->Front();
+		TArray<uint8> Json = URSJsonBuilder::BuildStateJson(Snap, Ep.Meta);
+
 		for (auto& Client : Ep.Clients)
 		{
 			if (Client.bConnected)
-				EnqueueFrame(Client.WriteBuf, 0x00, HardcodedJson, JsonLen);
+				EnqueueFrame(Client.WriteBuf, 0x00, Json.GetData(), Json.Num());
 		}
 	}
 }
