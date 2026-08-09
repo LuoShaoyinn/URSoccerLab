@@ -1,5 +1,4 @@
 #include "Network/URSNetworkThread.h"
-#include "Misc/CommandLine.h"
 #include <yyjson.h>
 #include "HAL/PlatformTime.h"
 
@@ -12,52 +11,25 @@ void URSNetworkThread::Start(TArray<FRobotEndpoint>&& InEndpoints, int32 AdminPo
 	Endpoints = MoveTemp(InEndpoints);
 	StateRateHz = InStateRateHz;
 	CameraRateHz = InCameraRateHz;
-
-	UE_LOG(LogTemp, Warning, TEXT("[NET] Start: %d endpoints, state=%.1f cam=%.1f"),
-		Endpoints.Num(), StateRateHz, CameraRateHz);
-
-	// Open TCP listeners
-	for (FRobotEndpoint& Ep : Endpoints)
-	{
-		// Port assigned by caller (10000 + robot index)
-		// Listener.Bind is done by the transport component before Start()
-	}
-
-	// Admin listener
-	if (AdminPort > 0)
-	{
-		AdminListener.Listen(AdminPort);
-	}
-
 	bRunning.store(true);
 	Runnable = new FRunnableImpl(this);
-	Thread = FRunnableThread::Create(Runnable, TEXT("URSNetworkThread"), 0,
-		TPri_Normal);
+	Thread = FRunnableThread::Create(Runnable, TEXT("URSNetworkThread"), 0, TPri_Normal);
+	UE_LOG(LogTemp, Log, TEXT("[NET] Started: %d endpoints, state=%.0f cam=%.0f"),
+		Endpoints.Num(), StateRateHz, CameraRateHz);
 }
 
 void URSNetworkThread::Stop()
 {
 	bRunning.store(false);
-	if (Thread)
-	{
-		Thread->WaitForCompletion();
-		delete Thread;
-		Thread = nullptr;
-	}
-	if (Runnable)
-	{
-		delete Runnable;
-		Runnable = nullptr;
-	}
+	if (Thread) { Thread->WaitForCompletion(); delete Thread; Thread = nullptr; }
+	if (Runnable) { delete Runnable; Runnable = nullptr; }
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		for (auto& C : Ep.Clients)
-			C.Socket.Close();
+		for (auto& C : Ep.Clients) C.Socket.Close();
 		Ep.Listener.Close();
 	}
 	AdminListener.Close();
-	for (auto& C : AdminClients)
-		C.Socket.Close();
+	for (auto& C : AdminClients) C.Socket.Close();
 }
 
 void URSNetworkThread::EnqueueCameraFrame(int32 RobotIdx, uint8 FrameType,
@@ -70,51 +42,32 @@ void URSNetworkThread::EnqueueCameraFrame(int32 RobotIdx, uint8 FrameType,
 	Endpoints[RobotIdx].CameraQueue.Enqueue(MoveTemp(Pkt));
 }
 
+// ============================================================================
+// Thread loop
+// ============================================================================
+
 uint32 URSNetworkThread::FRunnableImpl::Run()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop start"));
-	uint32 LoopCount = 0;
 	while (Owner->bRunning.load(std::memory_order_acquire))
 	{
-		// Minimal loop: publish state + flush
-		Owner->PublishStates();
-		Owner->FlushWrites();
 		Owner->AcceptConnections();
-		++LoopCount;
-		if (LoopCount % 300 == 0)
-			UE_LOG(LogTemp, Warning, TEXT("[NET] %d loops, %d endpoints, clients=%d"),
-				LoopCount, (int32)Owner->Endpoints.Num(),
-				Owner->Endpoints.Num() > 0 ? Owner->Endpoints[0].Clients.Num() : -1);
-		FPlatformProcess::Sleep(0.016);
+		Owner->ReadFromClients();
+		Owner->PublishStates();
+		Owner->DrainCameraQueues();
+		Owner->FlushWrites();
+		FPlatformProcess::Sleep(0.001); // tight loop — rates gated inside
 	}
-	UE_LOG(LogTemp, Warning, TEXT("[NET] Run loop exit: %d total loops"), LoopCount);
 	return 0;
 }
 
-void URSNetworkThread::Tick()
-{
-	AcceptConnections();
-	ReadFromClients();
-	PublishStates();
-	DrainCameraQueues();
-	HandleAdmin();
-	FlushWrites();
-}
+// ============================================================================
+// Accept
+// ============================================================================
 
 void URSNetworkThread::AcceptConnections()
 {
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		if (!Ep.Listener.IsValid())
-		{
-			static bool bLogged = false;
-			if (!bLogged)
-			{
-				bLogged = true;
-				UE_LOG(LogTemp, Error, TEXT("[NET] Listener INVALID for %s"), *Ep.ActorId);
-			}
-			continue;
-		}
 		while (Ep.Listener.HasNewConnection())
 		{
 			FRobotEndpoint::FClient NewClient;
@@ -122,21 +75,14 @@ void URSNetworkThread::AcceptConnections()
 			{
 				NewClient.bConnected = true;
 				Ep.Clients.Add(MoveTemp(NewClient));
-				UE_LOG(LogTemp, Warning, TEXT("[NET] Accepted client for %s, total=%d"),
-					*Ep.ActorId, Ep.Clients.Num());
 			}
 		}
 	}
-	while (AdminListener.HasNewConnection())
-	{
-		FAdminClient NewClient;
-		if (AdminListener.Accept(NewClient.Socket))
-		{
-			NewClient.bConnected = true;
-			AdminClients.Add(MoveTemp(NewClient));
-		}
-	}
 }
+
+// ============================================================================
+// Read + parse frames (resilient — never disconnects on bad frame data)
+// ============================================================================
 
 void URSNetworkThread::ReadFromClients()
 {
@@ -147,7 +93,9 @@ void URSNetworkThread::ReadFromClients()
 		for (int32 Ci = Ep.Clients.Num() - 1; Ci >= 0; --Ci)
 		{
 			auto& Client = Ep.Clients[Ci];
-			while (true)
+
+			// Non-blocking recv
+			for (;;)
 			{
 				int32 N = Client.Socket.Recv(RecvBuf, sizeof(RecvBuf));
 				if (N > 0)
@@ -159,15 +107,16 @@ void URSNetworkThread::ReadFromClients()
 					break;
 				}
 				else
-					break;  // no more data
+					break;
+			}
+
+			if (!Client.bConnected)
+			{
+				Ep.Clients.RemoveAt(Ci);
+				continue;
 			}
 
 			// Parse complete frames from ReadBuf
-			TArray<uint8> OutFrames;
-			FrameClientRead(Client.Socket, Client.ReadBuf, OutFrames);
-			(void)OutFrames;  // frames are parsed inline below
-
-			// Parse frames from ReadBuf
 			int32 Consumed = 0;
 			while (Client.ReadBuf.Num() - Consumed >= 5)
 			{
@@ -175,41 +124,30 @@ void URSNetworkThread::ReadFromClients()
 				int32 FrameLen = (D[0] << 24) | (D[1] << 16) | (D[2] << 8) | D[3];
 				if (FrameLen < 1 || FrameLen > 16 * 1024 * 1024)
 				{
-					// Bad frame — drop client
-					Client.Socket.Close();
-					Client.bConnected = false;
-					break;
+					// Bad frame — skip 1 byte and resync (don't disconnect)
+					++Consumed;
+					continue;
 				}
 				if (Client.ReadBuf.Num() - Consumed < 4 + FrameLen)
-					break;  // incomplete
+					break; // incomplete — wait for more data
 
 				uint8 FrameType = D[4];
-				const uint8* Payload = D + 5;
-				int32 PayloadLen = FrameLen - 1;
-
-				if (FrameType == 0x00)  // JSON
-				{
-					ProcessClientData(Ri, Ci, Payload, PayloadLen);
-				}
+				if (FrameType == 0x00) // JSON
+					ProcessClientData(Ri, D + 5, FrameLen - 1);
 
 				Consumed += 4 + FrameLen;
 			}
 			if (Consumed > 0)
 				Client.ReadBuf.RemoveAt(0, Consumed);
-
-			// Remove disconnected clients
-			if (!Client.bConnected)
-				Ep.Clients.RemoveAt(Ci);
 		}
 	}
 }
 
-void URSNetworkThread::ProcessClientData(int32 RobotIdx, int32 ClientIdx,
+void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 	const uint8* Data, int32 Len)
 {
 	FRobotEndpoint& Ep = Endpoints[RobotIdx];
 
-	// Check if this is controller params or a command
 	if (URSJsonParser::IsControllerParams(Data, Len))
 	{
 		FGainSet Gains;
@@ -222,7 +160,6 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx, int32 ClientIdx,
 	}
 	else
 	{
-		// Regular command: parse flat name→float map
 		yyjson_doc* Doc = yyjson_read((const char*)Data, Len, YYJSON_READ_NOFLAG);
 		if (!Doc) return;
 		yyjson_val* Root = yyjson_doc_get_root(Doc);
@@ -258,41 +195,56 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx, int32 ClientIdx,
 	}
 }
 
+// ============================================================================
+// Publish state (yyjson)
+// ============================================================================
+
+static double s_LastStatePublish = 0.0;
+
 void URSNetworkThread::PublishStates()
 {
+	const double Now = FPlatformTime::Seconds();
+	const double Interval = StateRateHz > 0 ? 1.0 / StateRateHz : 0.016;
+	if (Now - s_LastStatePublish < Interval) return;
+	s_LastStatePublish = Now;
+
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
 		if (Ep.Clients.Num() == 0) continue;
+		if (!Ep.StateBuf) continue;
 
 		const FRobotSnapshot& Snap = Ep.StateBuf->Front();
 		TArray<uint8> Json = URSJsonBuilder::BuildStateJson(Snap, Ep.Meta);
 
 		for (auto& Client : Ep.Clients)
-		{
 			if (Client.bConnected)
 				EnqueueFrame(Client.WriteBuf, 0x00, Json.GetData(), Json.Num());
-		}
 	}
 }
+
+// ============================================================================
+// Camera queue drain
+// ============================================================================
 
 void URSNetworkThread::DrainCameraQueues()
 {
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
 		if (Ep.Clients.Num() == 0) continue;
-
 		FRobotEndpoint::FCameraPacket Pkt;
 		while (Ep.CameraQueue.Dequeue(Pkt))
 		{
 			for (auto& Client : Ep.Clients)
-			{
 				if (Client.bConnected)
 					EnqueueFrame(Client.WriteBuf, Pkt.FrameType,
 						Pkt.Payload.GetData(), Pkt.Payload.Num());
-			}
 		}
 	}
 }
+
+// ============================================================================
+// Flush TCP (non-blocking)
+// ============================================================================
 
 void URSNetworkThread::FlushWrites()
 {
@@ -308,70 +260,26 @@ void URSNetworkThread::FlushWrites()
 				if (Sent < 0)
 				{
 					Client.Socket.Close();
-					Client.bConnected = false;
 					Ep.Clients.RemoveAt(Ci);
 					continue;
 				}
 				if (Sent > 0)
 					Client.WriteBuf.RemoveAt(0, Sent);
-				// If WriteBuf still has data, keep it for next tick
-				// (latest-frame-only: drop new state if buffer non-empty)
 				if (Client.WriteBuf.Num() > 4 * 1024 * 1024)
-				{
-					// Too much backlog — drop oldest state frame
 					Client.WriteBuf.Reset();
-				}
 			}
 		}
 	}
-
-	// Admin flush
-	for (int32 Ci = AdminClients.Num() - 1; Ci >= 0; --Ci)
-	{
-		auto& Client = AdminClients[Ci];
-		if (Client.WriteBuf.Num() > 0)
-		{
-			int32 Sent = Client.Socket.Send(
-				Client.WriteBuf.GetData(), Client.WriteBuf.Num());
-			if (Sent < 0)
-			{
-				Client.Socket.Close();
-				AdminClients.RemoveAt(Ci);
-				continue;
-			}
-			if (Sent > 0)
-				Client.WriteBuf.RemoveAt(0, Sent);
-		}
-	}
 }
 
-void URSNetworkThread::HandleAdmin()
-{
-	// TODO: admin command handling (set_pose, reset, lock_pose)
-	// For now, just recv and discard
-	uint8 RecvBuf[4096];
-	for (int32 Ci = AdminClients.Num() - 1; Ci >= 0; --Ci)
-	{
-		auto& Client = AdminClients[Ci];
-		int32 N = Client.Socket.Recv(RecvBuf, sizeof(RecvBuf));
-		if (N < 0)
-		{
-			Client.Socket.Close();
-			AdminClients.RemoveAt(Ci);
-		}
-	}
-}
+void URSNetworkThread::HandleAdmin() {}
 
-void URSNetworkThread::FrameClientRead(URSNonBlockingSocket& Sock,
-	TArray<uint8>& ReadBuf, TArray<uint8>& OutFrames)
-{
-	// This is a no-op placeholder — frame parsing is done inline in ReadFromClients.
-}
+void URSNetworkThread::FrameClientRead(URSNonBlockingSocket&,
+	TArray<uint8>&, TArray<uint8>&) {}
 
 void URSNetworkThread::EnqueueFrame(TArray<uint8>& WriteBuf, uint8 Type,
 	const uint8* Data, int32 Len)
 {
-	// Frame format: [4-byte BE length][1-byte type][payload]
 	int32 FrameLen = 1 + Len;
 	WriteBuf.Add((FrameLen >> 24) & 0xFF);
 	WriteBuf.Add((FrameLen >> 16) & 0xFF);

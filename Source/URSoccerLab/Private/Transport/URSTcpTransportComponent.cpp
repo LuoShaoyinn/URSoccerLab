@@ -286,38 +286,36 @@ void UURSTcpTransportComponent::TickCameraCapture()
 			Payload.Append((uint8*)NameConv.Get(), NameLen);
 
 			uint8 Codec = (CameraCompress == TEXT("jpeg")) ? 0x01 : 0x00;
-			Payload.Add(Codec); // codec
-			Payload.Add(0x00);  // pixel format (BGRA8)
-			Payload.Add(0x00);  // reserved
+			Payload.Add(Codec);
+			Payload.Add(0x00); // pixel format BGRA8
+			Payload.Add(0x00); // reserved
 
 			uint16 W = (uint16)Img.Width, H = (uint16)Img.Height;
 			Payload.Append((uint8*)&W, 2);
 			Payload.Append((uint8*)&H, 2);
 
+			uint32 RawLen = Img.Pixels.Num() * 4;
+			uint32 DataLen = RawLen;
+			const uint8* DataPtr = (const uint8*)Img.Pixels.GetData();
+
 			if (Codec == 0x01 && ImageWrapperModule)
 			{
-				// JPEG encode
 				TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule->CreateImageWrapper(EImageFormat::JPEG);
 				if (Wrapper.IsValid() && Wrapper->SetRaw(Img.Pixels.GetData(), Img.Pixels.Num() * 4,
 					Img.Width, Img.Height, ERGBFormat::BGRA, 8))
 				{
 					TArray64<uint8> JpegData = Wrapper->GetCompressed(JpegQuality);
-					uint32 RawLen = Img.Pixels.Num() * 4;
-					uint32 DataLen = JpegData.Num();
-					Payload.Append((uint8*)&RawLen, 4);
-					Payload.Append((uint8*)&DataLen, 4);
-					Payload.Append(JpegData.GetData(), JpegData.Num());
+					if (JpegData.Num() > 0)
+					{
+						DataLen = JpegData.Num();
+						DataPtr = JpegData.GetData();
+					}
 				}
 			}
-			else
-			{
-				// Raw BGRA
-				uint32 RawLen = Img.Pixels.Num() * 4;
-				uint32 DataLen = RawLen;
-				Payload.Append((uint8*)&RawLen, 4);
-				Payload.Append((uint8*)&DataLen, 4);
-				Payload.Append((uint8*)Img.Pixels.GetData(), DataLen);
-			}
+
+			Payload.Append((uint8*)&RawLen, 4);
+			Payload.Append((uint8*)&DataLen, 4);
+			Payload.Append(DataPtr, DataLen);
 		}
 
 		// Push to network thread

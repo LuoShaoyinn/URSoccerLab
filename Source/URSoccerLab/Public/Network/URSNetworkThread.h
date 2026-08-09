@@ -106,7 +106,7 @@ private:
 	void Tick();
 	void AcceptConnections();
 	void ReadFromClients();
-	void ProcessClientData(int32 RobotIdx, int32 ClientIdx, const uint8* Data, int32 Len);
+	void ProcessClientData(int32 RobotIdx, const uint8* Data, int32 Len);
 	void PublishStates();
 	void DrainCameraQueues();
 	void FlushWrites();
