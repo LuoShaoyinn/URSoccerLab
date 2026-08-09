@@ -66,7 +66,7 @@ class FrameConn:
         if not self._alive:
             return False
         try:
-            for _ in range(8):
+            for _ in range(32):
                 chunk = self.sock.recv(131072)
                 if not chunk:
                     self._alive = False
@@ -257,12 +257,18 @@ class RobotClient:
             if ftype == TYPE_JSON:
                 yield "state", json.loads(payload.decode("utf-8"))
             elif ftype == TYPE_RGB:
-                if payload and payload[0] == IMAGE_MESSAGE_VERSION:
-                    yield "rgb", parse_image_message(payload)
-                else:
-                    yield "camera", parse_camera(payload)
+                try:
+                    if payload and payload[0] == IMAGE_MESSAGE_VERSION:
+                        yield "rgb", parse_image_message(payload)
+                    else:
+                        yield "camera", parse_camera(payload)
+                except (ValueError, IndexError):
+                    pass
             elif ftype == TYPE_DEPTH:
-                yield "depth", parse_image_message(payload)
+                try:
+                    yield "depth", parse_image_message(payload)
+                except (ValueError, IndexError):
+                    pass
 
     def close(self):
         self.conn.close()

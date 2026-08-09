@@ -1,4 +1,5 @@
 #include "Transport/URSTcpTransportComponent.h"
+#include "ImageCore.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "Core/URSRobotCoreComponent.h"
 #include "NDisplay/URSDisplayClusterCameraBinderComponent.h"
@@ -282,37 +283,48 @@ void UURSTcpTransportComponent::TickCameraCapture()
 		{
 			FTCHARToUTF8 NameConv(*Img.Name);
 			uint8 NameLen = (uint8)NameConv.Length();
-			Payload.Add(NameLen);
-			Payload.Append((uint8*)NameConv.Get(), NameLen);
 
-			uint8 Codec = (CameraCompress == TEXT("jpeg")) ? 0x01 : 0x00;
-			Payload.Add(Codec);
-			Payload.Add(0x00); // pixel format BGRA8
-			Payload.Add(0x00); // reserved
-
-			uint16 W = (uint16)Img.Width, H = (uint16)Img.Height;
-			Payload.Append((uint8*)&W, 2);
-			Payload.Append((uint8*)&H, 2);
-
+			// Encode JPEG first (if requested)
 			uint32 RawLen = Img.Pixels.Num() * 4;
 			uint32 DataLen = RawLen;
 			const uint8* DataPtr = (const uint8*)Img.Pixels.GetData();
+			uint8 Codec = 0x00; // default raw
 
-			if (Codec == 0x01 && ImageWrapperModule)
+			// Check pixel validity
+			bool bPixelsValid = false;
+			if (Img.Pixels.Num() == Img.Width * Img.Height && Img.Pixels.Num() > 0)
 			{
-				TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule->CreateImageWrapper(EImageFormat::JPEG);
-				if (Wrapper.IsValid() && Wrapper->SetRaw(Img.Pixels.GetData(), Img.Pixels.Num() * 4,
-					Img.Width, Img.Height, ERGBFormat::BGRA, 8))
+				bPixelsValid = true;
+				// Quick check: not all zero
+				int32 NonZero = 0;
+				for (int32 i = 0; i < FMath::Min(100, Img.Pixels.Num()); ++i)
+					if (Img.Pixels[i].DWColor() != 0) { ++NonZero; break; }
+				if (NonZero == 0) bPixelsValid = false;
+			}
+
+			// JPEG encoding — try CompressImage, fall back to raw
+			TArray64<uint8> JpegData; // must outlive the payload append below
+			if (CameraCompress == TEXT("jpeg") && ImageWrapperModule && bPixelsValid)
+			{
+				FImageView View(Img.Pixels.GetData(), Img.Width, Img.Height);
+				if (ImageWrapperModule->CompressImage(JpegData, EImageFormat::JPEG, View, JpegQuality)
+					&& JpegData.Num() > 2 && JpegData[0] == 0xFF && JpegData[1] == 0xD8)
 				{
-					TArray64<uint8> JpegData = Wrapper->GetCompressed(JpegQuality);
-					if (JpegData.Num() > 0)
-					{
-						DataLen = JpegData.Num();
-						DataPtr = JpegData.GetData();
-					}
+					DataLen = JpegData.Num();
+					DataPtr = JpegData.GetData();
+					Codec = 0x01;
 				}
 			}
 
+			// Write entry: [name_len][name][codec][pixfmt][reserved][w][h][rawlen][datalen][data]
+			Payload.Add(NameLen);
+			Payload.Append((uint8*)NameConv.Get(), NameLen);
+			Payload.Add(Codec);
+			Payload.Add(0x00); // pixel format BGRA8
+			Payload.Add(0x00); // reserved
+			uint16 W = (uint16)Img.Width, H = (uint16)Img.Height;
+			Payload.Append((uint8*)&W, 2);
+			Payload.Append((uint8*)&H, 2);
 			Payload.Append((uint8*)&RawLen, 4);
 			Payload.Append((uint8*)&DataLen, 4);
 			Payload.Append(DataPtr, DataLen);
