@@ -176,10 +176,11 @@ private:
 			, RootBodyId(Other.RootBodyId), RootQposAdr(Other.RootQposAdr)
 			, Cameras(MoveTemp(Other.Cameras))
 			, HeadCameraBodyId(Other.HeadCameraBodyId)
+			, StateBuffer(Other.StateBuffer), CmdBuffer(Other.CmdBuffer), GainBuffer(Other.GainBuffer)
 			, PoseLock(MoveTemp(Other.PoseLock))
 			, Privilege(MoveTemp(Other.Privilege))
 			, Noise(MoveTemp(Other.Noise))
-		{}
+		{ Other.StateBuffer = nullptr; Other.CmdBuffer = nullptr; Other.GainBuffer = nullptr; }
 		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
 		{
 			ActorId = MoveTemp(Other.ActorId);
@@ -190,11 +191,15 @@ private:
 			RootBodyId = Other.RootBodyId; RootQposAdr = Other.RootQposAdr;
 			Cameras = MoveTemp(Other.Cameras);
 			HeadCameraBodyId = Other.HeadCameraBodyId;
+			delete StateBuffer; delete CmdBuffer; delete GainBuffer;
+			StateBuffer = Other.StateBuffer; CmdBuffer = Other.CmdBuffer; GainBuffer = Other.GainBuffer;
+			Other.StateBuffer = nullptr; Other.CmdBuffer = nullptr; Other.GainBuffer = nullptr;
 			PoseLock = MoveTemp(Other.PoseLock);
 			Privilege = MoveTemp(Other.Privilege);
 			Noise = MoveTemp(Other.Noise);
 			return *this;
 		}
+		~FRobotEndpoint() { delete StateBuffer; delete CmdBuffer; delete GainBuffer; }
 
 		FString ActorId;
 		TWeakObjectPtr<AMjArticulation> Articulation;
@@ -206,10 +211,10 @@ private:
 		TArray<FCameraEntry> Cameras;
 		int32 HeadCameraBodyId = -1;
 
-		// Triple buffers (shared between physics + network threads)
-		URSTripleBuffer<FRobotSnapshot> StateBuffer;
-		URSTripleBuffer<FCommandSet>    CmdBuffer;
-		URSTripleBuffer<FGainSet>       GainBuffer;
+		// Triple buffers (heap-allocated, stable across endpoint array moves)
+		URSTripleBuffer<FRobotSnapshot>* StateBuffer = nullptr;
+		URSTripleBuffer<FCommandSet>*    CmdBuffer   = nullptr;
+		URSTripleBuffer<FGainSet>*       GainBuffer  = nullptr;
 
 		FPoseLock PoseLock;
 		URSoccerLab::FURSPrivilegeConfig Privilege;

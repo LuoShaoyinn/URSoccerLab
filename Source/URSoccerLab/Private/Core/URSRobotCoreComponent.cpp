@@ -63,6 +63,23 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	}
 	if (bInitialized && EndpointCount > 0)
 	{
+		// One-time diagnostic: verify actuator weak pointers are valid
+		static bool bDiagDone = false;
+		if (!bDiagDone)
+		{
+			bDiagDone = true;
+			int32 ValidAct = 0, TotalAct = 0;
+			for (const auto& Ep : Endpoints)
+			{
+				for (const auto& Ai : Ep.Actuators)
+				{
+					++TotalAct;
+					if (Ai.Actuator.IsValid()) ++ValidAct;
+				}
+			}
+			UE_LOG(LogTemp, Warning, TEXT("[URS DIAG] Endpoints=%d Actuators=%d/%d valid"),
+				EndpointCount, ValidAct, TotalAct);
+		}
 		SetComponentTickEnabled(false);
 	}
 }
@@ -311,6 +328,11 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		Ep.ActorId = ActorId;
 		Ep.Articulation = Articulation;
 
+		// Allocate heap triple buffers (stable across array reallocation)
+		Ep.StateBuffer = new URSTripleBuffer<FRobotSnapshot>();
+		Ep.CmdBuffer = new URSTripleBuffer<FCommandSet>();
+		Ep.GainBuffer = new URSTripleBuffer<FGainSet>();
+
 		TArray<UMjActuator*> Actuators = Articulation->GetActuators();
 		Actuators.RemoveAll([](UMjActuator* A) { return !A || A->GetMjID() < 0; });
 		Actuators.Sort([](const UMjActuator& L, const UMjActuator& R) { return L.GetMjID() < R.GetMjID(); });
@@ -326,11 +348,11 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 			Ep.Actuators.Add(MoveTemp(Info));
 		}
 		// Initialize command buffer with zeros
-		FCommandSet& InitCmd = Ep.CmdBuffer.Back();
+		FCommandSet& InitCmd = Ep.CmdBuffer->Back();
 		FMemory::Memzero(InitCmd.Targets, sizeof(InitCmd.Targets));
 		InitCmd.TimestampSec = 0.0;
 		InitCmd.bValid = false;
-		Ep.CmdBuffer.Publish();
+		Ep.CmdBuffer->Publish();
 
 		TArray<UMjJoint*> Joints = Articulation->GetJoints();
 		Joints.RemoveAll([](UMjJoint* J) { return !J || J->GetMjID() < 0; });
@@ -491,19 +513,38 @@ void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 		ApplyGains(Model);
 	}
 	ApplyPoseLocks(Model, Data);
-	ApplyCommands(FPlatformTime::Seconds());
 
-	(void)EndpointSeq.load(std::memory_order_acquire); // seq check
+	// Apply commands + write ctrl directly (URLab ApplyControls may be skipped)
+	const double NowSec = FPlatformTime::Seconds();
+	for (FRobotEndpoint& Ep : Endpoints)
+	{
+		const FCommandSet& Cmd = Ep.CmdBuffer->Front();
+		const bool bTimedOut = !Cmd.bValid ||
+			(NowSec - Cmd.TimestampSec > CommandTimeoutSec);
+
+		for (int32 Idx = 0; Idx < Ep.Actuators.Num(); ++Idx)
+		{
+			const int32 Am = Ep.Actuators[Idx].MjId;
+			if (Am >= 0 && Am < Model->nu)
+			{
+				float Val = bTimedOut ? 0.0f :
+					(Idx < URS_MAX_ACTUATORS ? Cmd.Targets[Idx] : 0.0f);
+				Data->ctrl[Am] = (mjtNum)Val;
+				if (UMjActuator* Act = Ep.Actuators[Idx].Actuator.Get())
+					Act->SetNetworkControl(Val);
+			}
+		}
+	}
 }
 
 void UURSRobotCoreComponent::PublishSnapshot(mjModel* Model, mjData* Data, int32 Ri)
 {
 	FRobotEndpoint& Ep = Endpoints[Ri];
-	FRobotSnapshot& S = Ep.StateBuffer.Back();
+	FRobotSnapshot& S = Ep.StateBuffer->Back();
 	S = FRobotSnapshot{};
 
 	S.SimTime = Data->time;
-	const FCommandSet& Cmd = Ep.CmdBuffer.Front();
+	const FCommandSet& Cmd = Ep.CmdBuffer->Front();
 	S.bCommandTimedOut = !Cmd.bValid || (FPlatformTime::Seconds() - Cmd.TimestampSec > CommandTimeoutSec);
 
 		// Base pose from body world transforms
@@ -624,7 +665,7 @@ void UURSRobotCoreComponent::PublishSnapshot(mjModel* Model, mjData* Data, int32
 		}
 	}
 
-	Ep.StateBuffer.Publish();
+	Ep.StateBuffer->Publish();
 }
 
 void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
@@ -673,7 +714,7 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 		}
 
 		// Sync actuator targets so PD controllers don't fight
-		FCommandSet& SyncCmd = Ep.CmdBuffer.Back();
+		FCommandSet& SyncCmd = Ep.CmdBuffer->Back();
 		FMemory::Memzero(SyncCmd.Targets, sizeof(SyncCmd.Targets));
 		for (int32 Ai = 0; Ai < Ep.Actuators.Num(); ++Ai)
 		{
@@ -689,7 +730,7 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 		}
 		SyncCmd.TimestampSec = FPlatformTime::Seconds();
 		SyncCmd.bValid = true;
-		Ep.CmdBuffer.Publish();
+		Ep.CmdBuffer->Publish();
 
 		mj_forward(Model, Data);
 	}
@@ -741,7 +782,7 @@ void UURSRobotCoreComponent::ApplyCommands(double NowSec)
 
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		const FCommandSet& Cmd = Ep.CmdBuffer.Front();
+		const FCommandSet& Cmd = Ep.CmdBuffer->Front();
 		const bool bTimedOut = !Cmd.bValid ||
 			(NowSec - Cmd.TimestampSec > CommandTimeoutSec);
 		const int32 Count = FMath::Min(Ep.Actuators.Num(), MAX_CMD);
@@ -749,11 +790,15 @@ void UURSRobotCoreComponent::ApplyCommands(double NowSec)
 		for (int32 i = 0; i < Count; ++i)
 			CmdBuf[i] = bTimedOut ? 0.0f : Cmd.Targets[i];
 
+		// Write directly to mjData->ctrl (bypass URLab ApplyControls which may be skipped)
 		for (int32 Idx = 0; Idx < Count; ++Idx)
 		{
-			if (UMjActuator* Actuator = Ep.Actuators[Idx].Actuator.Get())
+			const int32 Am = Ep.Actuators[Idx].MjId;
+			if (Am >= 0)
 			{
-				Actuator->SetNetworkControl(CmdBuf[Idx]);
+				// Still set NetworkControl for state reporting
+				if (UMjActuator* Actuator = Ep.Actuators[Idx].Actuator.Get())
+					Actuator->SetNetworkControl(CmdBuf[Idx]);
 			}
 		}
 	}
@@ -763,7 +808,7 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 {
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		const FGainSet& G = Ep.GainBuffer.Front();
+		const FGainSet& G = Ep.GainBuffer->Front();
 		if (!G.bValid) continue;
 
 		const bool bTorque = (G.Mode == 1);
@@ -792,8 +837,8 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 		}
 
 		// Consume the gain set so we don't apply it every step
-		Ep.GainBuffer.Back() = FGainSet{};
-		Ep.GainBuffer.Publish(); // clear by publishing empty
+		Ep.GainBuffer->Back() = FGainSet{};
+		Ep.GainBuffer->Publish(); // clear by publishing empty
 	}
 }
 
@@ -811,7 +856,7 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 	int32 Ri = FindEndpointIndex(ActorId);
 	if (Ri == INDEX_NONE) return false;
 
-	const FRobotSnapshot& S = Endpoints[Ri].StateBuffer.Front();
+	const FRobotSnapshot& S = Endpoints[Ri].StateBuffer->Front();
 
 	// Dynamic data from snapshot (lock-free read)
 	OutState = FURSRobotState();
@@ -922,8 +967,8 @@ void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FS
 {
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
-	FCommandSet& Cmd = Ep->CmdBuffer.Back();
-	const FCommandSet& Old = Ep->CmdBuffer.Front(); // preserve existing targets
+	FCommandSet& Cmd = Ep->CmdBuffer->Back();
+	const FCommandSet& Old = Ep->CmdBuffer->Front(); // preserve existing targets
 	FMemory::Memcpy(Cmd.Targets, Old.Targets, sizeof(Cmd.Targets));
 	for (const auto& Pair : NamedValues)
 	{
@@ -933,7 +978,7 @@ void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FS
 	}
 	Cmd.TimestampSec = FPlatformTime::Seconds();
 	Cmd.bValid = true;
-	Ep->CmdBuffer.Publish();
+	Ep->CmdBuffer->Publish();
 }
 
 void UURSRobotCoreComponent::SubmitControllerParams(
@@ -945,7 +990,7 @@ void UURSRobotCoreComponent::SubmitControllerParams(
 {
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
-	FGainSet& G = Ep->GainBuffer.Back();
+	FGainSet& G = Ep->GainBuffer->Back();
 	G = FGainSet{};
 	const int32 N = FMath::Min(Ep->Actuators.Num(), URS_MAX_ACTUATORS);
 	for (int32 i = 0; i < N; ++i)
@@ -958,7 +1003,7 @@ void UURSRobotCoreComponent::SubmitControllerParams(
 	if (ActuatorMode)
 		G.Mode = (*ActuatorMode == TEXT("torque")) ? 1 : 0;
 	G.bValid = true;
-	Ep->GainBuffer.Publish();
+	Ep->GainBuffer->Publish();
 }
 
 
@@ -1314,7 +1359,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 		// mj_forward so that derived quantities are consistent.
 		if (JointQpos)
 		{
-			FCommandSet& SyncCmd = Ep->CmdBuffer.Back();
+			FCommandSet& SyncCmd = Ep->CmdBuffer->Back();
 			FMemory::Memzero(SyncCmd.Targets, sizeof(SyncCmd.Targets));
 			for (int32 ActIdx = 0; ActIdx < Ep->Actuators.Num(); ++ActIdx)
 			{
@@ -1331,7 +1376,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 			}
 			SyncCmd.TimestampSec = FPlatformTime::Seconds();
 			SyncCmd.bValid = true;
-			Ep->CmdBuffer.Publish();
+			Ep->CmdBuffer->Publish();
 		}
 
 		mj_forward(Model, Data);

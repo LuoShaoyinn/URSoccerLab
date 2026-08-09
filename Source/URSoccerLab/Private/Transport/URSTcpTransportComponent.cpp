@@ -117,9 +117,9 @@ void UURSTcpTransportComponent::RebuildNetworkThread()
 		NE.ActorId = CoreEndpoints[Ri].ActorId;
 
 		// Wire triple buffer pointers
-		NE.StateBuf = &CoreEndpoints[Ri].StateBuffer;
-		NE.CmdBuf = &CoreEndpoints[Ri].CmdBuffer;
-		NE.GainBuf = &CoreEndpoints[Ri].GainBuffer;
+		NE.StateBuf = CoreEndpoints[Ri].StateBuffer;
+		NE.CmdBuf = CoreEndpoints[Ri].CmdBuffer;
+		NE.GainBuf = CoreEndpoints[Ri].GainBuffer;
 
 		// Build metadata for JSON
 		for (const auto& Ji : CoreEndpoints[Ri].Joints)
@@ -275,7 +275,7 @@ void UURSTcpTransportComponent::TickCameraCapture()
 		Payload.Append((uint8*)&Flags, 2);
 		Payload.Append((uint8*)&Seq, 4);
 		// sim_time from latest state snapshot
-		double SimTime = Endpoints[Ri].StateBuffer.Front().SimTime;
+		double SimTime = Endpoints[Ri].StateBuffer->Front().SimTime;
 		Payload.Append((uint8*)&SimTime, 8);
 
 		for (const FRawImage& Img : Images)
