@@ -1340,13 +1340,22 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 		if (!Layout.RootSlots.IsEmpty())
 		{
 			int32 Adr = Layout.RootSlots[0].Adr;
-			Data->qpos[Adr + 0] = AppliedTrans.X;
-			Data->qpos[Adr + 1] = AppliedTrans.Y;
-			Data->qpos[Adr + 2] = AppliedTrans.Z;
-			Data->qpos[Adr + 3] = AppliedRot.W;
-			Data->qpos[Adr + 4] = AppliedRot.X;
-			Data->qpos[Adr + 5] = AppliedRot.Y;
-			Data->qpos[Adr + 6] = AppliedRot.Z;
+			// Only overwrite the root fields the caller actually specified;
+			// preserve the existing qpos for omitted translation/rotation so a
+			// partial request (e.g. translation-only) does not reset the rest.
+			if (Translation)
+			{
+				Data->qpos[Adr + 0] = AppliedTrans.X;
+				Data->qpos[Adr + 1] = AppliedTrans.Y;
+				Data->qpos[Adr + 2] = AppliedTrans.Z;
+			}
+			if (Rotation)
+			{
+				Data->qpos[Adr + 3] = AppliedRot.W;
+				Data->qpos[Adr + 4] = AppliedRot.X;
+				Data->qpos[Adr + 5] = AppliedRot.Y;
+				Data->qpos[Adr + 6] = AppliedRot.Z;
+			}
 		}
 
 		int32 Cursor = 0;
@@ -1354,9 +1363,17 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 		{
 			for (int32 Idx = 0; Idx < Slot.Size; ++Idx)
 			{
-				float Value = (JointQpos && JointQpos->IsValidIndex(Cursor)) ? (*JointQpos)[Cursor] : 0.0f;
-				Data->qpos[Slot.Adr + Idx] = static_cast<mjtNum>(Value);
-				AppliedJoint.Add(Value);
+				if (JointQpos && JointQpos->IsValidIndex(Cursor))
+				{
+					float Value = (*JointQpos)[Cursor];
+					Data->qpos[Slot.Adr + Idx] = static_cast<mjtNum>(Value);
+					AppliedJoint.Add(Value);
+				}
+				else
+				{
+					// Preserve the existing joint qpos for unspecified joints.
+					AppliedJoint.Add(static_cast<float>(Data->qpos[Slot.Adr + Idx]));
+				}
 				++Cursor;
 			}
 		}
@@ -1409,8 +1426,19 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 	}
 
 	Result.bOk = true;
-	Result.AppliedTranslation = AppliedTrans;
-	Result.AppliedRotation = AppliedRot;
+	// Report the resulting pose from qpos so omitted fields reflect their
+	// preserved values rather than the zero/identity defaults.
+	if (!Layout.RootSlots.IsEmpty())
+	{
+		int32 Adr = Layout.RootSlots[0].Adr;
+		Result.AppliedTranslation = FVector(Data->qpos[Adr + 0], Data->qpos[Adr + 1], Data->qpos[Adr + 2]);
+		Result.AppliedRotation = FQuat(Data->qpos[Adr + 4], Data->qpos[Adr + 5], Data->qpos[Adr + 6], Data->qpos[Adr + 3]);
+	}
+	else
+	{
+		Result.AppliedTranslation = AppliedTrans;
+		Result.AppliedRotation = AppliedRot;
+	}
 	Result.AppliedJointQpos = MoveTemp(AppliedJoint);
 	Result.SimTime = Data->time;
 	return Result;
@@ -1637,7 +1665,13 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 
 	if (!Spawn->JointPositionsRad.IsSet())
 	{
-		return SetPose(ActorId, &InitialTrans, &InitialRot, nullptr);
+		// No configured joint positions: the initial pose is all zeros. Pass
+		// them explicitly so SetPose writes the full pose rather than treating
+		// the joints as "omitted" and preserving the current (possibly
+		// non-zero) state.
+		TArray<float> ZeroJointQpos;
+		ZeroJointQpos.AddZeroed(NonRootJointNames.Num());
+		return SetPose(ActorId, &InitialTrans, &InitialRot, &ZeroJointQpos);
 	}
 
 	const TMap<FString, float>& ConfiguredJointPositions = Spawn->JointPositionsRad.GetValue();

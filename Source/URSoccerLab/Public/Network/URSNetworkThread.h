@@ -24,6 +24,7 @@ public:
 			, Clients(MoveTemp(Other.Clients))
 			, StateBuf(MoveTemp(Other.StateBuf))
 			, CmdBuf(MoveTemp(Other.CmdBuf)), GainBuf(MoveTemp(Other.GainBuf))
+			, AccumulatedGains(Other.AccumulatedGains)
 			, Meta(MoveTemp(Other.Meta))
 		{}
 		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
@@ -34,6 +35,7 @@ public:
 			StateBuf = MoveTemp(Other.StateBuf);
 			CmdBuf = MoveTemp(Other.CmdBuf);
 			GainBuf = MoveTemp(Other.GainBuf);
+			AccumulatedGains = Other.AccumulatedGains;
 			Meta = MoveTemp(Other.Meta);
 			return *this;
 		}
@@ -54,6 +56,12 @@ public:
 		TSharedPtr<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe> StateBuf; // read
 		TSharedPtr<URSTripleBuffer<FCommandSet>, ESPMode::ThreadSafe> CmdBuf; // write
 		TSharedPtr<URSTripleBuffer<FGainSet>, ESPMode::ThreadSafe> GainBuf; // write
+
+		// Union of all partial gain updates received since the endpoint was
+		// built. Each network-side publish sends this accumulated set so that
+		// the latest-value triple buffer cannot drop an earlier partial update
+		// before the physics thread consumes it.
+		FGainSet AccumulatedGains;
 
 		// Static metadata for JSON building
 		FRobotMetadata Meta;

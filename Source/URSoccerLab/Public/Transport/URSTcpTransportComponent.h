@@ -60,10 +60,15 @@ private:
 	struct FCompletedVisionPacket {
 		int32 RobotIdx = 0;
 		uint8 FrameType = 0;
+		uint32 Generation = 0;
 		TArray<uint8> Payload;
 	};
 	TQueue<FCompletedVisionPacket, EQueueMode::Mpsc> CompletedVisionPackets;
 	std::atomic<bool> bVisionAccept{true};
+
+	// Increments on every RebuildNetworkThread so async encode jobs captured
+	// against a prior endpoint layout can be discarded after a rebuild.
+	uint32 NetworkGeneration = 0;
 
 	// Per-robot camera state for the game thread
 	struct FCameraState {

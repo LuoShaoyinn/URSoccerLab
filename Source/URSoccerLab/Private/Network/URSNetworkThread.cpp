@@ -152,11 +152,25 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 
 	if (URSJsonParser::IsControllerParams(Data, Len))
 	{
-		FGainSet Gains;
-		if (URSJsonParser::ParseGainParams(Data, Len, Gains, Ep.Meta.ActuatorNames))
+		FGainSet Parsed;
+		if (URSJsonParser::ParseGainParams(Data, Len, Parsed, Ep.Meta.ActuatorNames))
 		{
-			Gains.bValid = true;
-			if (Ep.GainBuf) Ep.GainBuf->PublishValue(Gains);
+			// Coalesce partial updates into the accumulated union before
+			// publishing. The latest-value triple buffer would otherwise drop
+			// an earlier partial message that arrived between physics steps,
+			// permanently losing those fields. Every publish carries the full
+			// union so no partial update can be lost.
+			FGainSet& Acc = Ep.AccumulatedGains;
+			const int32 N = FMath::Min(Ep.Meta.ActuatorNames.Num(), URS_MAX_ACTUATORS);
+			for (int32 i = 0; i < N; ++i)
+			{
+				if (Parsed.bHasKp[i])      { Acc.Kp[i] = Parsed.Kp[i];           Acc.bHasKp[i] = true; }
+				if (Parsed.bHasKv[i])      { Acc.Kv[i] = Parsed.Kv[i];           Acc.bHasKv[i] = true; }
+				if (Parsed.bHasDamping[i]) { Acc.Damping[i] = Parsed.Damping[i]; Acc.bHasDamping[i] = true; }
+			}
+			if (Parsed.bHasMode) { Acc.Mode = Parsed.Mode; Acc.bHasMode = true; }
+			Acc.bValid = true;
+			if (Ep.GainBuf) Ep.GainBuf->PublishValue(Acc);
 		}
 	}
 	else

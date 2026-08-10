@@ -169,6 +169,7 @@ void UURSTcpTransportComponent::RebuildNetworkThread()
 	}
 
 	// Start network thread
+	++NetworkGeneration; // invalidate in-flight encode jobs from the prior layout
 	NetThread = new URSNetworkThread();
 	NetThread->Start(MoveTemp(NetEndpoints), AdminPort, StateRateHz, CameraRateHz);
 
@@ -308,6 +309,7 @@ void UURSTcpTransportComponent::TickCameraCapture()
 
 		static uint32 GlobalSeq = 0;
 		const uint32 Seq = GlobalSeq++;
+		const uint32 Gen = NetworkGeneration;
 		const double SimTime = State.SimTime;
 		const FString Compress = CameraCompress;
 		const int32 Quality = JpegQuality;
@@ -317,7 +319,7 @@ void UURSTcpTransportComponent::TickCameraCapture()
 		CameraStates[Ri].bRgbEncodeInFlight = true;
 
 		const uint8 ImageCount = Images.Num();
-		Async(EAsyncExecution::ThreadPool, [WeakThis, Ri, Seq, SimTime, Compress, Quality, LocalImageWrapper, ImageCount, Images = MoveTemp(Images)]()
+		Async(EAsyncExecution::ThreadPool, [WeakThis, Ri, Gen, Seq, SimTime, Compress, Quality, LocalImageWrapper, ImageCount, Images = MoveTemp(Images)]()
 		{
 			TArray<uint8> Payload;
 			Payload.Add(0x02); // version
@@ -378,6 +380,7 @@ void UURSTcpTransportComponent::TickCameraCapture()
 				FCompletedVisionPacket Pkt;
 				Pkt.RobotIdx = Ri;
 				Pkt.FrameType = URSoccerLab::TcpProtocol::TypeRgb;
+				Pkt.Generation = Gen;
 				Pkt.Payload = MoveTemp(Payload);
 				Self->CompletedVisionPackets.Enqueue(MoveTemp(Pkt));
 			}
@@ -393,6 +396,11 @@ void UURSTcpTransportComponent::DrainCompletedVision()
 	FCompletedVisionPacket Pkt;
 	while (CompletedVisionPackets.Dequeue(Pkt))
 	{
+		// Discard completions from a prior network configuration: after a
+		// rebuild the numeric RobotIdx may map to a different robot (or be out
+		// of range), which would misroute the stale frame.
+		if (Pkt.Generation != NetworkGeneration)
+			continue;
 		if (Pkt.RobotIdx >= 0 && Pkt.RobotIdx < CameraStates.Num())
 			CameraStates[Pkt.RobotIdx].bRgbEncodeInFlight = false;
 		NetThread->EnqueueCameraFrame(Pkt.RobotIdx, Pkt.FrameType,
