@@ -176,11 +176,13 @@ private:
 			, RootBodyId(Other.RootBodyId), RootQposAdr(Other.RootQposAdr)
 			, Cameras(MoveTemp(Other.Cameras))
 			, HeadCameraBodyId(Other.HeadCameraBodyId)
-			, StateBuffer(Other.StateBuffer), CmdBuffer(Other.CmdBuffer), GainBuffer(Other.GainBuffer)
+			, StateBuffer(MoveTemp(Other.StateBuffer))
+			, GameStateBuffer(MoveTemp(Other.GameStateBuffer))
+			, CmdBuffer(MoveTemp(Other.CmdBuffer)), GainBuffer(MoveTemp(Other.GainBuffer))
 			, PoseLock(MoveTemp(Other.PoseLock))
 			, Privilege(MoveTemp(Other.Privilege))
 			, Noise(MoveTemp(Other.Noise))
-		{ Other.StateBuffer = nullptr; Other.CmdBuffer = nullptr; Other.GainBuffer = nullptr; }
+		{}
 		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
 		{
 			ActorId = MoveTemp(Other.ActorId);
@@ -191,15 +193,16 @@ private:
 			RootBodyId = Other.RootBodyId; RootQposAdr = Other.RootQposAdr;
 			Cameras = MoveTemp(Other.Cameras);
 			HeadCameraBodyId = Other.HeadCameraBodyId;
-			delete StateBuffer; delete CmdBuffer; delete GainBuffer;
-			StateBuffer = Other.StateBuffer; CmdBuffer = Other.CmdBuffer; GainBuffer = Other.GainBuffer;
-			Other.StateBuffer = nullptr; Other.CmdBuffer = nullptr; Other.GainBuffer = nullptr;
+			StateBuffer = MoveTemp(Other.StateBuffer);
+			GameStateBuffer = MoveTemp(Other.GameStateBuffer);
+			CmdBuffer = MoveTemp(Other.CmdBuffer);
+			GainBuffer = MoveTemp(Other.GainBuffer);
 			PoseLock = MoveTemp(Other.PoseLock);
 			Privilege = MoveTemp(Other.Privilege);
 			Noise = MoveTemp(Other.Noise);
 			return *this;
 		}
-		~FRobotEndpoint() { delete StateBuffer; delete CmdBuffer; delete GainBuffer; }
+		~FRobotEndpoint() = default;
 
 		FString ActorId;
 		TWeakObjectPtr<AMjArticulation> Articulation;
@@ -212,9 +215,10 @@ private:
 		int32 HeadCameraBodyId = -1;
 
 		// Triple buffers (heap-allocated, stable across endpoint array moves)
-		URSTripleBuffer<FRobotSnapshot>* StateBuffer = nullptr;
-		URSTripleBuffer<FCommandSet>*    CmdBuffer   = nullptr;
-		URSTripleBuffer<FGainSet>*       GainBuffer  = nullptr;
+		TSharedPtr<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe> StateBuffer;
+		TSharedPtr<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe> GameStateBuffer;
+		TSharedPtr<URSTripleBuffer<FCommandSet>, ESPMode::ThreadSafe> CmdBuffer;
+		TSharedPtr<URSTripleBuffer<FGainSet>, ESPMode::ThreadSafe> GainBuffer;
 
 		FPoseLock PoseLock;
 		URSoccerLab::FURSPrivilegeConfig Privilege;
@@ -224,7 +228,9 @@ private:
 	TArray<FRobotEndpoint> Endpoints;
 	TArray<FRobotEndpoint>& GetEndpoints() { return Endpoints; }
 	TMap<FString, int32> ActorRootBodyIds;
-	std::atomic<uint32> EndpointSeq{0};
+	// Buffer payloads are lock-free; this lock protects endpoint metadata and
+	// object lifetime during scene rebuilds.
+	mutable FCriticalSection EndpointMutex;
 	TWeakObjectPtr<AAMjManager> Manager;
 	TWeakObjectPtr<UObject> SceneConfigComp;
 	bool bCallbacksRegistered = false;

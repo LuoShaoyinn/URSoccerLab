@@ -112,6 +112,8 @@ void URSNetworkThread::ReadFromClients()
 
 			if (!Client.bConnected)
 			{
+				UE_LOG(LogTemp, Warning, TEXT("[NET] robot '%s' client %d disconnected during recv"),
+					*Ep.ActorId, Ci);
 				Ep.Clients.RemoveAt(Ci);
 				continue;
 			}
@@ -154,14 +156,13 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 		if (URSJsonParser::ParseGainParams(Data, Len, Gains, Ep.Meta.ActuatorNames))
 		{
 			Gains.bValid = true;
-			if (Ep.GainBuf) { Ep.GainBuf->Back() = Gains; Ep.GainBuf->Publish(); }
+			if (Ep.GainBuf) Ep.GainBuf->PublishValue(Gains);
 		}
 	}
 	else
 	{
 		FCommandSet Cmd;
-		Cmd.bValid = true;
-		Cmd.TimestampSec = FPlatformTime::Seconds();
+		bool bAnyActuatorChanged = false;
 
 		yyjson_doc* Doc = yyjson_read((const char*)Data, Len, YYJSON_READ_NOFLAG);
 		if (!Doc) return;
@@ -183,14 +184,24 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 			{
 				if (Ep.Meta.ActuatorNames[i] == FName)
 				{
-					Cmd.Targets[i] = (float)yyjson_get_num(V);
+					const double Value = yyjson_get_num(V);
+					if (FMath::IsFinite(Value))
+					{
+						Cmd.Targets[i] = static_cast<float>(Value);
+						bAnyActuatorChanged = bAnyActuatorChanged || FMath::IsFinite(Cmd.Targets[i]);
+					}
 					break;
 				}
 			}
 		}
 		yyjson_doc_free(Doc);
 
-		if (Ep.CmdBuf) { Ep.CmdBuf->Back() = Cmd; Ep.CmdBuf->Publish(); }
+		if (bAnyActuatorChanged && Ep.CmdBuf)
+		{
+			Cmd.TimestampSec = FPlatformTime::Seconds();
+			Cmd.bValid = true;
+			Ep.CmdBuf->PublishValue(Cmd);
+		}
 	}
 }
 
@@ -258,6 +269,8 @@ void URSNetworkThread::FlushWrites()
 					Client.WriteBuf.GetData(), Client.WriteBuf.Num());
 				if (Sent < 0)
 				{
+					UE_LOG(LogTemp, Warning, TEXT("[NET] robot '%s' client %d disconnected during send (queued=%d)"),
+						*Ep.ActorId, Ci, Client.WriteBuf.Num());
 					Client.Socket.Close();
 					Ep.Clients.RemoveAt(Ci);
 					continue;

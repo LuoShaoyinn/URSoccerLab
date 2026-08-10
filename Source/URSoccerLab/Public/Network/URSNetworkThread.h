@@ -22,7 +22,8 @@ public:
 			: ActorId(MoveTemp(Other.ActorId))
 			, Listener(MoveTemp(Other.Listener))
 			, Clients(MoveTemp(Other.Clients))
-			, StateBuf(Other.StateBuf), CmdBuf(Other.CmdBuf), GainBuf(Other.GainBuf)
+			, StateBuf(MoveTemp(Other.StateBuf))
+			, CmdBuf(MoveTemp(Other.CmdBuf)), GainBuf(MoveTemp(Other.GainBuf))
 			, Meta(MoveTemp(Other.Meta))
 		{}
 		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
@@ -30,7 +31,9 @@ public:
 			ActorId = MoveTemp(Other.ActorId);
 			Listener = MoveTemp(Other.Listener);
 			Clients = MoveTemp(Other.Clients);
-			StateBuf = Other.StateBuf; CmdBuf = Other.CmdBuf; GainBuf = Other.GainBuf;
+			StateBuf = MoveTemp(Other.StateBuf);
+			CmdBuf = MoveTemp(Other.CmdBuf);
+			GainBuf = MoveTemp(Other.GainBuf);
 			Meta = MoveTemp(Other.Meta);
 			return *this;
 		}
@@ -48,9 +51,9 @@ public:
 		TArray<FClient> Clients;
 
 		// Triple buffer handles (shared with physics core)
-		URSTripleBuffer<FRobotSnapshot>* StateBuf = nullptr;  // read
-		URSTripleBuffer<FCommandSet>*    CmdBuf   = nullptr;  // write
-		URSTripleBuffer<FGainSet>*       GainBuf  = nullptr;  // write
+		TSharedPtr<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe> StateBuf; // read
+		TSharedPtr<URSTripleBuffer<FCommandSet>, ESPMode::ThreadSafe> CmdBuf; // write
+		TSharedPtr<URSTripleBuffer<FGainSet>, ESPMode::ThreadSafe> GainBuf; // write
 
 		// Static metadata for JSON building
 		FRobotMetadata Meta;

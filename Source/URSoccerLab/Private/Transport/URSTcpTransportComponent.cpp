@@ -104,12 +104,22 @@ void UURSTcpTransportComponent::RebuildNetworkThread()
 
 	TArray<FString> RobotIds = Core->GetRobotIds();
 	if (RobotIds.Num() == 0) return;
+	if (FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras"))
+		&& (!NDisplayBinder.IsValid() || !NDisplayBinder->IsReady()))
+	{
+		// URLab can build the compiled robot model before the nDisplay binder
+		// has finished binding its camera viewports. Do not expose a listener
+		// that will immediately be torn down by the subsequent rebuild.
+		UE_LOG(LogTemp, Verbose, TEXT("[URS TCP] Deferring network startup until nDisplay is ready."));
+		return;
+	}
 
 	// Stop existing network thread
 	if (NetThread) { NetThread->Stop(); delete NetThread; NetThread = nullptr; }
 
 	// Build network thread endpoints
 	TArray<URSNetworkThread::FRobotEndpoint> NetEndpoints;
+	FScopeLock CoreEndpointLock(&Core->EndpointMutex);
 	auto& CoreEndpoints = Core->GetEndpoints();
 
 	for (int32 Ri = 0; Ri < CoreEndpoints.Num(); ++Ri)
@@ -175,6 +185,8 @@ void UURSTcpTransportComponent::OnRobotsChanged()
 void UURSTcpTransportComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFn)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFn);
+	if (!NetThread && Core.IsValid() && Core->GetRobotIds().Num() > 0)
+		RebuildNetworkThread();
 	TickAdmin();
 	TickCameraCapture();
 	DrainCompletedVision();
@@ -189,6 +201,8 @@ void UURSTcpTransportComponent::TickCameraCapture()
 	if (!Core.IsValid() || !NetThread) return;
 	const double Now = FPlatformTime::Seconds();
 	const bool bUseNDisplay = NDisplayBinder.IsValid() && NDisplayBinder->IsReady();
+	const TArray<FString> RobotIds = Core->GetRobotIds();
+	if (RobotIds.Num() == 0) return;
 
 	// Request camera readback at CameraRateHz
 	const double RgbInterval = CameraRateHz > 0 ? 1.0 / CameraRateHz : 0;
@@ -196,34 +210,48 @@ void UURSTcpTransportComponent::TickCameraCapture()
 	{
 		do { NextRgbTimeSec += RgbInterval; } while (NextRgbTimeSec <= Now);
 
-		auto& Endpoints = Core->GetEndpoints();
-		for (int32 Ri = 0; Ri < Endpoints.Num(); ++Ri)
+		if (bUseNDisplay)
 		{
-			if (Ri >= CameraStates.Num()) break;
-			if (!bUseNDisplay)
+			NDisplayBinder->RequestRgbFrame();
+		}
+		else
+		{
+			for (const FString& ActorId : RobotIds)
 			{
-				Core->RequestNamedCameraReadback(Endpoints[Ri].ActorId, VisionConfig.LeftCamera);
+				Core->RequestNamedCameraReadback(ActorId, VisionConfig.LeftCamera);
 				if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
-					Core->RequestNamedCameraReadback(Endpoints[Ri].ActorId, VisionConfig.RightCamera);
+					Core->RequestNamedCameraReadback(ActorId, VisionConfig.RightCamera);
 			}
 		}
 	}
 
-	// Consume ready camera frames → encode → push to network thread
-	if (bUseNDisplay) return; // nDisplay path handles its own encoding
-
-	auto& Endpoints = Core->GetEndpoints();
-	for (int32 Ri = 0; Ri < Endpoints.Num(); ++Ri)
+	// Consume ready camera frames, encode, and hand complete packets to the
+	// network thread. nDisplay and direct URLab readbacks share this encoder.
+	for (int32 Ri = 0; Ri < RobotIds.Num(); ++Ri)
 	{
+		if (Ri >= CameraStates.Num()) break;
+		const FString& ActorId = RobotIds[Ri];
+		FURSRobotState State;
+		if (!Core->GetRobotState(ActorId, State)) continue;
+
 		TArray<FString> CamNames = { VisionConfig.LeftCamera };
 		if (VisionConfig.Mode == URSoccerLab::EURSVisionMode::StereoRgb)
 			CamNames.Add(VisionConfig.RightCamera);
 
-		bool bAllReady = true;
-		for (const FString& Cn : CamNames)
-			bAllReady = bAllReady && Core->IsCameraFrameReady(Endpoints[Ri].ActorId, Cn);
+		const uint64 PreviousNDisplaySequence =
+			CameraStates[Ri].LastNDisplayRgbSequence;
+		const uint64 LatestNDisplaySequence = bUseNDisplay
+			? NDisplayBinder->GetLatestRgbFrameSequence() : 0;
+		if (bUseNDisplay && LatestNDisplaySequence <= PreviousNDisplaySequence)
+			continue;
 
-		if (!bAllReady) continue;
+		if (!bUseNDisplay)
+		{
+			bool bAllReady = true;
+			for (const FString& CameraName : CamNames)
+				bAllReady = bAllReady && Core->IsCameraFrameReady(ActorId, CameraName);
+			if (!bAllReady) continue;
+		}
 
 		// Consume pixels for all cameras
 		struct FRawImage {
@@ -237,35 +265,44 @@ void UURSTcpTransportComponent::TickCameraCapture()
 		{
 			FRawImage Img;
 			Img.Name = Cn;
-			if (Core->ConsumeCameraFrame(Endpoints[Ri].ActorId, Cn, Img.Pixels))
+			uint64 ImageNDisplaySequence = 0;
+			const bool bGotPixels = bUseNDisplay
+				? NDisplayBinder->CopyRgbFrame(
+					ActorId, Cn, PreviousNDisplaySequence, Img.Pixels,
+					Img.Width, Img.Height, ImageNDisplaySequence)
+				: Core->ConsumeCameraFrame(ActorId, Cn, Img.Pixels);
+			if (bGotPixels)
 			{
 				if (Img.Pixels.Num() > 0)
 				{
-					Img.Width = FMath::Sqrt((float)Img.Pixels.Num() * (4.0f / 3.0f)); // estimate
-					Img.Height = Img.Pixels.Num() / FMath::Max(1, Img.Width);
-					// Better: get from camera resolution
-					for (const auto& Ce : Endpoints[Ri].Cameras)
+					if (!bUseNDisplay)
 					{
-						if (Ce.Name == Cn && Ce.Camera.IsValid())
+						for (const FURSCameraInfo& Camera : State.Cameras)
 						{
-							Img.Width = Ce.Camera->resolution.Num() > 0 ? Ce.Camera->resolution[0] : 0;
-							Img.Height = Ce.Camera->resolution.Num() > 1 ? Ce.Camera->resolution[1] : 0;
-							break;
+							if (Camera.Name == Cn)
+							{
+								Img.Width = Camera.Width;
+								Img.Height = Camera.Height;
+								break;
+							}
 						}
 					}
 				}
+				if (bUseNDisplay && ImageNDisplaySequence != LatestNDisplaySequence)
+					bValid = false;
 				Images.Add(MoveTemp(Img));
 			}
 			else { bValid = false; break; }
 		}
 
 		if (!bValid || Images.Num() != CamNames.Num()) continue;
+		if (bUseNDisplay)
+			CameraStates[Ri].LastNDisplayRgbSequence = LatestNDisplaySequence;
 
 		// Build v2 image message and encode (async)
 		const uint8 ImageMsgVersion = 0x02;
 		const uint8 ImageCount = Images.Num();
 		const uint16 Flags = 0;
-		const uint32 Sequence = 0; // TODO: track per-robot sequence
 		static uint32 GlobalSeq = 0;
 		uint32 Seq = GlobalSeq++;
 
@@ -275,8 +312,8 @@ void UURSTcpTransportComponent::TickCameraCapture()
 		Payload.Add(ImageCount);
 		Payload.Append((uint8*)&Flags, 2);
 		Payload.Append((uint8*)&Seq, 4);
-		// sim_time from latest state snapshot
-		double SimTime = Endpoints[Ri].StateBuffer->Front().SimTime;
+		// sim_time from the same snapshot used for this robot's metadata.
+		double SimTime = State.SimTime;
 		Payload.Append((uint8*)&SimTime, 8);
 
 		for (const FRawImage& Img : Images)

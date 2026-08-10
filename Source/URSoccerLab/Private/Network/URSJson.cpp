@@ -219,11 +219,13 @@ bool URSJsonParser::ParseGainParams(const uint8* Data, int32 Len,
 			if (!yyjson_is_num(V)) continue;
 			const char* K = yyjson_get_str(KeyVal);
 			FString FName(UTF8_TO_TCHAR(K));
+			const double Value = yyjson_get_num(V);
+			if (!FMath::IsFinite(Value)) continue;
 			for (int32 i = 0; i < N; ++i)
 			{
 				if (ActuatorNames[i] == FName)
 				{
-					Dst[i] = yyjson_get_num(V);
+					Dst[i] = Value;
 					break;
 				}
 			}

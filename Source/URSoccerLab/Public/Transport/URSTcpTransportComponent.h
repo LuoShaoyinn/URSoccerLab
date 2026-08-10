@@ -69,6 +69,7 @@ private:
 	struct FCameraState {
 		FString ActorId;
 		bool bRgbReadbackRequested = false;
+		uint64 LastNDisplayRgbSequence = 0;
 	};
 	TArray<FCameraState> CameraStates;
 

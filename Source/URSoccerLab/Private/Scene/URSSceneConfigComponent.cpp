@@ -604,7 +604,12 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 	Exec(R.bAutoExposure ? TEXT("r.DefaultFeature.AutoExposure 1") : TEXT("r.DefaultFeature.AutoExposure 0"));
 	Exec(*FString::Printf(TEXT("r.EyeAdaptationExposureCompensation %g"), R.ExposureCompensation));
 
-	if (R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
+	// nDisplay owns the render target dimensions. Applying the scene's normal
+	// window resolution here changes the atlas size after the viewports have
+	// been bound and makes camera tile copies invalid.
+	const bool bNDisplayOwnsResolution =
+		FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras"));
+	if (!bNDisplayOwnsResolution && R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
 	{
 		Exec(*FString::Printf(TEXT("r.setres %dx%d"),
 			R.ResolutionX.GetValue(), R.ResolutionY.GetValue()));
@@ -613,7 +618,7 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 	UE_LOG(LogTemp, Log,
 		TEXT("[URSoccerLab] render: enable=true lumen=%d hwrt=%d aa=%s screen=%g shadow=%d res=%s"),
 		R.bLumen ? 1 : 0, R.bHardwareRayTracing ? 1 : 0, *R.AntiAliasing, R.ScreenPercentage, R.ShadowQuality,
-		(R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
+		(!bNDisplayOwnsResolution && R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
 			? *FString::Printf(TEXT("%dx%d"), R.ResolutionX.GetValue(), R.ResolutionY.GetValue())
-			: TEXT("unchanged"));
+			: (bNDisplayOwnsResolution ? TEXT("nDisplay atlas") : TEXT("unchanged")));
 }

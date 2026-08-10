@@ -38,7 +38,7 @@ from ndisplay_config import write_ndisplay_config
 DEFAULT_UE = Path(
     os.environ.get(
         "URS_UE",
-        str(Path.home() / "Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"),
+        str(Path.home() / "software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"),
     )
 )
 PROJECT = ROOT / "URSoccerLab.uproject"

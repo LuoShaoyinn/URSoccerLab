@@ -55,7 +55,7 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	}
 	int32 EndpointCount = 0;
 	{
-		// no lock needed;
+		FScopeLock Lock(&EndpointMutex);
 		EndpointCount = Endpoints.Num();
 	}
 	if (bInitialized && EndpointCount == 0)
@@ -64,6 +64,7 @@ void UURSRobotCoreComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	}
 	if (bInitialized && EndpointCount > 0)
 	{
+		FScopeLock Lock(&EndpointMutex);
 		// One-time diagnostic: verify actuator weak pointers are valid
 		static bool bDiagDone = false;
 		if (!bDiagDone)
@@ -146,7 +147,7 @@ bool UURSRobotCoreComponent::Initialize()
 	{
 		UE_LOG(LogTemp, Log, TEXT("[URS Core] Physics engine not ready; will retry next tick."));
 		{
-			// no lock needed;
+			FScopeLock Lock(&EndpointMutex);
 			Endpoints.Reset();
 		}
 		return false;
@@ -160,7 +161,7 @@ bool UURSRobotCoreComponent::Initialize()
 	bInitialized = true;
 	TryInitializeCompiledScene();
 	{
-		// no lock needed;
+		FScopeLock Lock(&EndpointMutex);
 		UE_LOG(LogTemp, Log, TEXT("[URS Core] Initialized with %d robot(s)."), Endpoints.Num());
 	}
 	return true;
@@ -191,7 +192,7 @@ void UURSRobotCoreComponent::TryInitializeCompiledScene()
 	RebuildEndpointCache();
 	int32 EndpointCount = 0;
 	{
-		// no lock needed;
+		FScopeLock Lock(&EndpointMutex);
 		EndpointCount = Endpoints.Num();
 	}
 	if (EndpointCount == 0)
@@ -215,7 +216,7 @@ void UURSRobotCoreComponent::InitializeConfiguredRobotPoses()
 	// only after URLab compilation, so run this after every cache rebuild.
 	TArray<FString> ActorIds;
 	{
-		// no lock needed;
+		FScopeLock Lock(&EndpointMutex);
 		ActorIds.Reserve(Endpoints.Num());
 		for (const FRobotEndpoint& Endpoint : Endpoints)
 		{
@@ -340,9 +341,10 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		Ep.Articulation = Articulation;
 
 		// Allocate heap triple buffers (stable across array reallocation)
-		Ep.StateBuffer = new URSTripleBuffer<FRobotSnapshot>();
-		Ep.CmdBuffer = new URSTripleBuffer<FCommandSet>();
-		Ep.GainBuffer = new URSTripleBuffer<FGainSet>();
+		Ep.StateBuffer = MakeShared<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe>();
+		Ep.GameStateBuffer = MakeShared<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe>();
+		Ep.CmdBuffer = MakeShared<URSTripleBuffer<FCommandSet>, ESPMode::ThreadSafe>();
+		Ep.GainBuffer = MakeShared<URSTripleBuffer<FGainSet>, ESPMode::ThreadSafe>();
 
 		TArray<UMjActuator*> Actuators = Articulation->GetActuators();
 		Actuators.RemoveAll([](UMjActuator* A) { return !A || A->GetMjID() < 0; });
@@ -358,12 +360,10 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 			Ep.ActuatorNameToIndex.Add(CleanName, Ep.Actuators.Num());
 			Ep.Actuators.Add(MoveTemp(Info));
 		}
-		// Initialize command buffer with zeros
-		FCommandSet& InitCmd = Ep.CmdBuffer->Back();
-		FMemory::Memzero(InitCmd.Targets, sizeof(InitCmd.Targets));
+		FCommandSet InitCmd;
 		InitCmd.TimestampSec = 0.0;
 		InitCmd.bValid = false;
-		Ep.CmdBuffer->Publish();
+		Ep.CmdBuffer->PublishValue(InitCmd);
 
 		TArray<UMjJoint*> Joints = Articulation->GetJoints();
 		Joints.RemoveAll([](UMjJoint* J) { return !J || J->GetMjID() < 0; });
@@ -485,11 +485,9 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		}
 	}
 	{
-		uint32 OldSeq = EndpointSeq.load(std::memory_order_relaxed);
-		EndpointSeq.store(OldSeq | 1, std::memory_order_release);
+		FScopeLock Lock(&EndpointMutex);
 		Endpoints = MoveTemp(NewEndpoints);
 		ActorRootBodyIds = MoveTemp(NewActorRootBodyIds);
-		EndpointSeq.store(OldSeq + 2, std::memory_order_release);
 	}
 	UE_LOG(LogTemp, Log, TEXT("[URS Core] Endpoint cache rebuilt: %d robot(s)."), NewEndpointCount);
 }
@@ -514,15 +512,12 @@ void UURSRobotCoreComponent::RegisterPhysicsCallbacks()
 
 void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 {
-	const uint32 Seq1 = EndpointSeq.load(std::memory_order_acquire);
-	if (Seq1 & 1) return;
+	FScopeLock EndpointLock(&EndpointMutex);
 
 	const int32 N = Endpoints.Num();
 	for (int32 Ri = 0; Ri < N; ++Ri)
-	{
 		PublishSnapshot(Model, Data, Ri);
-		ApplyGains(Model);
-	}
+	ApplyGains(Model);
 	ApplyPoseLocks(Model, Data);
 
 	// Apply commands + write ctrl directly (URLab ApplyControls may be skipped)
@@ -540,6 +535,7 @@ void UURSRobotCoreComponent::PreStepPhysics(mjModel* Model, mjData* Data)
 			{
 				float Val = bTimedOut ? 0.0f :
 					(Idx < URS_MAX_ACTUATORS ? Cmd.Targets[Idx] : 0.0f);
+				if (!FMath::IsFinite(Val)) Val = 0.0f;
 				Data->ctrl[Am] = (mjtNum)Val;
 				if (UMjActuator* Act = Ep.Actuators[Idx].Actuator.Get())
 					Act->SetNetworkControl(Val);
@@ -676,6 +672,8 @@ void UURSRobotCoreComponent::PublishSnapshot(mjModel* Model, mjData* Data, int32
 		}
 	}
 
+	Ep.GameStateBuffer->Back() = S;
+	Ep.GameStateBuffer->Publish();
 	Ep.StateBuffer->Publish();
 }
 
@@ -725,8 +723,7 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 		}
 
 		// Sync actuator targets so PD controllers don't fight
-		FCommandSet& SyncCmd = Ep.CmdBuffer->Back();
-		FMemory::Memzero(SyncCmd.Targets, sizeof(SyncCmd.Targets));
+		FCommandSet SyncCmd;
 		for (int32 Ai = 0; Ai < Ep.Actuators.Num(); ++Ai)
 		{
 			int32 Am = Ep.Actuators[Ai].MjId;
@@ -741,7 +738,7 @@ void UURSRobotCoreComponent::ApplyPoseLocks(mjModel* Model, mjData* Data)
 		}
 		SyncCmd.TimestampSec = FPlatformTime::Seconds();
 		SyncCmd.bValid = true;
-		Ep.CmdBuffer->Publish();
+		Ep.CmdBuffer->PublishValue(SyncCmd);
 
 		mj_forward(Model, Data);
 	}
@@ -763,7 +760,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 	// Serialize the game-thread update here instead of recursively taking
 	// the non-recursive mutex inside the physics callback.
 	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-	// no lock needed;
+	FScopeLock EndpointLock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -841,9 +838,12 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 			}
 			else
 			{
-				gp[0] = G.Kp[Idx];
-				bp[1] = -G.Kp[Idx];
-				bp[2] = -(G.Kv[Idx] + G.Damping[Idx]);
+				const double Kp = FMath::IsFinite(G.Kp[Idx]) ? G.Kp[Idx] : 0.0;
+				const double Kv = FMath::IsFinite(G.Kv[Idx]) ? G.Kv[Idx] : 0.0;
+				const double Damping = FMath::IsFinite(G.Damping[Idx]) ? G.Damping[Idx] : 0.0;
+				gp[0] = Kp;
+				bp[1] = -Kp;
+				bp[2] = -(Kv + Damping);
 			}
 		}
 
@@ -854,6 +854,7 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 
 TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 {
+	FScopeLock Lock(&EndpointMutex);
 	TArray<FString> Ids;
 	Ids.Reserve(Endpoints.Num());
 	for (const FRobotEndpoint& Ep : Endpoints)
@@ -863,10 +864,11 @@ TArray<FString> UURSRobotCoreComponent::GetRobotIds() const
 
 bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotState& OutState)
 {
+	FScopeLock EndpointLock(&EndpointMutex);
 	int32 Ri = FindEndpointIndex(ActorId);
 	if (Ri == INDEX_NONE) return false;
 
-	const FRobotSnapshot& S = Endpoints[Ri].StateBuffer->Front();
+	const FRobotSnapshot& S = Endpoints[Ri].GameStateBuffer->Front();
 
 	// Dynamic data from snapshot (lock-free read)
 	OutState = FURSRobotState();
@@ -906,7 +908,6 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 
 	// Static data from endpoint (brief lock)
 	{
-		// no lock needed;
 		const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 		if (!Ep) return false;
 
@@ -975,20 +976,24 @@ bool UURSRobotCoreComponent::GetRobotState(const FString& ActorId, FURSRobotStat
 
 void UURSRobotCoreComponent::SubmitCommand(const FString& ActorId, const TMap<FString, float>& NamedValues)
 {
+	FScopeLock EndpointLock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
-	FCommandSet& Cmd = Ep->CmdBuffer->Back();
-	const FCommandSet& Old = Ep->CmdBuffer->Front(); // preserve existing targets
-	FMemory::Memcpy(Cmd.Targets, Old.Targets, sizeof(Cmd.Targets));
+	FCommandSet Cmd;
+	bool bAnyActuatorChanged = false;
 	for (const auto& Pair : NamedValues)
 	{
 		if (const int32* Idx = Ep->ActuatorNameToIndex.Find(Pair.Key))
 			if (*Idx < URS_MAX_ACTUATORS && FMath::IsFinite(Pair.Value))
+			{
 				Cmd.Targets[*Idx] = Pair.Value;
+				bAnyActuatorChanged = true;
+			}
 	}
+	if (!bAnyActuatorChanged) return;
 	Cmd.TimestampSec = FPlatformTime::Seconds();
 	Cmd.bValid = true;
-	Ep->CmdBuffer->Publish();
+	Ep->CmdBuffer->PublishValue(Cmd);
 }
 
 void UURSRobotCoreComponent::SubmitControllerParams(
@@ -998,10 +1003,10 @@ void UURSRobotCoreComponent::SubmitControllerParams(
 	const TMap<FString, double>* Damping,
 	const FString* ActuatorMode)
 {
+	FScopeLock EndpointLock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return;
-	FGainSet& G = Ep->GainBuffer->Back();
-	G = FGainSet{};
+	FGainSet G;
 	const int32 N = FMath::Min(Ep->Actuators.Num(), URS_MAX_ACTUATORS);
 	for (int32 i = 0; i < N; ++i)
 	{
@@ -1013,7 +1018,7 @@ void UURSRobotCoreComponent::SubmitControllerParams(
 	if (ActuatorMode)
 		G.Mode = (*ActuatorMode == TEXT("torque")) ? 1 : 0;
 	G.bValid = true;
-	Ep->GainBuffer->Publish();
+	Ep->GainBuffer->PublishValue(G);
 }
 
 
@@ -1026,7 +1031,7 @@ int32 UURSRobotCoreComponent::FindEndpointIndex(const FString& ActorId) const
 
 bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 {
-	// no lock needed;
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1056,7 +1061,7 @@ bool UURSRobotCoreComponent::RequestCameraReadback(const FString& ActorId)
 
 bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, const FString& CameraName)
 {
-	// no lock needed;
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1090,7 +1095,7 @@ bool UURSRobotCoreComponent::RequestNamedCameraReadback(const FString& ActorId, 
 
 bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FString& CameraName) const
 {
-	// no lock needed;
+	FScopeLock Lock(&EndpointMutex);
 	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1107,7 +1112,7 @@ bool UURSRobotCoreComponent::IsCameraFrameReady(const FString& ActorId, const FS
 
 bool UURSRobotCoreComponent::ConsumeCameraFrame(const FString& ActorId, const FString& CameraName, TArray<FColor>& OutPixels)
 {
-	// no lock needed;
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1134,7 +1139,7 @@ bool UURSRobotCoreComponent::ConsumeDepthCameraFrame(
 	const FString& CameraName,
 	TArray<float>& OutDepthMeters)
 {
-	// no lock needed;
+	FScopeLock Lock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep) return false;
 
@@ -1229,7 +1234,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 	}
 
 	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-	// no lock needed;
+	FScopeLock EndpointLock(&EndpointMutex);
 	FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -1369,8 +1374,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 		// mj_forward so that derived quantities are consistent.
 		if (JointQpos)
 		{
-			FCommandSet& SyncCmd = Ep->CmdBuffer->Back();
-			FMemory::Memzero(SyncCmd.Targets, sizeof(SyncCmd.Targets));
+			FCommandSet SyncCmd;
 			for (int32 ActIdx = 0; ActIdx < Ep->Actuators.Num(); ++ActIdx)
 			{
 				int32 ActMjId = Ep->Actuators[ActIdx].MjId;
@@ -1386,7 +1390,7 @@ FURSPoseResult UURSRobotCoreComponent::SetPose(const FString& ActorId, const FVe
 			}
 			SyncCmd.TimestampSec = FPlatformTime::Seconds();
 			SyncCmd.bValid = true;
-			Ep->CmdBuffer->Publish();
+			Ep->CmdBuffer->PublishValue(SyncCmd);
 		}
 
 		mj_forward(Model, Data);
@@ -1413,7 +1417,7 @@ FURSPoseResult UURSRobotCoreComponent::GetPose(const FString& ActorId) const
 	}
 
 	FScopeLock PhysicsLock(&ManagerPtr->PhysicsEngine->CallbackMutex);
-	// no lock needed;
+	FScopeLock EndpointLock(&EndpointMutex);
 	const FRobotEndpoint* Ep = FindEndpoint(ActorId);
 	if (!Ep)
 	{
@@ -1578,7 +1582,7 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 	bool bHasEndpoint = false;
 	TArray<FString> NonRootJointNames;
 	{
-		// no lock needed;
+		FScopeLock EndpointLock(&EndpointMutex);
 		if (const FRobotEndpoint* Endpoint = FindEndpoint(ActorId))
 		{
 			bHasEndpoint = true;
