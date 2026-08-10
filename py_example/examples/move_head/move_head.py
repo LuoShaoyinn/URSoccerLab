@@ -129,7 +129,7 @@ def main(default_mode: str = "sweep") -> int:
                         continue
                     cmd[a] = body_hold[i].get(a, 0.0)
                 if hy and hp:
-                    sign = 1.0 if i == 0 else -1.0
+                    sign = 1.0  # both robots sweep same direction
                     cmd[hy] = sign * head_yaw
                     cmd[hp] = head_pitch
                 clients[i].send_command(cmd)
