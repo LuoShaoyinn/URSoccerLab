@@ -69,16 +69,10 @@ private:
 	struct FCameraState {
 		FString ActorId;
 		bool bRgbReadbackRequested = false;
+		bool bRgbEncodeInFlight = false;
 		uint64 LastNDisplayRgbSequence = 0;
 	};
 	TArray<FCameraState> CameraStates;
-
-	// Admin queue: network thread → game thread
-	struct FAdminRequest {
-		TArray<uint8> Json;
-		int32 ClientIdx = -1;
-	};
-	TQueue<FAdminRequest, EQueueMode::Mpsc> AdminRequestQueue;
 
 	bool StartTransport();
 	void StopTransport();

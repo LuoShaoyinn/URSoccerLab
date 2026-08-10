@@ -60,10 +60,6 @@ private:
 class URSJsonParser
 {
 public:
-	// Parse a command JSON (flat name→float map).
-	// Returns true if this is a command (not gain params).
-	static bool ParseCommand(const uint8* Data, int32 Len, FCommandSet& Out);
-
 	// Parse a gain/controller-params JSON.
 	// Returns true if the JSON contains gain fields.
 	static bool ParseGainParams(const uint8* Data, int32 Len,

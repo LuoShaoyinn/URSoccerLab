@@ -7,6 +7,7 @@
 #include "Network/URSNetworkThread.h"
 #include "Network/URSJson.h"
 #include "Transport/URSTcpProtocol.h"
+#include "Runtime/URSAdminProtocol.h"
 
 #include "Sockets.h"
 #include "SocketSubsystem.h"
@@ -299,83 +300,104 @@ void UURSTcpTransportComponent::TickCameraCapture()
 		if (bUseNDisplay)
 			CameraStates[Ri].LastNDisplayRgbSequence = LatestNDisplaySequence;
 
-		// Build v2 image message and encode (async)
-		const uint8 ImageMsgVersion = 0x02;
-		const uint8 ImageCount = Images.Num();
-		const uint16 Flags = 0;
+		// Bounded asynchronous encode: at most one in-flight RGB job per robot.
+		// If the previous encode has not finished, this capture opportunity is
+		// dropped instead of accumulating a queue.
+		if (CameraStates[Ri].bRgbEncodeInFlight)
+			continue;
+
 		static uint32 GlobalSeq = 0;
-		uint32 Seq = GlobalSeq++;
+		const uint32 Seq = GlobalSeq++;
+		const double SimTime = State.SimTime;
+		const FString Compress = CameraCompress;
+		const int32 Quality = JpegQuality;
+		IImageWrapperModule* LocalImageWrapper = ImageWrapperModule;
+		TWeakObjectPtr<UURSTcpTransportComponent> WeakThis(this);
 
-		// For now, encode synchronously (simpler — async can be re-added)
-		TArray<uint8> Payload;
-		Payload.Add(ImageMsgVersion);
-		Payload.Add(ImageCount);
-		Payload.Append((uint8*)&Flags, 2);
-		Payload.Append((uint8*)&Seq, 4);
-		// sim_time from the same snapshot used for this robot's metadata.
-		double SimTime = State.SimTime;
-		Payload.Append((uint8*)&SimTime, 8);
+		CameraStates[Ri].bRgbEncodeInFlight = true;
 
-		for (const FRawImage& Img : Images)
+		const uint8 ImageCount = Images.Num();
+		Async(EAsyncExecution::ThreadPool, [WeakThis, Ri, Seq, SimTime, Compress, Quality, LocalImageWrapper, ImageCount, Images = MoveTemp(Images)]()
 		{
-			FTCHARToUTF8 NameConv(*Img.Name);
-			uint8 NameLen = (uint8)NameConv.Length();
+			TArray<uint8> Payload;
+			Payload.Add(0x02); // version
+			Payload.Add(ImageCount);
+			const uint16 Flags = 0;
+			Payload.Append((uint8*)&Flags, 2);
+			Payload.Append((uint8*)&Seq, 4);
+			Payload.Append((uint8*)&SimTime, 8);
 
-			// Encode JPEG first (if requested)
-			uint32 RawLen = Img.Pixels.Num() * 4;
-			uint32 DataLen = RawLen;
-			const uint8* DataPtr = (const uint8*)Img.Pixels.GetData();
-			uint8 Codec = 0x00; // default raw
-
-			// Check pixel validity
-			bool bPixelsValid = false;
-			if (Img.Pixels.Num() == Img.Width * Img.Height && Img.Pixels.Num() > 0)
+			for (const FRawImage& Img : Images)
 			{
-				bPixelsValid = true;
-				// Quick check: not all zero
-				int32 NonZero = 0;
-				for (int32 i = 0; i < FMath::Min(100, Img.Pixels.Num()); ++i)
-					if (Img.Pixels[i].DWColor() != 0) { ++NonZero; break; }
-				if (NonZero == 0) bPixelsValid = false;
-			}
+				FTCHARToUTF8 NameConv(*Img.Name);
+				uint8 NameLen = (uint8)NameConv.Length();
 
-			// JPEG encoding — try CompressImage, fall back to raw
-			TArray64<uint8> JpegData; // must outlive the payload append below
-			if (CameraCompress == TEXT("jpeg") && ImageWrapperModule && bPixelsValid)
-			{
-				FImageView View(Img.Pixels.GetData(), Img.Width, Img.Height);
-				if (ImageWrapperModule->CompressImage(JpegData, EImageFormat::JPEG, View, JpegQuality)
-					&& JpegData.Num() > 2 && JpegData[0] == 0xFF && JpegData[1] == 0xD8)
+				uint32 RawLen = Img.Pixels.Num() * 4;
+				uint32 DataLen = RawLen;
+				const uint8* DataPtr = (const uint8*)Img.Pixels.GetData();
+				uint8 Codec = 0x00; // raw
+
+				bool bPixelsValid = false;
+				if (Img.Pixels.Num() == Img.Width * Img.Height && Img.Pixels.Num() > 0)
 				{
-					DataLen = JpegData.Num();
-					DataPtr = JpegData.GetData();
-					Codec = 0x01;
+					bPixelsValid = true;
+					int32 NonZero = 0;
+					for (int32 i = 0; i < FMath::Min(100, Img.Pixels.Num()); ++i)
+						if (Img.Pixels[i].DWColor() != 0) { ++NonZero; break; }
+					if (NonZero == 0) bPixelsValid = false;
 				}
+
+				TArray64<uint8> JpegData;
+				if (Compress == TEXT("jpeg") && LocalImageWrapper && bPixelsValid)
+				{
+					FImageView View(Img.Pixels.GetData(), Img.Width, Img.Height);
+					if (LocalImageWrapper->CompressImage(JpegData, EImageFormat::JPEG, View, Quality)
+						&& JpegData.Num() > 2 && JpegData[0] == 0xFF && JpegData[1] == 0xD8)
+					{
+						DataLen = JpegData.Num();
+						DataPtr = JpegData.GetData();
+						Codec = 0x01;
+					}
+				}
+
+				Payload.Add(NameLen);
+				Payload.Append((uint8*)NameConv.Get(), NameLen);
+				Payload.Add(Codec);
+				Payload.Add(0x00); // pixel format BGRA8
+				Payload.Add(0x00); // reserved
+				uint16 W = (uint16)Img.Width, H = (uint16)Img.Height;
+				Payload.Append((uint8*)&W, 2);
+				Payload.Append((uint8*)&H, 2);
+				Payload.Append((uint8*)&RawLen, 4);
+				Payload.Append((uint8*)&DataLen, 4);
+				Payload.Append(DataPtr, DataLen);
 			}
 
-			// Write entry: [name_len][name][codec][pixfmt][reserved][w][h][rawlen][datalen][data]
-			Payload.Add(NameLen);
-			Payload.Append((uint8*)NameConv.Get(), NameLen);
-			Payload.Add(Codec);
-			Payload.Add(0x00); // pixel format BGRA8
-			Payload.Add(0x00); // reserved
-			uint16 W = (uint16)Img.Width, H = (uint16)Img.Height;
-			Payload.Append((uint8*)&W, 2);
-			Payload.Append((uint8*)&H, 2);
-			Payload.Append((uint8*)&RawLen, 4);
-			Payload.Append((uint8*)&DataLen, 4);
-			Payload.Append(DataPtr, DataLen);
-		}
-
-		// Push to network thread
-		NetThread->EnqueueCameraFrame(Ri, URSoccerLab::TcpProtocol::TypeRgb, Payload.GetData(), Payload.Num());
+			if (UURSTcpTransportComponent* Self = WeakThis.Get())
+			{
+				FCompletedVisionPacket Pkt;
+				Pkt.RobotIdx = Ri;
+				Pkt.FrameType = URSoccerLab::TcpProtocol::TypeRgb;
+				Pkt.Payload = MoveTemp(Payload);
+				Self->CompletedVisionPackets.Enqueue(MoveTemp(Pkt));
+			}
+		});
 	}
 }
 
 void UURSTcpTransportComponent::DrainCompletedVision()
 {
-	// Currently encoding is synchronous in TickCameraCapture
-	// This is for async encode results if we switch back to async
+	// Hand off async-encoded vision packets to the network thread. Runs on the
+	// game thread each tick; the encode jobs enqueue results on the pool.
+	if (!NetThread) return;
+	FCompletedVisionPacket Pkt;
+	while (CompletedVisionPackets.Dequeue(Pkt))
+	{
+		if (Pkt.RobotIdx >= 0 && Pkt.RobotIdx < CameraStates.Num())
+			CameraStates[Pkt.RobotIdx].bRgbEncodeInFlight = false;
+		NetThread->EnqueueCameraFrame(Pkt.RobotIdx, Pkt.FrameType,
+			Pkt.Payload.GetData(), Pkt.Payload.Num());
+	}
 }
 
 // ============================================================================
@@ -464,16 +486,8 @@ void UURSTcpTransportComponent::TickAdmin()
 
 void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FString& JsonStr)
 {
-	TSharedPtr<FJsonObject> Root;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
-	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid()) return;
-
-	auto SendReply = [&](TSharedPtr<FJsonObject> ReplyObj)
+	auto SendReply = [&](const FString& ReplyStr)
 	{
-		FString ReplyStr;
-		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
-			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ReplyStr);
-		FJsonSerializer::Serialize(ReplyObj.ToSharedRef(), W);
 		FTCHARToUTF8 Utf8(*ReplyStr);
 		int32 FrameLen = 1 + Utf8.Length();
 		Client.WriteBuf.Add((FrameLen >> 24) & 0xFF);
@@ -484,97 +498,73 @@ void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FSt
 		Client.WriteBuf.Append((const uint8*)Utf8.Get(), Utf8.Length());
 	};
 
-	FString Command;
-	if (!Root->TryGetStringField(TEXT("command"), Command)) return;
+	using namespace URSoccerLab;
 
-	// All admin commands put their params inside "args"
-	const TSharedPtr<FJsonObject>* ArgsPtr;
-	TSharedPtr<FJsonObject> Args;
-	if (Root->TryGetObjectField(TEXT("args"), ArgsPtr) && ArgsPtr->IsValid())
-		Args = *ArgsPtr;
-	if (!Args.IsValid()) Args = Root; // fallback: flat (no args wrapper)
+	FAdminPoseRequest Req;
+	const EAdminRequestParse Parse = FAdminProtocol::ParseRequest(JsonStr, Req);
+	if (Parse != EAdminRequestParse::Accepted)
+	{
+		SendReply(FAdminProtocol::BuildErrorReply(
+			FAdminProtocol::CommandName(Req.Op), FAdminProtocol::LexToString(Parse), TEXT("")));
+		return;
+	}
 
-	if (Command == TEXT("set_pose") && Core.IsValid())
+	const FString CmdName = FAdminProtocol::CommandName(Req.Op);
+
+	if (!Core.IsValid())
 	{
-		FString ActorId;
-		Args->TryGetStringField(TEXT("actor_id"), ActorId);
-		const TArray<TSharedPtr<FJsonValue>>* Trans;
-		FVector TransV = FVector::ZeroVector;
-		if (Args->TryGetArrayField(TEXT("translation_m"), Trans) && Trans->Num() >= 3)
-			TransV = FVector((*Trans)[0]->AsNumber(), (*Trans)[1]->AsNumber(), (*Trans)[2]->AsNumber());
-		FQuat RotQuat = FQuat::Identity;
-		const TArray<TSharedPtr<FJsonValue>>* Rot;
-		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), Rot) && Rot->Num() >= 4)
-			RotQuat = FQuat((*Rot)[1]->AsNumber(), (*Rot)[2]->AsNumber(), (*Rot)[3]->AsNumber(), (*Rot)[0]->AsNumber());
-		TArray<float> JointQpos;
-		const TArray<TSharedPtr<FJsonValue>>* JQ;
-		if (Args->TryGetArrayField(TEXT("joint_qpos"), JQ))
-			for (const auto& V : *JQ) JointQpos.Add(V->AsNumber());
-		FURSPoseResult Result = Core->SetPose(ActorId, &TransV, &RotQuat, &JointQpos);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), Result.bOk);
-		SendReply(Reply);
+		SendReply(FAdminProtocol::BuildErrorReply(CmdName, TEXT("not_ready"), TEXT("Core unavailable")));
+		return;
 	}
-	else if (Command == TEXT("reset") && Core.IsValid())
+
+	const FVector* Trans = Req.TranslationMeters.IsSet() ? &Req.TranslationMeters.GetValue() : nullptr;
+	const FQuat* Rot = Req.RotationQuatXyzw.IsSet() ? &Req.RotationQuatXyzw.GetValue() : nullptr;
+	const TArray<float>* Jq = Req.JointQpos.IsSet() ? &Req.JointQpos.GetValue() : nullptr;
+
+	switch (Req.Op)
 	{
-		FString ActorId;
-		Args->TryGetStringField(TEXT("actor_id"), ActorId);
-		FURSPoseResult Result = Core->ResetRobot(ActorId);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), Result.bOk);
-		SendReply(Reply);
+	case EAdminOp::SetPose:
+	{
+		FURSPoseResult R = Core->SetPose(Req.ActorId, Trans, Rot, Jq);
+		if (R.bOk)
+			SendReply(FAdminProtocol::BuildOkSetPoseReply(Req.ActorId, R.AppliedTranslation, R.AppliedRotation, R.AppliedJointQpos, R.SimTime));
+		else
+			SendReply(FAdminProtocol::BuildErrorReply(CmdName, R.Error, R.Message));
+		break;
 	}
-	else if (Command == TEXT("get_pose") && Core.IsValid())
+	case EAdminOp::GetPose:
 	{
-		FString ActorId;
-		Args->TryGetStringField(TEXT("actor_id"), ActorId);
-		FURSPoseResult Result = Core->GetPose(ActorId);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), Result.bOk);
-		if (Result.bOk)
-		{
-			Reply->SetArrayField(TEXT("base_pos"), {
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.X),
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Y),
-				MakeShared<FJsonValueNumber>(Result.AppliedTranslation.Z) });
-			Reply->SetArrayField(TEXT("base_quat"), {
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.X),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Y),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.Z),
-				MakeShared<FJsonValueNumber>(Result.AppliedRotation.W) });
-			TArray<TSharedPtr<FJsonValue>> JQ;
-			for (float Q : Result.AppliedJointQpos) JQ.Add(MakeShared<FJsonValueNumber>(Q));
-			Reply->SetArrayField(TEXT("joint_qpos"), JQ);
-		}
-		SendReply(Reply);
+		FURSPoseResult R = Core->GetPose(Req.ActorId);
+		if (R.bOk)
+			SendReply(FAdminProtocol::BuildOkGetPoseReply(Req.ActorId, R.AppliedTranslation, R.AppliedRotation, R.AppliedJointQpos, R.SimTime));
+		else
+			SendReply(FAdminProtocol::BuildErrorReply(CmdName, R.Error, R.Message));
+		break;
 	}
-	else if (Command == TEXT("lock_pose") && Core.IsValid())
+	case EAdminOp::Reset:
 	{
-		FString ActorId;
-		Args->TryGetStringField(TEXT("actor_id"), ActorId);
-		FVector Trans = FVector::ZeroVector; FQuat Rot = FQuat::Identity; TArray<float> JQ;
-		const TArray<TSharedPtr<FJsonValue>>* T;
-		if (Args->TryGetArrayField(TEXT("translation_m"), T) && T->Num() >= 3)
-			Trans = FVector((*T)[0]->AsNumber(), (*T)[1]->AsNumber(), (*T)[2]->AsNumber());
-		const TArray<TSharedPtr<FJsonValue>>* R;
-		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), R) && R->Num() >= 4)
-			Rot = FQuat((*R)[1]->AsNumber(), (*R)[2]->AsNumber(), (*R)[3]->AsNumber(), (*R)[0]->AsNumber());
-		const TArray<TSharedPtr<FJsonValue>>* J;
-		if (Args->TryGetArrayField(TEXT("joint_qpos"), J))
-			for (const auto& V : *J) JQ.Add(V->AsNumber());
-		Core->SetPoseLock(ActorId, true, &Trans, &Rot, &JQ);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), true);
-		SendReply(Reply);
+		FURSPoseResult R = Core->ResetRobot(Req.ActorId);
+		if (R.bOk) SendReply(FAdminProtocol::BuildOkReply(CmdName, Req.ActorId));
+		else       SendReply(FAdminProtocol::BuildErrorReply(CmdName, R.Error, R.Message));
+		break;
 	}
-	else if (Command == TEXT("unlock_pose") && Core.IsValid())
+	case EAdminOp::LockPose:
 	{
-		FString ActorId;
-		Root->TryGetStringField(TEXT("actor_id"), ActorId);
-		Core->SetPoseLock(ActorId, false);
-		auto Reply = MakeShared<FJsonObject>();
-		Reply->SetBoolField(TEXT("ok"), true);
-		SendReply(Reply);
+		FURSPoseResult R = Core->SetPoseLock(Req.ActorId, true, Trans, Rot, Jq);
+		if (R.bOk) SendReply(FAdminProtocol::BuildOkReply(CmdName, Req.ActorId));
+		else       SendReply(FAdminProtocol::BuildErrorReply(CmdName, R.Error, R.Message));
+		break;
+	}
+	case EAdminOp::UnlockPose:
+	{
+		FURSPoseResult R = Core->SetPoseLock(Req.ActorId, false);
+		if (R.bOk) SendReply(FAdminProtocol::BuildOkReply(CmdName, Req.ActorId));
+		else       SendReply(FAdminProtocol::BuildErrorReply(CmdName, R.Error, R.Message));
+		break;
+	}
+	default:
+		SendReply(FAdminProtocol::BuildErrorReply(CmdName, TEXT("unknown_command"), TEXT("")));
+		break;
 	}
 }
 

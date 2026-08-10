@@ -783,43 +783,47 @@ FURSPoseResult UURSRobotCoreComponent::SetPoseLock(const FString& ActorId, bool 
 	return Result;
 }
 
-void UURSRobotCoreComponent::ApplyCommands(double NowSec)
-{
-	static constexpr int32 MAX_CMD = 64;
-	static thread_local float CmdBuf[MAX_CMD];
-
-	for (FRobotEndpoint& Ep : Endpoints)
-	{
-		const FCommandSet& Cmd = Ep.CmdBuffer->Front();
-		const bool bTimedOut = !Cmd.bValid ||
-			(NowSec - Cmd.TimestampSec > CommandTimeoutSec);
-		const int32 Count = FMath::Min(Ep.Actuators.Num(), MAX_CMD);
-
-		for (int32 i = 0; i < Count; ++i)
-			CmdBuf[i] = bTimedOut ? 0.0f : Cmd.Targets[i];
-
-		// Write directly to mjData->ctrl (bypass URLab ApplyControls which may be skipped)
-		for (int32 Idx = 0; Idx < Count; ++Idx)
-		{
-			const int32 Am = Ep.Actuators[Idx].MjId;
-			if (Am >= 0)
-			{
-				// Still set NetworkControl for state reporting
-				if (UMjActuator* Actuator = Ep.Actuators[Idx].Actuator.Get())
-					Actuator->SetNetworkControl(CmdBuf[Idx]);
-			}
-		}
-	}
-}
-
 void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 {
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		const FGainSet& G = Ep.GainBuffer->Front();
-		if (!G.bValid) continue;
+		const FGainSet& Requested = Ep.GainBuffer->Front();
+		if (!Requested.bValid) continue;
 
-		const bool bTorque = (G.Mode == 1);
+		FGainSet& Eff = Ep.EffectiveGains;
+		const int32 N = FMath::Min(Ep.Actuators.Num(), URS_MAX_ACTUATORS);
+
+		// On the first valid gain command, snapshot the current mjModel gains as
+		// the baseline. This preserves the MJCF defaults (kp/kv) for fields the
+		// client never names, so a partial update is genuinely sticky.
+		if (!Ep.bGainsSnapshotted)
+		{
+			for (int32 Idx = 0; Idx < N; ++Idx)
+			{
+				const int32 Am = Ep.Actuators[Idx].MjId;
+				if (Am < 0 || Am >= Model->nu) continue;
+				const mjtNum* gp = Model->actuator_gainprm + Am * mjNGAIN;
+				const mjtNum* bp = Model->actuator_biasprm + Am * mjNBIAS;
+				Eff.Kp[Idx] = gp[0];
+				// MuJoCo folds kv and damping into a single velocity bias
+				// bp[2] = -(kv + damping); capture the combined term here.
+				Eff.Kv[Idx] = FMath::Abs(bp[2]);
+				Eff.Damping[Idx] = 0.0;
+				Eff.bHasKp[Idx] = Eff.bHasKv[Idx] = Eff.bHasDamping[Idx] = true;
+			}
+			Eff.Mode = 0;
+			Eff.bHasMode = true;
+			Ep.bGainsSnapshotted = true;
+		}
+
+		// Merge only the fields the client actually provided.
+		for (int32 Idx = 0; Idx < N; ++Idx)
+		{
+			if (Requested.bHasKp[Idx])      Eff.Kp[Idx] = Requested.Kp[Idx];
+			if (Requested.bHasKv[Idx])      Eff.Kv[Idx] = Requested.Kv[Idx];
+			if (Requested.bHasDamping[Idx]) Eff.Damping[Idx] = Requested.Damping[Idx];
+		}
+		if (Requested.bHasMode) Eff.Mode = Requested.Mode;
 
 		for (int32 Idx = 0; Idx < Ep.Actuators.Num(); ++Idx)
 		{
@@ -830,7 +834,7 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 			mjtNum* gp = Model->actuator_gainprm + Am * mjNGAIN;
 			mjtNum* bp = Model->actuator_biasprm + Am * mjNBIAS;
 
-			if (bTorque)
+			if (Eff.Mode == 1) // torque
 			{
 				gp[0] = 1.0;
 				bp[1] = 0.0;
@@ -838,9 +842,9 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 			}
 			else
 			{
-				const double Kp = FMath::IsFinite(G.Kp[Idx]) ? G.Kp[Idx] : 0.0;
-				const double Kv = FMath::IsFinite(G.Kv[Idx]) ? G.Kv[Idx] : 0.0;
-				const double Damping = FMath::IsFinite(G.Damping[Idx]) ? G.Damping[Idx] : 0.0;
+				const double Kp = FMath::IsFinite(Eff.Kp[Idx]) ? Eff.Kp[Idx] : 0.0;
+				const double Kv = FMath::IsFinite(Eff.Kv[Idx]) ? Eff.Kv[Idx] : 0.0;
+				const double Damping = FMath::IsFinite(Eff.Damping[Idx]) ? Eff.Damping[Idx] : 0.0;
 				gp[0] = Kp;
 				bp[1] = -Kp;
 				bp[2] = -(Kv + Damping);
@@ -1011,12 +1015,20 @@ void UURSRobotCoreComponent::SubmitControllerParams(
 	for (int32 i = 0; i < N; ++i)
 	{
 		const FString& Name = Ep->Actuators[i].Name;
-		if (Kp)      G.Kp[i]      = Kp->FindRef(Name);
-		if (Kv)      G.Kv[i]      = Kv->FindRef(Name);
-		if (Damping) G.Damping[i] = Damping->FindRef(Name);
+		// Only flag actuators the caller actually named, so a partial update
+		// (e.g. kp only) does not reset the other gain fields to defaults.
+		if (Kp)
+			if (const double* V = Kp->Find(Name)) { G.Kp[i] = *V; G.bHasKp[i] = true; }
+		if (Kv)
+			if (const double* V = Kv->Find(Name)) { G.Kv[i] = *V; G.bHasKv[i] = true; }
+		if (Damping)
+			if (const double* V = Damping->Find(Name)) { G.Damping[i] = *V; G.bHasDamping[i] = true; }
 	}
 	if (ActuatorMode)
+	{
 		G.Mode = (*ActuatorMode == TEXT("torque")) ? 1 : 0;
+		G.bHasMode = true;
+	}
 	G.bValid = true;
 	Ep->GainBuffer->PublishValue(G);
 }

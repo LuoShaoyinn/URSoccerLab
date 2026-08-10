@@ -113,10 +113,7 @@ private:
 	void PublishStates();
 	void DrainCameraQueues();
 	void FlushWrites();
-	void HandleAdmin();
 
 	// Frame protocol helpers
-	static void FrameClientRead(URSNonBlockingSocket& Sock, TArray<uint8>& ReadBuf,
-		TArray<uint8>& OutFrames);
 	static void EnqueueFrame(TArray<uint8>& WriteBuf, uint8 Type, const uint8* Data, int32 Len);
 };

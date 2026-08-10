@@ -104,10 +104,10 @@ const TCHAR* FAdminProtocol::LexToString(EAdminRequestParse Status)
 		return TEXT("Accepted");
 	case EAdminRequestParse::NotJson:
 		return TEXT("NotJson");
-	case EAdminRequestParse::MissingOp:
-		return TEXT("MissingOp");
-	case EAdminRequestParse::UnknownOp:
-		return TEXT("UnknownOp");
+	case EAdminRequestParse::MissingCommand:
+		return TEXT("MissingCommand");
+	case EAdminRequestParse::UnknownCommand:
+		return TEXT("UnknownCommand");
 	case EAdminRequestParse::BadTranslation:
 		return TEXT("BadTranslation");
 	case EAdminRequestParse::BadRotation:
@@ -118,6 +118,19 @@ const TCHAR* FAdminProtocol::LexToString(EAdminRequestParse Status)
 		return TEXT("BadJointQposDim");
 	}
 	return TEXT("Unknown");
+}
+
+FString FAdminProtocol::CommandName(EAdminOp Op)
+{
+	switch (Op)
+	{
+	case EAdminOp::SetPose:    return TEXT("set_pose");
+	case EAdminOp::GetPose:    return TEXT("get_pose");
+	case EAdminOp::Reset:      return TEXT("reset");
+	case EAdminOp::LockPose:   return TEXT("lock_pose");
+	case EAdminOp::UnlockPose: return TEXT("unlock_pose");
+	default:                   return TEXT("");
+	}
 }
 
 EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminPoseRequest& Out)
@@ -131,32 +144,41 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 		return EAdminRequestParse::NotJson;
 	}
 
-	FString OpStr;
-	if (!Root->TryGetStringField(TEXT("op"), OpStr) || OpStr.IsEmpty())
+	FString Command;
+	if (!Root->TryGetStringField(TEXT("command"), Command) || Command.IsEmpty())
 	{
-		return EAdminRequestParse::MissingOp;
+		return EAdminRequestParse::MissingCommand;
 	}
-	if (OpStr == TEXT("set_pose"))
+
+	if (Command == TEXT("set_pose"))           Out.Op = EAdminOp::SetPose;
+	else if (Command == TEXT("get_pose"))      Out.Op = EAdminOp::GetPose;
+	else if (Command == TEXT("reset"))         Out.Op = EAdminOp::Reset;
+	else if (Command == TEXT("lock_pose"))     Out.Op = EAdminOp::LockPose;
+	else if (Command == TEXT("unlock_pose"))   Out.Op = EAdminOp::UnlockPose;
+	else                                      return EAdminRequestParse::UnknownCommand;
+
+	// Pose parameters live inside "args". Fall back to the root object so a
+	// flat (un-wrapped) request still works for simple callers.
+	const TSharedPtr<FJsonObject>* ArgsPtr;
+	TSharedPtr<FJsonObject> Args;
+	if (Root->TryGetObjectField(TEXT("args"), ArgsPtr) && ArgsPtr->IsValid())
 	{
-		Out.Op = EAdminOp::SetPose;
-	}
-	else if (OpStr == TEXT("reset"))
-	{
-		Out.Op = EAdminOp::Reset;
-		return EAdminRequestParse::Accepted;
-	}
-	else if (OpStr == TEXT("get_pose"))
-	{
-		Out.Op = EAdminOp::GetPose;
-		return EAdminRequestParse::Accepted;
+		Args = *ArgsPtr;
 	}
 	else
 	{
-		return EAdminRequestParse::UnknownOp;
+		Args = Root;
+	}
+	Args->TryGetStringField(TEXT("actor_id"), Out.ActorId);
+
+	// Only set_pose and lock_pose carry pose fields.
+	if (Out.Op != EAdminOp::SetPose && Out.Op != EAdminOp::LockPose)
+	{
+		return EAdminRequestParse::Accepted;
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* TransArr = nullptr;
-	if (Root->TryGetArrayField(TEXT("translation_m"), TransArr))
+	if (Args->TryGetArrayField(TEXT("translation_m"), TransArr))
 	{
 		FVector Trans;
 		if (!ReadVec3(TransArr, Trans))
@@ -167,7 +189,7 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* RotArr = nullptr;
-	if (Root->TryGetArrayField(TEXT("rotation_quat_xyzw"), RotArr))
+	if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RotArr))
 	{
 		FQuat Rot;
 		if (!ReadQuatXyzw(RotArr, Rot))
@@ -178,7 +200,7 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* JointArr = nullptr;
-	if (Root->TryGetArrayField(TEXT("joint_qpos"), JointArr))
+	if (Args->TryGetArrayField(TEXT("joint_qpos"), JointArr))
 	{
 		TArray<float> Qpos;
 		if (!ReadFloatArray(JointArr, Qpos))

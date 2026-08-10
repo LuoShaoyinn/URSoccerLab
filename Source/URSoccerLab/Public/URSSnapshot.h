@@ -4,40 +4,6 @@
 #include "CoreMinimal.h"
 
 // ---------------------------------------------------------------------------
-// TTripleBuffer — lock-free single-producer / single-consumer triple buffer.
-//
-// Producer (physics thread, 500 Hz):
-//   auto& ref = Buffer.Back();
-//   fill ref ...
-//   Buffer.Publish();
-//
-// Consumer (game thread, 60 Hz):
-//   const auto* ptr = Buffer.Front();  // always returns latest complete data
-//
-// No allocation, no blocking, no torn reads.
-// ---------------------------------------------------------------------------
-template <typename T>
-class TTripleBuffer
-{
-	T Items[3];
-	std::atomic<int32> Published{2};
-	int32 BackIdx = 0;
-	int32 FrontIdx = 1;
-
-public:
-	TTripleBuffer() {}
-
-	// ---- Producer (call from one thread only) ----
-	T& Back() { return Items[BackIdx]; }
-	void Publish() { BackIdx = Published.exchange(BackIdx, std::memory_order_acq_rel); }
-
-	// ---- Consumer (call from one thread only) ----
-	const T& Front() const { return Items[Published.load(std::memory_order_acquire)]; }
-	bool IsNew() const { return Published.load(std::memory_order_acquire) != FrontIdx; }
-	void MarkConsumed() { FrontIdx = Published.load(std::memory_order_acquire); }
-};
-
-// ---------------------------------------------------------------------------
 // FRobotSnapshot — flat POD struct written by the physics thread every step.
 // Read by the game / network thread to build state JSON.
 // ---------------------------------------------------------------------------

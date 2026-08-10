@@ -179,6 +179,7 @@ private:
 			, StateBuffer(MoveTemp(Other.StateBuffer))
 			, GameStateBuffer(MoveTemp(Other.GameStateBuffer))
 			, CmdBuffer(MoveTemp(Other.CmdBuffer)), GainBuffer(MoveTemp(Other.GainBuffer))
+			, EffectiveGains(Other.EffectiveGains), bGainsSnapshotted(Other.bGainsSnapshotted)
 			, PoseLock(MoveTemp(Other.PoseLock))
 			, Privilege(MoveTemp(Other.Privilege))
 			, Noise(MoveTemp(Other.Noise))
@@ -197,6 +198,8 @@ private:
 			GameStateBuffer = MoveTemp(Other.GameStateBuffer);
 			CmdBuffer = MoveTemp(Other.CmdBuffer);
 			GainBuffer = MoveTemp(Other.GainBuffer);
+			EffectiveGains = Other.EffectiveGains;
+			bGainsSnapshotted = Other.bGainsSnapshotted;
 			PoseLock = MoveTemp(Other.PoseLock);
 			Privilege = MoveTemp(Other.Privilege);
 			Noise = MoveTemp(Other.Noise);
@@ -219,6 +222,11 @@ private:
 		TSharedPtr<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe> GameStateBuffer;
 		TSharedPtr<URSTripleBuffer<FCommandSet>, ESPMode::ThreadSafe> CmdBuffer;
 		TSharedPtr<URSTripleBuffer<FGainSet>, ESPMode::ThreadSafe> GainBuffer;
+
+		// Effective (merged) gains applied to mjModel. A partial controller
+		// update only overwrites the fields it names; the rest persist here.
+		FGainSet EffectiveGains;
+		bool bGainsSnapshotted = false;
 
 		FPoseLock PoseLock;
 		URSoccerLab::FURSPrivilegeConfig Privilege;
@@ -245,7 +253,6 @@ private:
 	void RegisterPhysicsCallbacks();
 	void PreStepPhysics(struct mjModel_* Model, struct mjData_* Data);
 	void PublishSnapshot(struct mjModel_* Model, struct mjData_* Data, int32 Ri);
-	void ApplyCommands(double NowSec);
 	void ApplyGains(struct mjModel_* Model);
 	void ApplyPoseLocks(struct mjModel_* Model, struct mjData_* Data);
 	FRobotEndpoint* FindEndpoint(const FString& ActorId);

@@ -238,9 +238,11 @@ void URSNetworkThread::PublishStates()
 
 void URSNetworkThread::DrainCameraQueues()
 {
+	// Always drain the queue. When no client is connected the packet is
+	// simply discarded, so the producer (game thread) can never grow the
+	// queue without bound.
 	for (FRobotEndpoint& Ep : Endpoints)
 	{
-		if (Ep.Clients.Num() == 0) continue;
 		FRobotEndpoint::FCameraPacket Pkt;
 		while (Ep.CameraQueue.Dequeue(Pkt))
 		{
@@ -275,19 +277,23 @@ void URSNetworkThread::FlushWrites()
 					Ep.Clients.RemoveAt(Ci);
 					continue;
 				}
-				if (Sent > 0)
-					Client.WriteBuf.RemoveAt(0, Sent);
-				if (Client.WriteBuf.Num() > 4 * 1024 * 1024)
-					Client.WriteBuf.Reset();
+			if (Sent > 0)
+				Client.WriteBuf.RemoveAt(0, Sent);
+			// Back-pressure: a client that cannot keep up would otherwise hold
+			// partial frames in its write buffer. Disconnect it so the protocol
+			// stays framed, instead of resetting the buffer mid-frame.
+			if (Client.WriteBuf.Num() > 4 * 1024 * 1024)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[NET] robot '%s' client %d back-pressure disconnect (queued=%d)"),
+					*Ep.ActorId, Ci, Client.WriteBuf.Num());
+				Client.Socket.Close();
+				Ep.Clients.RemoveAt(Ci);
+				continue;
+			}
 			}
 		}
 	}
 }
-
-void URSNetworkThread::HandleAdmin() {}
-
-void URSNetworkThread::FrameClientRead(URSNonBlockingSocket&,
-	TArray<uint8>&, TArray<uint8>&) {}
 
 void URSNetworkThread::EnqueueFrame(TArray<uint8>& WriteBuf, uint8 Type,
 	const uint8* Data, int32 Len)

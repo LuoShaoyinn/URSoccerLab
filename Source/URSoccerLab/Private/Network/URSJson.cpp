@@ -170,28 +170,6 @@ bool URSJsonParser::IsControllerParams(const uint8* Data, int32 Len)
 	return bResult;
 }
 
-bool URSJsonParser::ParseCommand(const uint8* Data, int32 Len, FCommandSet& Out)
-{
-	yyjson_doc* Doc = yyjson_read((const char*)Data, Len, YYJSON_READ_NOFLAG);
-	if (!Doc) return false;
-	yyjson_val* Root = yyjson_doc_get_root(Doc);
-	if (!Root || !yyjson_is_obj(Root))
-	{
-		yyjson_doc_free(Doc);
-		return false;
-	}
-
-	// Flat name→float map: find matching actuator names
-	bool bAny = false;
-	// NOTE: The actuator name→index mapping is NOT available here (the parser
-	// doesn't know the endpoint layout). The caller handles the mapping.
-	// For now, just flag that this is a command (not gain params).
-	// The network thread will do the name→index resolution.
-
-	yyjson_doc_free(Doc);
-	return true;  // it's a command (not gain params)
-}
-
 bool URSJsonParser::ParseGainParams(const uint8* Data, int32 Len,
 	FGainSet& Out, const TArray<FString>& ActuatorNames)
 {
@@ -206,7 +184,7 @@ bool URSJsonParser::ParseGainParams(const uint8* Data, int32 Len,
 
 	const int32 N = FMath::Min(ActuatorNames.Num(), URS_MAX_ACTUATORS);
 
-	auto ParseMap = [&](const char* Key, double* Dst)
+	auto ParseMap = [&](const char* Key, double* Dst, bool* HasDst)
 	{
 		yyjson_val* Obj = yyjson_obj_get(Root, Key);
 		if (!Obj || !yyjson_is_obj(Obj)) return;
@@ -226,29 +204,26 @@ bool URSJsonParser::ParseGainParams(const uint8* Data, int32 Len,
 				if (ActuatorNames[i] == FName)
 				{
 					Dst[i] = Value;
+					HasDst[i] = true;
 					break;
 				}
 			}
 		}
 	};
 
-	ParseMap("kp", Out.Kp);
-	ParseMap("kv", Out.Kv);
-	ParseMap("damping", Out.Damping);
+	ParseMap("kp", Out.Kp, Out.bHasKp);
+	ParseMap("kv", Out.Kv, Out.bHasKv);
+	ParseMap("damping", Out.Damping, Out.bHasDamping);
 
 	yyjson_val* ModeVal = yyjson_obj_get(Root, "actuator_mode");
 	if (ModeVal && yyjson_is_str(ModeVal))
 	{
 		const char* M = yyjson_get_str(ModeVal);
-		if (FString(UTF8_TO_TCHAR(M)) == TEXT("torque"))
-			Out.Mode = 1;
-		else
-			Out.Mode = 0;
+		Out.Mode = (FString(UTF8_TO_TCHAR(M)) == TEXT("torque")) ? 1 : 0;
+		Out.bHasMode = true;
 	}
-	else
-	{
-		Out.Mode = 0;  // default position
-	}
+	// When actuator_mode is absent, leave Out.bHasMode false so ApplyGains
+	// preserves the previously-effective mode instead of resetting to position.
 
 	Out.bValid = true;
 	yyjson_doc_free(Doc);
