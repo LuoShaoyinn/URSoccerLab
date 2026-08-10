@@ -8,6 +8,7 @@
 #include "MuJoCo/Components/Sensors/MjCamera.h"
 #include "MuJoCo/Core/AMjManager.h"
 #include "MuJoCo/Core/MjArticulation.h"
+#include "EngineUtils.h"
 #include "MuJoCo/Core/MjPhysicsEngine.h"
 #include "MuJoCo/Utils/MjUtils.h"
 #include "Transport/NetworkManager.h"
@@ -126,6 +127,16 @@ bool UURSRobotCoreComponent::Initialize()
 	if (Owner)
 	{
 		SceneConfigComp = Owner->FindComponentByClass<UURSSceneConfigComponent>();
+		if (!SceneConfigComp.IsValid())
+		{
+			// Retry: search all actors
+			for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+			{
+				SceneConfigComp = It->FindComponentByClass<UURSSceneConfigComponent>();
+				if (SceneConfigComp.IsValid()) break;
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[URS Core] SceneConfigComp valid=%d"), SceneConfigComp.IsValid());
 	}
 
 	RebuildEndpointCache();
@@ -836,9 +847,8 @@ void UURSRobotCoreComponent::ApplyGains(mjModel* Model)
 			}
 		}
 
-		// Consume the gain set so we don't apply it every step
-		Ep.GainBuffer->Back() = FGainSet{};
-		Ep.GainBuffer->Publish(); // clear by publishing empty
+		// Do NOT clear the gain buffer — gains persist in mjModel until
+		// overwritten by a new GainSet from the network thread.
 	}
 }
 

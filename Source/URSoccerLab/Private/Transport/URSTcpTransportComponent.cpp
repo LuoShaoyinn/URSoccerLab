@@ -363,6 +363,7 @@ void UURSTcpTransportComponent::TickAdmin()
 			FAdminClient NewClient;
 			NewClient.Socket = ClientSock;
 			AdminClients.Add(MoveTemp(NewClient));
+			UE_LOG(LogTemp, Warning, TEXT("[ADMIN] Client accepted, total=%d"), AdminClients.Num());
 		}
 		AdminListenerSock->HasPendingConnection(bPending);
 	}
@@ -373,11 +374,20 @@ void UURSTcpTransportComponent::TickAdmin()
 	{
 		auto& Client = AdminClients[Ci];
 		int32 BytesRead = 0;
+		bool bGotData = false;
 		while (Client.Socket->Recv(RecvBuf, sizeof(RecvBuf), BytesRead))
 		{
 			if (BytesRead > 0)
+			{
 				Client.ReadBuf.Append(RecvBuf, BytesRead);
+				bGotData = true;
+			}
 			else break;
+		}
+		if (bGotData)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ADMIN] Recv %d bytes, buf=%d"),
+				Client.ReadBuf.Num(), Client.ReadBuf.Num());
 		}
 		if (Client.Socket->GetConnectionState() == SCS_ConnectionError)
 		{
@@ -440,23 +450,29 @@ void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FSt
 	FString Command;
 	if (!Root->TryGetStringField(TEXT("command"), Command)) return;
 
+	// All admin commands put their params inside "args"
+	const TSharedPtr<FJsonObject>* ArgsPtr;
+	TSharedPtr<FJsonObject> Args;
+	if (Root->TryGetObjectField(TEXT("args"), ArgsPtr) && ArgsPtr->IsValid())
+		Args = *ArgsPtr;
+	if (!Args.IsValid()) Args = Root; // fallback: flat (no args wrapper)
+
 	if (Command == TEXT("set_pose") && Core.IsValid())
 	{
 		FString ActorId;
-		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		Args->TryGetStringField(TEXT("actor_id"), ActorId);
 		const TArray<TSharedPtr<FJsonValue>>* Trans;
 		FVector TransV = FVector::ZeroVector;
-		if (Root->TryGetArrayField(TEXT("translation_m"), Trans) && Trans->Num() >= 3)
+		if (Args->TryGetArrayField(TEXT("translation_m"), Trans) && Trans->Num() >= 3)
 			TransV = FVector((*Trans)[0]->AsNumber(), (*Trans)[1]->AsNumber(), (*Trans)[2]->AsNumber());
 		FQuat RotQuat = FQuat::Identity;
 		const TArray<TSharedPtr<FJsonValue>>* Rot;
-		if (Root->TryGetArrayField(TEXT("rotation_quat_xyzw"), Rot) && Rot->Num() >= 4)
+		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), Rot) && Rot->Num() >= 4)
 			RotQuat = FQuat((*Rot)[1]->AsNumber(), (*Rot)[2]->AsNumber(), (*Rot)[3]->AsNumber(), (*Rot)[0]->AsNumber());
 		TArray<float> JointQpos;
 		const TArray<TSharedPtr<FJsonValue>>* JQ;
-		if (Root->TryGetArrayField(TEXT("joint_qpos"), JQ))
+		if (Args->TryGetArrayField(TEXT("joint_qpos"), JQ))
 			for (const auto& V : *JQ) JointQpos.Add(V->AsNumber());
-
 		FURSPoseResult Result = Core->SetPose(ActorId, &TransV, &RotQuat, &JointQpos);
 		auto Reply = MakeShared<FJsonObject>();
 		Reply->SetBoolField(TEXT("ok"), Result.bOk);
@@ -465,7 +481,7 @@ void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FSt
 	else if (Command == TEXT("reset") && Core.IsValid())
 	{
 		FString ActorId;
-		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		Args->TryGetStringField(TEXT("actor_id"), ActorId);
 		FURSPoseResult Result = Core->ResetRobot(ActorId);
 		auto Reply = MakeShared<FJsonObject>();
 		Reply->SetBoolField(TEXT("ok"), Result.bOk);
@@ -474,7 +490,7 @@ void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FSt
 	else if (Command == TEXT("get_pose") && Core.IsValid())
 	{
 		FString ActorId;
-		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		Args->TryGetStringField(TEXT("actor_id"), ActorId);
 		FURSPoseResult Result = Core->GetPose(ActorId);
 		auto Reply = MakeShared<FJsonObject>();
 		Reply->SetBoolField(TEXT("ok"), Result.bOk);
@@ -498,16 +514,16 @@ void UURSTcpTransportComponent::ProcessAdminJson(FAdminClient& Client, const FSt
 	else if (Command == TEXT("lock_pose") && Core.IsValid())
 	{
 		FString ActorId;
-		Root->TryGetStringField(TEXT("actor_id"), ActorId);
+		Args->TryGetStringField(TEXT("actor_id"), ActorId);
 		FVector Trans = FVector::ZeroVector; FQuat Rot = FQuat::Identity; TArray<float> JQ;
 		const TArray<TSharedPtr<FJsonValue>>* T;
-		if (Root->TryGetArrayField(TEXT("translation_m"), T) && T->Num() >= 3)
+		if (Args->TryGetArrayField(TEXT("translation_m"), T) && T->Num() >= 3)
 			Trans = FVector((*T)[0]->AsNumber(), (*T)[1]->AsNumber(), (*T)[2]->AsNumber());
 		const TArray<TSharedPtr<FJsonValue>>* R;
-		if (Root->TryGetArrayField(TEXT("rotation_quat_xyzw"), R) && R->Num() >= 4)
+		if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), R) && R->Num() >= 4)
 			Rot = FQuat((*R)[1]->AsNumber(), (*R)[2]->AsNumber(), (*R)[3]->AsNumber(), (*R)[0]->AsNumber());
 		const TArray<TSharedPtr<FJsonValue>>* J;
-		if (Root->TryGetArrayField(TEXT("joint_qpos"), J))
+		if (Args->TryGetArrayField(TEXT("joint_qpos"), J))
 			for (const auto& V : *J) JQ.Add(V->AsNumber());
 		Core->SetPoseLock(ActorId, true, &Trans, &Rot, &JQ);
 		auto Reply = MakeShared<FJsonObject>();

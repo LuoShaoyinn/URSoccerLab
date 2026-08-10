@@ -154,20 +154,19 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 		if (URSJsonParser::ParseGainParams(Data, Len, Gains, Ep.Meta.ActuatorNames))
 		{
 			Gains.bValid = true;
-			Ep.GainBuf->Back() = Gains;
-			Ep.GainBuf->Publish();
+			if (Ep.GainBuf) { Ep.GainBuf->Back() = Gains; Ep.GainBuf->Publish(); }
 		}
 	}
 	else
 	{
+		FCommandSet Cmd;
+		Cmd.bValid = true;
+		Cmd.TimestampSec = FPlatformTime::Seconds();
+
 		yyjson_doc* Doc = yyjson_read((const char*)Data, Len, YYJSON_READ_NOFLAG);
 		if (!Doc) return;
 		yyjson_val* Root = yyjson_doc_get_root(Doc);
 		if (!Root || !yyjson_is_obj(Root)) { yyjson_doc_free(Doc); return; }
-
-		FCommandSet Cmd;
-		Cmd.bValid = true;
-		Cmd.TimestampSec = FPlatformTime::Seconds();
 
 		const int32 N = FMath::Min(Ep.Meta.ActuatorNames.Num(), URS_MAX_ACTUATORS);
 		yyjson_obj_iter Iter;
@@ -178,6 +177,7 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 			yyjson_val* V = yyjson_obj_iter_get_val(KeyVal);
 			if (!yyjson_is_num(V)) continue;
 			const char* K = yyjson_get_str(KeyVal);
+			if (!K) continue;
 			FString FName(UTF8_TO_TCHAR(K));
 			for (int32 i = 0; i < N; ++i)
 			{
@@ -190,8 +190,7 @@ void URSNetworkThread::ProcessClientData(int32 RobotIdx,
 		}
 		yyjson_doc_free(Doc);
 
-		Ep.CmdBuf->Back() = Cmd;
-		Ep.CmdBuf->Publish();
+		if (Ep.CmdBuf) { Ep.CmdBuf->Back() = Cmd; Ep.CmdBuf->Publish(); }
 	}
 }
 
