@@ -53,14 +53,39 @@ under `Assets`; Unreal imports them into tracked `.uasset`/`.umap` files under
 level and its referenced Content assets. MuJoCo uses a separate flat-plane
 field MJCF and never simulates the detailed background geometry.
 
-## Prerequisites
+## Start from the AppImage (prebuilt release)
 
-- Linux with Vulkan-capable graphics drivers
-- Unreal Engine 5.7 (the project was developed with 5.7.4)
-- Git LFS and initialized Git submodules
-- [`uv`](https://docs.astral.sh/uv/) for the Python examples
+The easiest way to run URSoccerLab. Download `URSoccerLab.AppImage` from the
+[latest release](https://github.com/LuoShaoyinn/URSoccerLab/releases/latest) — it
+bundles the cooked simulator (binary + assets + MuJoCo / ZMQ / CoACD + the C++
+runtime). No Unreal Engine installation needed; only a Vulkan-capable GPU
+(AMD or NVIDIA) and FUSE on the host. GPU/Vulkan drivers are provided by the
+host and intentionally not bundled, so one image runs on both vendors.
 
-Fetch a fresh checkout completely:
+```bash
+chmod +x URSoccerLab.AppImage
+# Terminal 1 — start the simulator (headless; nDisplay atlas auto-enabled):
+./URSoccerLab.AppImage py_example/examples/standing/scene.json
+```
+
+Then connect a client from a second terminal — see
+[Python examples](#python-examples). Clients are identical regardless of how the
+simulator was started.
+
+The positional `<scene.json>` is **required**. The AppRun parses it, generates a
+tightly-packed nDisplay camera atlas (`view_count = robots × cameras`), and
+injects every runtime flag (`-URSSceneConfig=`, `-dc_cluster -dc_cfg=...
+-dc_node=node_0`, `-RenderOffscreen`, `-NoSound`, camera readback). Pass
+`-URSSceneCapture` to force the lower-throughput per-camera fallback, or append
+any extra UE flags after the scene. On a host without libfuse2 (e.g. a stock
+Ubuntu 22.04), install `libfuse2` or append `--appimage-extract-and-run`. To
+rebuild the AppImage from a source checkout, see
+[`Tools/packaging/README.md`](Tools/packaging/README.md).
+
+## Start from source (Unreal Engine)
+
+For development or when running directly from the engine. Requires Unreal Engine
+5.7 (developed with 5.7.4), Git LFS, and the submodules.
 
 ```bash
 git lfs install
@@ -76,40 +101,16 @@ UE_ROOT=/path/to/Unreal_Engine_5.7.4
   URSoccerLabEditor Linux Development "$PWD/URSoccerLab.uproject" -WaitMutex
 ```
 
-## Quick start (AppImage)
-
-The prebuilt AppImage bundles the cooked simulator (binary + assets + MuJoCo /
-ZMQ / CoACD + the C++ runtime). No Unreal Engine installation needed — only a
-Vulkan-capable GPU (AMD or NVIDIA) and FUSE on the host. GPU/Vulkan drivers are
-provided by the host and intentionally not bundled, so one image runs on both
-vendors.
-
-```bash
-# Terminal 1 — start the simulator (headless; nDisplay atlas auto-enabled):
-./dist/URSoccerLab.AppImage py_example/examples/standing/scene.json
-
-# Terminal 2 — run a Python client
-cd py_example && uv sync && uv run python examples/standing/standing.py \
-  --port 10000 --duration 5
-```
-
-The positional `<scene.json>` is **required**. The AppRun parses it, generates a
-tightly-packed nDisplay camera atlas (`view_count = robots × cameras`), and
-injects every runtime flag (`-URSSceneConfig=`, `-dc_cluster -dc_cfg=...
--dc_node=node_0`, `-RenderOffscreen`, `-NoSound`, camera readback). Pass
-`-URSSceneCapture` to force the lower-throughput per-camera fallback, or append
-any extra UE flags after the scene. On a host without libfuse2 (e.g. a stock
-Ubuntu 22.04), install `libfuse2` or append `--appimage-extract-and-run`. See
-[`Tools/packaging/README.md`](Tools/packaging/README.md) to rebuild the AppImage
-from source.
-
-## Run a scene (from source)
+Launch a scene (always offscreen; uses the production nDisplay atlas backend):
 
 ```bash
 export URS_UE=/path/to/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor
 uv run --project py_example python Tools/runtime/run_scene.py \
   --scene-config py_example/examples/move_head/scene.json
 ```
+
+`run_scene.py` also takes `--appimage dist/URSoccerLab.AppImage` to drive the
+packaged AppImage with the same generated atlas.
 
 ## Python examples
 
