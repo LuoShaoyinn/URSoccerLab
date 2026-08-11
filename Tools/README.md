@@ -88,10 +88,30 @@ uv run --project py_example python Tools/runtime/run_scene.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json
 ```
 
-`run_scene.py` always starts offscreen (`-RenderOffscreen`).
+`run_scene.py` always starts offscreen (`-RenderOffscreen`). Pass `--appimage
+dist/URSoccerLab.AppImage` to launch the packaged AppImage (same nDisplay
+atlas, no UnrealEditor needed) instead of the editor.
 
 Use `benchmark_match_vision.py` for an end-to-end multi-robot measurement. It
 uses the same generated nDisplay atlas and connects one client per robot.
+
+## Packaging (AppImage)
+
+`packaging/package_appimage.py` cooks, stages, and packages the simulator into a
+portable Linux AppImage inside the URSoccerLab build container. It bundles the
+game binary + all content + MuJoCo/ZMQ/CoACD + the C++ runtime, and excludes the
+editor, `py_example/`, and `Tools/`. GPU/Vulkan drivers come from the host.
+
+```bash
+python3 Tools/packaging/package_appimage.py cook    # UAT BuildCookRun
+python3 Tools/packaging/package_appimage.py appdir  # assemble dist/AppDir (+ bundle runtime)
+python3 Tools/packaging/package_appimage.py image   # appimagetool -> dist/URSoccerLab.AppImage
+```
+
+The generated AppRun takes a positional `<scene.json>`, auto-generates the
+nDisplay atlas from it, and injects the runtime flags. Full container setup,
+portability notes, and the nDisplay node-resolution gotcha are documented in
+[`packaging/README.md`](packaging/README.md).
 
 ## Robot assets
 

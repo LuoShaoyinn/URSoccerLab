@@ -79,23 +79,29 @@ UE_ROOT=/path/to/Unreal_Engine_5.7.4
 ## Quick start (AppImage)
 
 The prebuilt AppImage bundles the cooked simulator (binary + assets + MuJoCo /
-ZMQ / CoACD). No Unreal Engine installation needed — only a Vulkan-capable GPU
-and FUSE on the host.
+ZMQ / CoACD + the C++ runtime). No Unreal Engine installation needed — only a
+Vulkan-capable GPU (AMD or NVIDIA) and FUSE on the host. GPU/Vulkan drivers are
+provided by the host and intentionally not bundled, so one image runs on both
+vendors.
 
 ```bash
-# Terminal 1 — start the simulator (headless)
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+# Terminal 1 — start the simulator (headless; nDisplay atlas auto-enabled):
+./dist/URSoccerLab.AppImage py_example/examples/standing/scene.json
 
 # Terminal 2 — run a Python client
 cd py_example && uv sync && uv run python examples/standing/standing.py \
   --port 10000 --duration 5
 ```
 
-The scene JSON is **required**. Runtime flags (`-RenderOffscreen`, `-NoSound`,
-camera readback) are baked into the AppRun. See
-[`Tools/packaging/README.md`](Tools/packaging/README.md) to rebuild the
-AppImage from source.
+The positional `<scene.json>` is **required**. The AppRun parses it, generates a
+tightly-packed nDisplay camera atlas (`view_count = robots × cameras`), and
+injects every runtime flag (`-URSSceneConfig=`, `-dc_cluster -dc_cfg=...
+-dc_node=node_0`, `-RenderOffscreen`, `-NoSound`, camera readback). Pass
+`-URSSceneCapture` to force the lower-throughput per-camera fallback, or append
+any extra UE flags after the scene. On a host without libfuse2 (e.g. a stock
+Ubuntu 22.04), install `libfuse2` or append `--appimage-extract-and-run`. See
+[`Tools/packaging/README.md`](Tools/packaging/README.md) to rebuild the AppImage
+from source.
 
 ## Run a scene (from source)
 
