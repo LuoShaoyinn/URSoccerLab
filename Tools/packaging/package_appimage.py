@@ -26,13 +26,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+# NOTE: must NOT be named "build" (lowercase) — it collides with UE's Build/
+# directory in UBT's DirectoryItem.Scan (duplicate-key error). See
+# Tools/packaging/README.md.
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT = ROOT / "URSoccerLab.uproject"
-BUILD = ROOT / "build"
-PACKAGED = BUILD / "packaged"
-STAGED = PACKAGED / "LinuxNoEditor" / "URSoccerLab"
+BUILD = ROOT / "dist"
+STAGED = ROOT / "Saved" / "StagedBuilds" / "Linux"
 APPDIR = BUILD / "AppDir"
-APPIMAGE = BUILD / "URSoccerLab-Linux-x86_64.AppImage"
+APPIMAGE = BUILD / "URSoccerLab.AppImage"
 ENGINE = Path(
     os.environ.get(
         "URS_UE",
@@ -82,8 +84,6 @@ def phase_cook() -> int:
             "-pak",
             "-package",
             "-build",
-            "-archive",
-            f"-archdirectory={PACKAGED}",
         ],
         cwd=ROOT,
         env=env,
@@ -98,21 +98,131 @@ APPRUN = r"""#!/usr/bin/env sh
 set -eu
 HERE="$(dirname "$(readlink -f "$0")")"
 
-# --- Require scene config ---
-has_scene=0
+# --- Scene config: either an explicit -URSSceneConfig=<path>, or the first
+# positional argument treated as the scene JSON (./URSoccerLab.AppImage scene.json).
+# $SCENE holds the absolute path for the nDisplay auto-setup below.
+SCENE=""
 for arg in "$@"; do
   case "$arg" in
-    -URSSceneConfig=*) has_scene=1; break ;;
+    -URSSceneConfig=*) SCENE="${arg#-URSSceneConfig=}" ;;
   esac
 done
-if [ "$has_scene" -eq 0 ]; then
-  echo "ERROR: -URSSceneConfig=<path> is required." >&2
-  echo "Usage: $0 -URSSceneConfig=/path/to/scene.json [additional UE args]" >&2
-  exit 1
+if [ -z "$SCENE" ]; then
+  if [ "$#" -gt 0 ] && [ -f "$1" ]; then
+    case "$1" in
+      /*) SCENE="$1" ;;
+      *) SCENE="$(readlink -f "$1" 2>/dev/null || echo "$1")" ;;
+    esac
+    [ -z "$SCENE" ] && SCENE="$1"
+    shift
+    set -- "-URSSceneConfig=$SCENE" "$@"
+  else
+    echo "ERROR: scene config is required." >&2
+    echo "Usage: $0 <scene.json> [additional UE args]" >&2
+    echo "       (pass -URSSceneCapture to disable the nDisplay atlas)" >&2
+    exit 1
+  fi
 fi
 
-# Gather all bundled lib dirs (game + engine + every plugin).
-LIBS="$HERE/URSoccerLab/Binaries/Linux:$HERE/Engine/Binaries/Linux"
+# --- nDisplay atlas auto-setup (default on) -------------------------------
+# Generate a tightly-packed 640x480 atlas from the scene and enable the
+# high-throughput nDisplay backend, so `AppRun <scene.json>` just works.
+#   * Opt out with -URSSceneCapture / -URSNoNDisplay.
+#   * An explicit -dc_cluster / -dc_cfg is respected as-is.
+#   * If the scene can't be parsed (or awk is absent), we silently fall back
+#     to per-UMjCamera SceneCapture, which is always functional.
+force_sc=0; explicit_cluster=0
+for arg in "$@"; do
+  case "$arg" in
+    -URSSceneCapture|-URSNoNDisplay) force_sc=1 ;;
+    -dc_cluster|-dc_cluster=1|-dc_cluster=0|-dc_cfg=*) explicit_cluster=1 ;;
+  esac
+done
+if [ "$force_sc" -eq 0 ] && [ "$explicit_cluster" -eq 0 ] && [ -n "$SCENE" ] && [ -f "$SCENE" ]; then
+  _robots=$(awk '
+    /"robots"[[:space:]]*:/ { in_r = 1 }
+    /"objects"[[:space:]]*:/ { in_r = 0 }
+    in_r && /"actor_id"[[:space:]]*:/ { c++ }
+    END { print c + 0 }
+  ' "$SCENE" 2>/dev/null || echo 0)
+  if [ "${_robots:-0}" -gt 0 ]; then
+    if grep -q '"mode"[[:space:]]*:[[:space:]]*"rgbd"' "$SCENE" 2>/dev/null; then
+      _per=1
+      _leftcam=$(awk -F'"' '/"left_camera"[[:space:]]*:/ {print $(NF-1)}' "$SCENE" 2>/dev/null)
+      [ -z "$_leftcam" ] && _leftcam=left_eye
+    else
+      _per=2; _leftcam=""
+    fi
+    _views=$((_robots * _per))
+    _cols=$(awk -v n="$_views" 'BEGIN{s=sqrt(n*4/3);c=int(s);if(s>c)c++;if(c<1)c=1;print c}')
+    _rows=$(awk -v n="$_views" -v c="$_cols" 'BEGIN{r=int(n/c);if(n>c*r)r++;print r}')
+    _W=$((_cols * 640)); _H=$((_rows * 480))
+    _cfg="${TMPDIR:-/tmp}/urs_auto_${_views}_$$.ndisplay"
+    {
+      echo '{'
+      echo '  "nDisplay": {'
+      echo "    \"description\": \"URS auto atlas ($_views cameras)\","
+      echo '    "version": "5.00",'
+      echo '    "assetPath": "",'
+      echo '    "misc": { "bFollowLocalPlayerCamera": false, "bExitOnEsc": true, "bOverrideViewportsFromExternalConfig": true, "bOverrideTransformsFromExternalConfig": true },'
+      echo '    "scene": {'
+      echo '      "xforms": {},'
+      echo '      "cameras": { "DefaultViewPoint": { "interpupillaryDistance": 6.4, "swapEyes": false, "stereoOffset": "none", "parentId": "", "location": {"x":0,"y":0,"z":0}, "rotation": {"pitch":0,"yaw":0,"roll":0} } },'
+      echo '      "screens": {}'
+      echo '    },'
+      echo '    "cluster": {'
+      echo '      "primaryNode": { "id": "node_0", "ports": {"ClusterSync":41001,"ClusterEventsJson":41003,"ClusterEventsBinary":41004} },'
+      echo '      "sync": { "renderSyncPolicy": {"type":"none","parameters":{}}, "inputSyncPolicy": {"type":"ReplicatePrimary","parameters":{}} },'
+      echo '      "network": { "ConnectRetriesAmount":"10","ConnectRetryDelay":"100","GameStartBarrierTimeout":"30000","FrameStartBarrierTimeout":"30000","FrameEndBarrierTimeout":"30000","RenderSyncBarrierTimeout":"30000" },'
+      echo '      "nodes": {'
+      echo '        "node_0": {'
+      echo '          "host": "127.0.0.1", "sound": false, "fullScreen": false,'
+      echo "          \"window\": {\"x\":0,\"y\":0,\"w\":$_W,\"h\":$_H},"
+      echo '          "postprocess": {},'
+      echo '          "viewports": {'
+      _i=0
+      while [ "$_i" -lt "$_views" ]; do
+        [ "$_i" -gt 0 ] && echo ','
+        _c=$((_i % _cols)); _r=$((_i / _cols))
+        _x=$((_c * 640)); _y=$((_r * 480))
+        printf '            "camera_%02d": { "camera": "DefaultViewPoint", "bufferRatio": 1, "gPUIndex": -1, "allowCrossGPUTransfer": false, "isShared": false, "region": {"x":%d,"y":%d,"w":640,"h":480}, "projectionPolicy": {"type":"camera","parameters":{}} }' "$_i" "$_x" "$_y"
+        _i=$((_i + 1))
+      done
+      echo ''
+      echo '          },'
+      echo '          "outputRemap": { "bEnable": false, "dataSource": "mesh", "staticMeshAsset": "", "externalFile": "" }'
+      echo '        }'
+      echo '      }'
+      echo '    },'
+      echo '    "customParameters": {},'
+      echo '    "diagnostics": { "simulateLag": false, "minLagTime": 0.01, "maxLagTime": 0.3 }'
+      echo '  }'
+      echo '}'
+    } > "$_cfg"
+    if [ -s "$_cfg" ]; then
+      set -- "$@" -dc_cluster -dc_dev_mono -dc_cfg="$_cfg" -URSNDisplayCameras -URSNDisplayCameraCount="$_views" -ForceRes -ResX="$_W" -ResY="$_H"
+      [ -n "$_leftcam" ] && set -- "$@" "-URSNDisplayCameraName=$_leftcam"
+    fi
+  fi
+fi
+
+# --- nDisplay node resolution: inject -dc_node=node_0 whenever -dc_cluster is
+# present. nDisplay refuses to auto-match a 127.0.0.1/localhost host (UE's
+# GetResolvedNodeId deliberately skips loopback), so without an explicit node
+# the game exits "Couldn't resolve node ID" -> KillImmediately.
+have_dc_cluster=0; have_dc_node=0
+for arg in "$@"; do
+  case "$arg" in
+    -dc_cluster|-dc_cluster=1|-dc_cluster=0) have_dc_cluster=1 ;;
+    -dc_node=*) have_dc_node=1 ;;
+  esac
+done
+if [ "$have_dc_cluster" -eq 1 ] && [ "$have_dc_node" -eq 0 ]; then
+  set -- "$@" "-dc_node=node_0"
+fi
+
+# Gather all bundled lib dirs (bundled runtime first, then game + engine + plugins).
+LIBS="$HERE/usr/lib:$HERE/URSoccerLab/Binaries/Linux:$HERE/Engine/Binaries/Linux"
 for d in \
   "$HERE"/Engine/Plugins/*/*/Binaries/Linux \
   "$HERE"/Engine/Plugins/*/Binaries/Linux \
@@ -168,6 +278,68 @@ def _stage_third_party(appdir: Path) -> None:
             log(f"WARNING: third-party {soname} missing on disk ({src})")
 
 
+# C++ runtime libs to bundle (for portability: libmujoco needs CXXABI_1.3.13
+# = GCC 11+; bundling the build-host's libstdc++ makes the AppImage
+# self-contained instead of depending on a new-enough host libstdc++).
+BUNDLED_RUNTIME = ("libstdc++.so.6", "libgcc_s.so.1")
+
+
+def _bundle_runtime(appdir: Path) -> None:
+    libdir = appdir / "usr" / "lib"
+    libdir.mkdir(parents=True, exist_ok=True)
+    for soname in BUNDLED_RUNTIME:
+        # Resolve via ldconfig to get the real file (may be a versioned symlink).
+        import subprocess as _sp
+        try:
+            out = _sp.run(["ldconfig", "-p"], capture_output=True, text=True, check=True).stdout
+        except Exception:
+            out = ""
+        path = None
+        for line in out.splitlines():
+            if line.rstrip().endswith(soname) and "=>" in line:
+                path = line.split("=>", 1)[1].strip().split()[0]
+                break
+        if path and Path(path).is_file():
+            shutil.copy2(path, libdir / soname)
+            # Drop the SONAME symlink target's versioned name too if distinct.
+            log(f"bundled {soname} -> usr/lib (from {path})")
+        else:
+            log(f"WARNING: {soname} not found via ldconfig; not bundled")
+
+
+def _write_png(path: Path, w: int, h: int, rgb: tuple) -> None:
+    import zlib, struct
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+    def chunk(t: bytes, d: bytes) -> bytes:
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n")
+        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)))
+        f.write(chunk(b"IDAT", zlib.compress(raw)))
+        f.write(chunk(b"IEND", b""))
+
+
+DESKTOP_ENTRY = """[Desktop Entry]
+Type=Application
+Name=URSoccerLab
+Exec=AppRun
+Icon=ursoccerlab
+Categories=Development;Game;
+Terminal=false
+Comment=MuJoCo + Unreal Engine robot soccer simulator
+"""
+
+
+def _write_desktop_and_icon(appdir: Path) -> None:
+    (appdir / "ursoccerlab.desktop").write_text(DESKTOP_ENTRY)
+    # Simple solid icon (soccer-field green). appimagetool requires a real icon file.
+    icon = appdir / "ursoccerlab.png"
+    _write_png(icon, 256, 256, (40, 160, 80))
+    # .DirIcon should be a square PNG; reuse the same image.
+    shutil.copy2(icon, appdir / ".DirIcon")
+    log("wrote ursoccerlab.desktop + icon")
+
+
 def phase_appdir() -> int:
     if not STAGED.is_dir():
         raise FileNotFoundError(
@@ -183,10 +355,12 @@ def phase_appdir() -> int:
     apprun.chmod(apprun.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     _stage_third_party(APPDIR)
+    _bundle_runtime(APPDIR)
+    _write_desktop_and_icon(APPDIR)
     removed = _strip_external(APPDIR)
     log(f"removed {removed} external (vulkan/gpu) libs from AppDir")
 
-    exe = APPDIR / "Binaries/Linux/URSoccerLab"
+    exe = APPDIR / "URSoccerLab" / "Binaries" / "Linux" / "URSoccerLab"
     log(f"AppDir ready; exe={exe.relative_to(ROOT)} exists={exe.is_file()}")
     return 0 if exe.is_file() else 1
 

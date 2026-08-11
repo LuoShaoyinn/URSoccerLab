@@ -33,6 +33,14 @@ def main() -> int:
     parser.add_argument("--ue", type=Path, default=DEFAULT_UE)
     parser.add_argument("--map", default=MAP_PATH)
     parser.add_argument(
+        "--appimage",
+        nargs="?",
+        const=ROOT / "dist" / "URSoccerLab.AppImage",
+        type=Path,
+        help="Launch the packaged AppImage instead of the editor (nDisplay backend). "
+        "Optionally pass the AppImage path (default: dist/URSoccerLab.AppImage).",
+    )
+    parser.add_argument(
         "--sim-extra-arg",
         action="append",
         default=[],
@@ -51,29 +59,49 @@ def main() -> int:
     )
     width, height = write_ndisplay_config(rgb_view_count, ndisplay_path)
 
-    command = [
-        str(args.ue),
-        str(PROJECT),
-        args.map,
-        "-game",
-        "-ForceRes",
-        f"-ResX={width}",
-        f"-ResY={height}",
-        "-dc_cluster",
-        "-dc_dev_mono",
-        f"-dc_cfg={ndisplay_path}",
-        "-dc_node=node_0",
-        "-URSNDisplayCameras",
-        f"-URSNDisplayCameraCount={rgb_view_count}",
-        "-ExecCmds=MjCamera.AutoReadback 0,DisableAllScreenMessages",
-        f"-URSSceneConfig={scene_path}",
-        "-NoSound",
-        "-RenderOffscreen",
-        *args.sim_extra_arg,
-    ]
+    extra = list(args.sim_extra_arg)
     if mode == "rgbd":
         left_camera = config.get("vision", {}).get("left_camera", "left_eye")
-        command.append(f"-URSNDisplayCameraName={left_camera}")
+        extra.append(f"-URSNDisplayCameraName={left_camera}")
+
+    if args.appimage:
+        # The AppRun converts the positional scene to -URSSceneConfig=, bakes
+        # -RenderOffscreen/-NoSound/DisableAllScreenMessages, and auto-injects
+        # -dc_node=node_0 (required; nDisplay won't auto-match a 127.0.0.1 host).
+        command = [
+            str(args.appimage),
+            str(scene_path),
+            "-dc_cluster",
+            "-dc_dev_mono",
+            f"-dc_cfg={ndisplay_path}",
+            "-URSNDisplayCameras",
+            f"-URSNDisplayCameraCount={rgb_view_count}",
+            "-ForceRes",
+            f"-ResX={width}",
+            f"-ResY={height}",
+            *extra,
+        ]
+    else:
+        command = [
+            str(args.ue),
+            str(PROJECT),
+            args.map,
+            "-game",
+            "-ForceRes",
+            f"-ResX={width}",
+            f"-ResY={height}",
+            "-dc_cluster",
+            "-dc_dev_mono",
+            f"-dc_cfg={ndisplay_path}",
+            "-dc_node=node_0",
+            "-URSNDisplayCameras",
+            f"-URSNDisplayCameraCount={rgb_view_count}",
+            "-ExecCmds=MjCamera.AutoReadback 0,DisableAllScreenMessages",
+            f"-URSSceneConfig={scene_path}",
+            "-NoSound",
+            "-RenderOffscreen",
+            *extra,
+        ]
 
     print("+", " ".join(command), flush=True)
     return subprocess.run(command, cwd=ROOT, check=False).returncode
