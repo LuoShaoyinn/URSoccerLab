@@ -33,7 +33,8 @@ URSoccerLab disables URLab's legacy ZMQ, shared-memory, and RPC listeners.
 
 Camera capture/encoding, application protocol, and socket transport have separate
 owners. Robot and admin socket I/O runs on the network worker; admin operations
-execute through game-thread queues. See [runtime boundaries](docs/Runtime_Architecture.md)
+execute through game-thread queues. Guest floating cameras use a shared inspector
+port (12000); see the [inspector protocol and receiver](docs/Inspector_Plan.md). See [runtime boundaries](docs/Runtime_Architecture.md)
 for the adapter interface and threading details.
 
 ## Repository layout

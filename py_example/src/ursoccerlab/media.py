@@ -23,6 +23,8 @@ def camera_to_rgb(camera: dict) -> np.ndarray:
             "RGBA",
             (int(camera["width"]), int(camera["height"])),
             data,
+            "raw",
+            "BGRA" if camera.get("pixel_format") == "bgra8" else "RGBA",
         )
         return np.asarray(image.convert("RGB"))
     raise ValueError(f"unsupported camera codec: {camera['codec']}")

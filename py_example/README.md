@@ -43,9 +43,8 @@ for kind, data in client.recv():
 
 Commands, state, RGB, and depth share this one bidirectional TCP connection.
 Their rates are independent: the default publishes state at 60 Hz and two
-JPEG-compressed RGB cameras at 30 Hz. Worker threads encode images, then queue
-completed frames back to the game thread; only the game thread writes the
-socket.
+JPEG-compressed RGB cameras at 30 Hz. Worker threads encode images, then hand completed frames through bounded
+mailboxes to the dedicated network worker, which owns socket I/O.
 
 ## Controller Parameters — actuator mode and PD gains
 
@@ -346,3 +345,20 @@ then, per image:
 Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib. Pixel format: `0x00`
 BGRA8, `0x01` float32 metres, `0x02` uint16 millimetres. Use
 `camera_to_rgb()` and `depth_to_meters()` for decoded NumPy arrays.
+
+## Inspector receiver
+
+The source simulator opens the shared inspector TCP port `12000`.
+Older cooked AppImages do not include this endpoint. See the
+[inspector architecture](../docs/Inspector_Plan.md) for the v1 contract.
+Each guest controls only its own floating camera and receives compressed RGB.
+
+```sh
+uv run python examples/inspector/receive.py --position -4 0 2 \
+  --quaternion 0 0 0 1 --duration 10 --video out/inspector.mp4
+```
+
+The reusable `InspectorClient` provides `set_camera(translation_m,
+rotation_quat_xyzw)`, `recv()`, and `close()`. Poses use MuJoCo world metres and
+xyzw orientation, local +X forward and +Z up. The script writes video incrementally
+and saves a first-frame PNG; `--fps` sets playback timing only.

@@ -86,7 +86,12 @@ and cancel its pending requests/connections; clients reconnect as before.
 A UDP implementation can implement `IURSNetworkService` and reuse the channel handles,
 encoded frames, and message protocol. It will still need datagram sequencing, loss handling,
 and image fragmentation/reassembly. Administrative operations may retain a reliable TCP
-path. This refactor adds neither UDP nor spectator/inspector sessions.
+path. UDP is not implemented. Guest inspector sessions now use a separate adapter and
+floating camera component, sharing the image encoder and v2 RGB serializer.
+
+The guest camera endpoint and Python receiver are described in
+[Inspector_Plan.md](Inspector_Plan.md). Inspector sockets run on their own worker;
+Unreal capture uses asynchronous GPU readback and the shared encoder pool.
 
 ## Verification
 
