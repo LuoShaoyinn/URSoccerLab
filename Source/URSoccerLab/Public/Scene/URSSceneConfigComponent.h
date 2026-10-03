@@ -5,6 +5,9 @@
 #include "Scene/URSSceneConfig.h"
 #include "URSSceneConfigComponent.generated.h"
 
+class UStaticMeshComponent;
+class UStaticMesh;
+class UMaterialInterface;
 class AAMjManager;
 class AMjArticulation;
 USTRUCT(BlueprintType)
@@ -98,4 +101,9 @@ private:
 	void HideImportedFieldGeoms(AMjArticulation* Articulation);
 	void ApplyRenderConfig();
 	void ApplyPhysicsConfig();
+	bool ApplyFieldConfig(FString &OutError);
+	TMap<TWeakObjectPtr<UStaticMeshComponent>, FTransform> OriginalFieldTransforms;
+	UPROPERTY() TObjectPtr<UStaticMesh> RuntimeFieldMesh;
+	UPROPERTY() TObjectPtr<UMaterialInterface> RuntimeFieldMaterial;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> RuntimeFieldSurface;
 };

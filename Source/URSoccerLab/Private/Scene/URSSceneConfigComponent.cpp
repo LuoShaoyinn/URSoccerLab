@@ -1,4 +1,13 @@
 #include "Scene/URSSceneConfigComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
+#include "Kismet/KismetRenderingLibrary.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
+#include "MuJoCo/Components/Geometry/Primitives/MjSphere.h"
+#include "Misc/Paths.h"
 
 #include "MuJoCo/Components/Geometry/MjGeom.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
@@ -19,6 +28,11 @@ using namespace URSoccerLab;
 UURSSceneConfigComponent::UURSSceneConfigComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(
+		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/M_RuntimeField"));
+	RuntimeFieldMesh = Plane.Object;
+	RuntimeFieldMaterial = Material.Object;
 }
 
 void UURSSceneConfigComponent::BeginPlay()
@@ -66,6 +80,8 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 	}
 
 	ActiveConfig = Config;
+	if (!ApplyFieldConfig(OutError))
+		return false;
 
 	AActor* Owner = GetOwner();
 	UWorld* World = Owner ? Owner->GetWorld() : nullptr;
@@ -204,7 +220,7 @@ bool UURSSceneConfigComponent::SpawnOneObject(
 	}
 
 	const FVector TranslationMeters = Spawn.TranslationMeters.Get(
-		FVector(0.0, 0.0, Type->DefaultBaseHeightM));
+		FVector(0.0, 0.0, Spawn.Physics.bIsSet ? Spawn.Physics.RadiusM : Type->DefaultBaseHeightM));
 	const FQuat RotationXyzw = Spawn.RotationQuatXyzw.Get(FQuat::Identity);
 	double MjPos[3] = {TranslationMeters.X, TranslationMeters.Y, TranslationMeters.Z};
 	const FVector UELocation = MjUtils::MjToUEPosition(MjPos);
@@ -222,6 +238,36 @@ bool UURSSceneConfigComponent::SpawnOneObject(
 		return false;
 	}
 
+	if (Spawn.Physics.bIsSet)
+	{
+		TArray<UMjSphere *> Spheres;
+		Articulation->GetComponents(Spheres);
+		if (Spheres.Num() != 1)
+		{
+			Articulation->Destroy();
+			OutError = TEXT("soccer_ball requires exactly one sphere");
+			return false;
+		}
+		auto *Sphere = Spheres[0];
+		const auto &P = Spawn.Physics;
+		Sphere->bOverride_size = true;
+		Sphere->SetRelativeScale3D(FVector(2.0 * P.RadiusM));
+		Sphere->mass = P.MassKg;
+		Sphere->bOverride_mass = true;
+		Sphere->friction = P.Friction;
+		Sphere->bOverride_friction = true;
+		Sphere->solref = P.Solref;
+		Sphere->bOverride_solref = true;
+		TArray<UStaticMeshComponent *> Meshes;
+		Articulation->GetComponents(Meshes);
+		for (auto *Mesh : Meshes)
+			if (Mesh->GetStaticMesh() &&
+				Mesh->GetStaticMesh()->GetPathName().StartsWith(TEXT("/Game/URSoccerLab/Objects/soccer_ball/")))
+				Mesh->SetRelativeScale3D(Mesh->GetRelativeScale3D() * (P.RadiusM / 0.075));
+		UE_LOG(LogTemp, Log, TEXT("URS ball '%s': radius=%g m mass=%g kg friction=%g,%g,%g solref=%g,%g"),
+			   *Spawn.ActorId, P.RadiusM, P.MassKg, P.Friction[0], P.Friction[1], P.Friction[2], P.Solref[0],
+			   P.Solref[1]);
+	}
 	Articulation->ActorId = Spawn.ActorId;
 #if WITH_EDITOR
 	Articulation->SetActorLabel(Spawn.ActorId);
@@ -621,4 +667,70 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 		(!bNDisplayOwnsResolution && R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
 			? *FString::Printf(TEXT("%dx%d"), R.ResolutionX.GetValue(), R.ResolutionY.GetValue())
 			: (bNDisplayOwnsResolution ? TEXT("nDisplay atlas") : TEXT("unchanged")));
+}
+
+// The hall is fixed. Only a generic plane and a parameterized material are cooked.
+bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
+{
+	const auto &F = ActiveConfig.Field;
+	UWorld *World = GetWorld();
+	if (!World || !RuntimeFieldMesh || !RuntimeFieldMaterial)
+	{
+		OutError = TEXT("runtime field mesh/material is missing");
+		return false;
+	}
+	const FString ImagePath =
+		FPaths::IsRelative(F.MapImage) ? FPaths::Combine(ActiveConfig.SourceDirectory, F.MapImage) : F.MapImage;
+	UTexture2D *Texture = UKismetRenderingLibrary::ImportFileAsTexture2D(this, ImagePath);
+	if (!Texture)
+	{
+		OutError = FString::Printf(TEXT("cannot load field.map_image: %s"), *ImagePath);
+		return false;
+	}
+	if (!RuntimeFieldSurface)
+	{
+		RuntimeFieldSurface = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("URSRuntimeField"));
+		GetOwner()->AddInstanceComponent(RuntimeFieldSurface);
+		RuntimeFieldSurface->SetMobility(EComponentMobility::Movable);
+		RuntimeFieldSurface->SetStaticMesh(RuntimeFieldMesh);
+		RuntimeFieldSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		RuntimeFieldSurface->RegisterComponent();
+	}
+	RuntimeFieldSurface->SetWorldLocation(FVector::ZeroVector);
+	RuntimeFieldSurface->SetWorldRotation(FRotator::ZeroRotator);
+	RuntimeFieldSurface->SetWorldScale3D(FVector(F.LengthM + 2 * F.BorderXM, F.WidthM + 2 * F.BorderYM, 1));
+	RuntimeFieldSurface->SetMaterial(0, RuntimeFieldMaterial);
+	auto *Material = RuntimeFieldSurface->CreateAndSetMaterialInstanceDynamic(0);
+	Material->SetTextureParameterValue(TEXT("FieldMap"), Texture);
+	Material->SetScalarParameterValue(TEXT("FieldLengthCm"), (F.LengthM + 2 * F.BorderXM) * 100);
+	Material->SetScalarParameterValue(TEXT("FieldWidthCm"), (F.WidthM + 2 * F.BorderYM) * 100);
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		TArray<UStaticMeshComponent *> Meshes;
+		It->GetComponents(Meshes);
+		for (auto *Mesh : Meshes)
+		{
+			if (!Mesh->GetStaticMesh())
+				continue;
+			const FString Path = Mesh->GetStaticMesh()->GetPathName();
+			if (Path.StartsWith(TEXT("/Game/URSoccerLab/Scenes/SoccerField/Field/")) &&
+				Path.Contains(TEXT("goal"), ESearchCase::IgnoreCase))
+			{
+				if (!OriginalFieldTransforms.Contains(Mesh))
+					OriginalFieldTransforms.Add(Mesh, Mesh->GetComponentTransform());
+				FTransform Transform = OriginalFieldTransforms[Mesh];
+				// Imported goal geometry has world coordinates baked into its vertices.
+				const double Side =
+					FMath::Sign(Transform.TransformPosition(Mesh->GetStaticMesh()->GetBounds().Origin).X);
+				FVector Location = Transform.GetLocation();
+				Location.X += Side * (F.LengthM - 9.0) * 50.0;
+				Transform.SetLocation(Location);
+				Mesh->SetMobility(EComponentMobility::Movable);
+				Mesh->SetWorldTransform(Transform);
+			}
+		}
+	}
+	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g map=%s"), F.LengthM, F.WidthM, F.BorderXM,
+		   F.BorderYM, *ImagePath);
+	return true;
 }

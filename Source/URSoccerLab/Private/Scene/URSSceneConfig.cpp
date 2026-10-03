@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -290,6 +291,46 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 		return false;
 	}
 
+	Out.SourceDirectory = FPaths::GetPath(FPaths::ConvertRelativePathToFull(AbsPath));
+	const TSharedPtr<FJsonObject> *Field = nullptr;
+	if (!Root->HasField(TEXT("field")))
+	{
+		OutError = TEXT("scene config requires field with length_m, width_m and map_image");
+		return false;
+	}
+	{
+		if (!Root->TryGetObjectField(TEXT("field"), Field))
+		{
+			OutError = TEXT("field must be an object");
+			return false;
+		}
+		Out.Field.bIsSet = true;
+		for (const TCHAR *Key : {TEXT("length_m"), TEXT("width_m"), TEXT("map_image")})
+			if (!(*Field)->HasField(Key))
+			{
+				OutError = FString::Printf(TEXT("field.%s is required"), Key);
+				return false;
+			}
+		const TPair<const TCHAR *, double *> Numbers[] = {{TEXT("length_m"), &Out.Field.LengthM},
+														  {TEXT("width_m"), &Out.Field.WidthM},
+														  {TEXT("border_x_m"), &Out.Field.BorderXM},
+														  {TEXT("border_y_m"), &Out.Field.BorderYM}};
+		for (const auto &N : Numbers)
+			if ((*Field)->HasField(N.Key) &&
+				((*Field)->TryGetField(N.Key)->Type != EJson::Number || !(*Field)->TryGetNumberField(N.Key, *N.Value)))
+			{
+				OutError = FString::Printf(TEXT("field.%s must be numeric"), N.Key);
+				return false;
+			}
+		if ((*Field)->HasField(TEXT("map_image")) &&
+			((*Field)->TryGetField(TEXT("map_image"))->Type != EJson::String ||
+			 !(*Field)->TryGetStringField(TEXT("map_image"), Out.Field.MapImage)))
+		{
+			OutError = TEXT("field.map_image must be a string");
+			return false;
+		}
+	}
+
 	if (!ReadVisionConfig(Root, Out.Vision, OutError))
 	{
 		return false;
@@ -468,6 +509,47 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 				}
 				Spawn.RotationQuatXyzw = Rot;
 			}
+			if ((*ObjectObj)->HasField(TEXT("physics")))
+			{
+				const TSharedPtr<FJsonObject> *Physics = nullptr;
+				if (!(*ObjectObj)->TryGetObjectField(TEXT("physics"), Physics))
+				{
+					OutError = TEXT("object.physics must be an object");
+					return false;
+				}
+				Spawn.Physics.bIsSet = true;
+				for (const auto &N : {TPair<const TCHAR *, double *>(TEXT("radius_m"), &Spawn.Physics.RadiusM),
+									  TPair<const TCHAR *, double *>(TEXT("mass_kg"), &Spawn.Physics.MassKg)})
+					if ((*Physics)->HasField(N.Key) && ((*Physics)->TryGetField(N.Key)->Type != EJson::Number ||
+														!(*Physics)->TryGetNumberField(N.Key, *N.Value)))
+					{
+						OutError = FString::Printf(TEXT("physics.%s must be numeric"), N.Key);
+						return false;
+					}
+				for (const auto &A : {TPair<const TCHAR *, TArray<float> *>(TEXT("friction"), &Spawn.Physics.Friction),
+									  TPair<const TCHAR *, TArray<float> *>(TEXT("solref"), &Spawn.Physics.Solref)})
+				{
+					if (!(*Physics)->HasField(A.Key))
+						continue;
+					const TArray<TSharedPtr<FJsonValue>> *Values = nullptr;
+					if (!(*Physics)->TryGetArrayField(A.Key, Values) || Values->Num() != A.Value->Num())
+					{
+						OutError = FString::Printf(TEXT("physics.%s has incorrect array length"), A.Key);
+						return false;
+					}
+					for (int32 I = 0; I < Values->Num(); ++I)
+					{
+						double V;
+						if ((*Values)[I]->Type != EJson::Number || !(*Values)[I]->TryGetNumber(V) ||
+							!FMath::IsFinite(V))
+						{
+							OutError = TEXT("physics arrays require finite numbers");
+							return false;
+						}
+						(*A.Value)[I] = V;
+					}
+				}
+			}
 			Out.Objects.Add(MoveTemp(Spawn));
 		}
 	}
@@ -482,6 +564,16 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("version"), In.Version);
 
+	if (In.Field.bIsSet)
+	{
+		auto F = MakeShared<FJsonObject>();
+		F->SetNumberField(TEXT("length_m"), In.Field.LengthM);
+		F->SetNumberField(TEXT("width_m"), In.Field.WidthM);
+		F->SetNumberField(TEXT("border_x_m"), In.Field.BorderXM);
+		F->SetNumberField(TEXT("border_y_m"), In.Field.BorderYM);
+		F->SetStringField(TEXT("map_image"), In.Field.MapImage);
+		Root->SetObjectField(TEXT("field"), F);
+	}
 	TSharedPtr<FJsonObject> VisionObj = MakeShared<FJsonObject>();
 	VisionObj->SetStringField(TEXT("mode"), VisionModeString(In.Vision.Mode));
 	VisionObj->SetStringField(TEXT("left_camera"), In.Vision.LeftCamera);
@@ -611,6 +703,20 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 				MakeShared<FJsonValueNumber>(Quat.Z),
 				MakeShared<FJsonValueNumber>(Quat.W)});
 		}
+		if (Spawn.Physics.bIsSet)
+		{
+			auto P = MakeShared<FJsonObject>();
+			P->SetNumberField(TEXT("radius_m"), Spawn.Physics.RadiusM);
+			P->SetNumberField(TEXT("mass_kg"), Spawn.Physics.MassKg);
+			TArray<TSharedPtr<FJsonValue>> Friction, Solref;
+			for (float V : Spawn.Physics.Friction)
+				Friction.Add(MakeShared<FJsonValueNumber>(V));
+			for (float V : Spawn.Physics.Solref)
+				Solref.Add(MakeShared<FJsonValueNumber>(V));
+			P->SetArrayField(TEXT("friction"), Friction);
+			P->SetArrayField(TEXT("solref"), Solref);
+			ObjectObj->SetObjectField(TEXT("physics"), P);
+		}
 		ObjectsJson.Add(MakeShared<FJsonValueObject>(ObjectObj));
 	}
 	Root->SetArrayField(TEXT("objects"), ObjectsJson);
@@ -635,6 +741,8 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 {
 	FURSSceneConfig Config;
+	Config.Field.bIsSet = true;
+	Config.Field.MapImage = TEXT("field.png");
 	FURSRobotSpawn& Robot = Config.Robots.AddDefaulted_GetRef();
 	Robot.ActorId = TEXT("robot_rp0");
 	Robot.Type = TEXT("pi_plus");
@@ -652,6 +760,18 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 {
 	FURSSceneConfigValidationResult Result;
 	TSet<FString> SeenActorIds;
+	const auto &F = Config.Field;
+	if (!F.bIsSet || F.MapImage.IsEmpty())
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("field with dimensions and nonempty map_image is required"));
+	}
+	if (F.bIsSet && (!FMath::IsFinite(F.LengthM) || F.LengthM <= 0 || !FMath::IsFinite(F.WidthM) || F.WidthM <= 0 ||
+					 !FMath::IsFinite(F.BorderXM) || F.BorderXM < 0 || !FMath::IsFinite(F.BorderYM) || F.BorderYM < 0))
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("field dimensions must be finite; length/width positive and borders nonnegative"));
+	}
 
 	if (Config.Vision.LeftCamera.IsEmpty())
 	{
@@ -751,6 +871,26 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 
 	for (const FURSObjectSpawn& Spawn : Config.Objects)
 	{
+		const auto &P = Spawn.Physics;
+		if (P.bIsSet)
+		{
+			bool Valid = Spawn.Type == TEXT("soccer_ball") && FMath::IsFinite(static_cast<float>(P.RadiusM)) &&
+						 P.RadiusM > 0 && FMath::IsFinite(static_cast<float>(P.MassKg)) && P.MassKg > 0 &&
+						 P.Friction.Num() == 3 && P.Solref.Num() == 2;
+			for (float V : P.Friction)
+				Valid &= FMath::IsFinite(V) && V >= 0;
+			for (float V : P.Solref)
+				Valid &= FMath::IsFinite(V);
+			if (P.Solref.Num() == 2)
+				Valid &= (P.Solref[0] > 0 && P.Solref[1] > 0) || (P.Solref[0] <= 0 && P.Solref[1] <= 0);
+			if (!Valid)
+			{
+				Result.bOk = false;
+				Result.Errors.Add(TEXT("invalid soccer_ball physics: positive radius/mass, three nonnegative friction "
+									   "values and valid solref required"));
+			}
+		}
+
 		if (Spawn.ActorId.IsEmpty())
 		{
 			Result.bOk = false;

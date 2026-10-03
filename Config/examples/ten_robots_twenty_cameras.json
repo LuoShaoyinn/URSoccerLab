@@ -21,5 +21,12 @@
   ],
   "objects": [
     {"actor_id":"ball","type":"soccer_ball","translation_m":[0.0,0.0,0.075],"rotation_quat_xyzw":[0.0,0.0,0.0,1.0]}
-  ]
+  ],
+  "field": {
+    "length_m": 9.0,
+    "width_m": 6.0,
+    "border_x_m": 0.8,
+    "border_y_m": 0.9,
+    "map_image": "../../Assets/FieldMaps/example.png"
+  }
 }

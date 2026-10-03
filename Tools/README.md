@@ -151,3 +151,18 @@ The object bake is intentionally clean-only. Before rebuilding an existing
 object, move `Content/URSoccerLab/Objects/<object-type>/` outside the project
 (for example into `/tmp`), then launch the command. This avoids Unreal's unsafe
 in-process deletion of a loaded Blueprint and leaves a recoverable backup.
+
+## External field and ball validation
+
+Scene JSON must specify the field dimensions and external image. Source-runtime
+rendering can be checked with:
+
+```bash
+py_example/.venv/bin/python Tools/runtime/test_change_map.py
+```
+
+This runs two external maps and field sizes, captures camera images, and writes
+results under `Saved/Tests/change-map-render/`. It does not package an AppImage.
+Unreal automation tests under `URSoccerLab.Scene.Config` validate required fields
+and compile a configured ball through the component pipeline to verify its
+radius, mass, inertia, friction, and contact settings.

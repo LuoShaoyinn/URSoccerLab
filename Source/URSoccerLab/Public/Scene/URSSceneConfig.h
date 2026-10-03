@@ -112,8 +112,29 @@ struct URSOCCERLAB_API FURSRobotSpawn
 	FURSNoiseConfig Noise;
 };
 
+// Required launch-time field settings. SourceDirectory resolves external images relative to JSON.
+struct URSOCCERLAB_API FURSFieldConfig
+{
+	bool bIsSet = false;
+	double LengthM = 9.0;
+	double WidthM = 6.0;
+	double BorderXM = 0.8;
+	double BorderYM = 0.9;
+	FString MapImage;
+};
+
+struct URSOCCERLAB_API FURSBallPhysicsConfig
+{
+	bool bIsSet = false;
+	double RadiusM = 0.075;
+	double MassKg = 0.2;
+	TArray<float> Friction = {0.8f, 0.02f, 0.03f};
+	TArray<float> Solref = {-5000.0f, -20.0f};
+};
+
 struct URSOCCERLAB_API FURSObjectSpawn
 {
+	FURSBallPhysicsConfig Physics;
 	FString ActorId;
 	FString Type;
 	TOptional<FVector> TranslationMeters;
@@ -123,6 +144,8 @@ struct URSOCCERLAB_API FURSObjectSpawn
 struct URSOCCERLAB_API FURSSceneConfig
 {
 	FString Version = TEXT("urs_scene_v1");
+	FURSFieldConfig Field;
+	FString SourceDirectory;
 	FURSVisionConfig Vision;
 	FURSRenderConfig Render;
 

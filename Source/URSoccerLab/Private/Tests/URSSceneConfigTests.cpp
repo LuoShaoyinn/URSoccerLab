@@ -122,6 +122,10 @@ bool FURSSceneConfigLoadRejectionTest::RunTest(const FString& Parameters)
 	{
 		const FString Path = FPaths::CreateTempFilename(*TempDir, TEXT("URSSceneReject"), TEXT(".json"));
 		FFileHelper::SaveStringToFile(JsonBody, *Path);
+		// Keep these legacy rejection cases focused on their original invalid field.
+		FString WithField = JsonBody;
+		WithField.InsertAt(1, TEXT("\"field\":{\"length_m\":9,\"width_m\":6,\"map_image\":\"field.png\"},"));
+		FFileHelper::SaveStringToFile(WithField, *Path);
 		const bool bOk = FURSSceneConfigIo::LoadFromFile(Path, OutCfg, OutError);
 		IFileManager::Get().Delete(*Path);
 		return bOk;

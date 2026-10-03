@@ -70,5 +70,12 @@
   ],
   "mujoco_dt": 0.002,
   "camera_freq": 30,
-  "state_freq": 60
+  "state_freq": 60,
+  "field": {
+    "length_m": 9.0,
+    "width_m": 6.0,
+    "border_x_m": 0.8,
+    "border_y_m": 0.9,
+    "map_image": "../../../Assets/FieldMaps/example.png"
+  }
 }

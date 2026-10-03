@@ -71,6 +71,9 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	if (!SceneComp->ApplyConfig(ApplyError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("URSSoccerGameMode: scene config apply failed: %s"), *ApplyError);
+		ErrorMessage = ApplyError;
+		FPlatformMisc::RequestExitWithStatus(false, 1);
+		return;
 	}
 	else
 	{

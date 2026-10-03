@@ -49,9 +49,11 @@ URSoccerLab disables URLab's legacy ZMQ, shared-memory, and RPC listeners.
 
 `Assets` and `Content` have different roles: source MJCF/GLB files are edited
 under `Assets`; Unreal imports them into tracked `.uasset`/`.umap` files under
-`Content`. The full background scene is authored directly in the production
-level and its referenced Content assets. MuJoCo uses a separate flat-plane
-field MJCF and never simulates the detailed background geometry.
+`Content`. The hall and goals are authored in the production level. Scene JSON must
+provide field dimensions and an external bird's-eye image (see
+[external field configuration](docs/URSoccerLab_Scene_Building_Api.md#external-field)).
+The runtime creates the pitch surface. MuJoCo uses a separate flat-plane
+ground MJCF and never simulates the detailed background geometry.
 
 ## Start from the AppImage (prebuilt release)
 

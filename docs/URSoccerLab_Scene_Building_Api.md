@@ -34,6 +34,11 @@ baked into the level.
 ```json
 {
   "version": "urs_scene_v1",
+  "field": {
+    "length_m": 9.0, "width_m": 6.0,
+    "border_x_m": 0.8, "border_y_m": 0.9,
+    "map_image": "field.png"
+  },
   "vision": {
     "mode": "stereo_rgb",
     "left_camera": "left_eye",
@@ -97,6 +102,56 @@ policy-specific poses in configuration instead of runtime C++.
 that viewpoint. JPEG is the practical RGB default; depth remains numeric and
 uses raw float, raw millimetres, or lossless zlib-compressed millimetres.
 
+## External field
+
+The `field` object is mandatory, including positive `length_m` and `width_m`
+(in metres) and a nonempty `map_image` path. `border_x_m` and `border_y_m` are
+nonnegative borders on each side, defaulting to 0.8 and 0.9 metres. PNG and JPEG
+images load at launch; relative paths resolve from the scene JSON directory,
+including when launching from another working directory. Missing or unreadable
+images abort startup. There is no built-in pitch-image fallback.
+
+The hall stays fixed. A generic runtime plane covers
+`(length_m + 2*border_x_m) × (width_m + 2*border_y_m)`, centered at world zero.
+The full image covers this plane: left/right map to MuJoCo -X/+X and top/bottom
+to +Y/-Y. Use an image whose markings and borders match your dimensions; the
+simulator does not infer pitch geometry from pixels. The existing visual goals
+move to the new end lines; their sizes remain fixed.
+
+The MuJoCo ground remains an infinite flat plane. Field dimensions define the
+playing surface and goal placement, not collision walls or out-of-bounds rules.
+The existing goals remain visual-only. Dimensions exceeding the authored hall
+are allowed but may visually overlap its geometry.
+
+Change the JSON/image and relaunch; neither a mesh import nor an extra MJCF is
+required. These are launch-time settings, not live physics-reload controls.
+[`Assets/FieldMaps/example.png`](../Assets/FieldMaps/example.png) is an external
+example input and is not bundled into the simulator.
+
+## Ball overrides
+
+A `soccer_ball` object may specify:
+
+```json
+"physics": {
+  "radius_m": 0.11,
+  "mass_kg": 0.43,
+  "friction": [0.6, 0.005, 0.001],
+  "solref": [0.02, 0.7]
+}
+```
+
+Omitted values retain the source defaults: radius 0.075 m, mass 0.2 kg,
+friction `[0.8, 0.02, 0.03]`, and `solref [-5000, -20]`. The friction array is
+sliding, torsional, and rolling friction. `solref` uses MuJoCo's native contact
+parameters; it is not a restitution coefficient. Positive pairs specify
+contact time constant/damping ratio; nonpositive pairs use the direct format.
+
+The collision sphere and GLB visual resize together. MuJoCo recomputes solid
+sphere inertia from radius and mass. When `translation_m` is omitted, the ball
+center height follows its configured radius; an explicit pose takes precedence.
+Overrides apply before model compilation. No ball rebake is required.
+
 ## Coordinates
 
 Configuration uses the MuJoCo robot frame in metres: +X forward, +Y left, +Z
@@ -135,15 +190,15 @@ Assets/                              editable source of truth
   Scenes/SoccerField/physics/*.xml   flat MuJoCo field collision
 
 Content/                             Unreal-generated, tracked with Git LFS
-  Levels/URS_SoccerField.umap        complete authored background and lighting
+  Levels/URS_SoccerField.umap        authored hall, goals, ground physics and lighting
   URSoccerLab/Robots/...             baked robot Blueprint and meshes
   URSoccerLab/Objects/...            baked object Blueprint and meshes
   URSoccerLab/Scenes/...             background assets referenced by the level
 ```
 
 The original background GLB is intentionally not retained: the `.umap` and its
-referenced Content assets are the authoritative visual scene. MuJoCo sees only
-the flat field plane plus configured articulations.
+referenced Content assets are the authoritative visual scene. The pitch surface is created at runtime from required external configuration.
+MuJoCo sees only the flat ground plane plus configured articulations.
 
 Robot and object GLBs are not passed to MuJoCo. Empty MJCF frames named
 `visual__<mesh-name>` preserve the body-relative visual transform while the
