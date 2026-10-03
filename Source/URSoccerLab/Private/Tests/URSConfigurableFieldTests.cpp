@@ -39,7 +39,7 @@ bool FURSRequiredFieldTest::RunTest(const FString &Parameters)
 	TestTrue(
 		TEXT("valid explicit field loads"),
 		Load(TEXT(
-			R"({"version":"urs_scene_v1","field":{"length_m":7,"width_m":4,"map_image":"map.png"},"robots":[]})")));
+			R"({"version":"urs_scene_v1","field":{"length_m":7,"width_m":4,"map_image":"map.png"},"goals":{"width_m":1.8,"height_m":1.2,"post_radius_m":0.05,"poses":[{"translation_m":[-4.5,0,0],"yaw_deg":0},{"translation_m":[4.5,0,0],"yaw_deg":180}]},"robots":[]})")));
 	TestTrue(TEXT("image resolved relative to JSON directory"),
 			 Loaded.SourceDirectory == FPaths::GetPath(FPaths::ConvertRelativePathToFull(Path)));
 	TestTrue(TEXT("valid config accepted"), FURSSceneConfigIo::Validate(Loaded).bOk);
@@ -88,6 +88,7 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 	Config.Field.MapImage = TEXT("Assets/FieldMaps/example.png");
 	Config.SourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	Config.Objects[0].TranslationMeters.Reset();
+	Config.Goals.Poses = {{FVector(-2, 1, 0), 90}, {FVector(2, -1, 0.2), 180}};
 	auto &P = Config.Objects[0].Physics;
 	P.bIsSet = true;
 	P.RadiusM = 0.11;
@@ -109,19 +110,81 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 			}
 		TestTrue(TEXT("runtime surface exists"), Found);
 		for (TActorIterator<AMjArticulation> It(World); It; ++It)
-			TestTrue(TEXT("default ball center follows radius"), FMath::IsNearlyEqual(It->GetActorLocation().Z, 11.0));
+			if (It->ActorId == TEXT("ball"))
+				TestTrue(TEXT("default ball center follows radius"),
+						 FMath::IsNearlyEqual(It->GetActorLocation().Z, 11.0));
 		Manager->Compile();
 		mjModel *Model = Manager->PhysicsEngine->m_model;
 		if (TestNotNull(TEXT("MuJoCo compiles configured ball"), Model))
 		{
-			TestEqual(TEXT("one sphere in compiled model"), Model->ngeom, 1);
-			TestTrue(TEXT("compiled radius"), FMath::IsNearlyEqual(Model->geom_size[0], 0.11, 1e-6));
-			const int Body = Model->geom_bodyid[0];
+			TestEqual(TEXT("one sphere and six goal cylinders in compiled model"), Model->ngeom, 7);
+			int BallGeom = -1;
+			int FirstPost = -1;
+			int FirstBar = -1;
+			int CylinderCount = 0;
+			for (int I = 0; I < Model->ngeom; ++I)
+			{
+				if (Model->geom_type[I] == mjGEOM_SPHERE)
+					BallGeom = I;
+				if (Model->geom_type[I] == mjGEOM_CYLINDER)
+				{
+					++CylinderCount;
+					TestEqual(TEXT("goal cylinders are static"), Model->geom_bodyid[I], 0);
+					TestTrue(TEXT("goal post radius"), FMath::IsNearlyEqual(Model->geom_size[3 * I], 0.05, 1e-6));
+					const FString Name = UTF8_TO_TCHAR(mj_id2name(Model, mjOBJ_GEOM, I));
+					if (Name.EndsWith(TEXT("goal_0_left_post")))
+						FirstPost = I;
+					if (Name.EndsWith(TEXT("goal_0_crossbar")))
+						FirstBar = I;
+				}
+			}
+			TestEqual(TEXT("exactly six goal cylinders"), CylinderCount, 6);
+			if (!TestTrue(TEXT("compiled sphere exists"), BallGeom >= 0))
+			{
+				Manager->PhysicsEngine->bShouldStopTask = true;
+				World->DestroyWorld(false);
+				GEngine->DestroyWorldContext(World);
+				return false;
+			}
+			if (TestTrue(TEXT("first rotated post exists"), FirstPost >= 0))
+			{
+				TestTrue(TEXT("goal yaw and translation reach physics"),
+						 FVector(Model->geom_pos[3 * FirstPost], Model->geom_pos[3 * FirstPost + 1],
+								 Model->geom_pos[3 * FirstPost + 2])
+							 .Equals(FVector(-2.95, 1, 0.65), 1e-5));
+				TestTrue(TEXT("post half length"),
+						 FMath::IsNearlyEqual(Model->geom_size[3 * FirstPost + 1], 0.65, 1e-6));
+				auto *Data = Manager->PhysicsEngine->m_data;
+				Data->qpos[0] = -2.80;
+				Data->qpos[1] = 1;
+				Data->qpos[2] = 0.65;
+				mj_forward(Model, Data);
+				bool Contact = false;
+				for (int C = 0; C < Data->ncon; ++C)
+					Contact |= (Data->contact[C].geom[0] == BallGeom && Data->contact[C].geom[1] == FirstPost) ||
+							   (Data->contact[C].geom[1] == BallGeom && Data->contact[C].geom[0] == FirstPost);
+				TestTrue(TEXT("ball contacts goalpost"), Contact);
+			}
+			if (TestTrue(TEXT("crossbar exists"), FirstBar >= 0))
+			{
+				TestTrue(TEXT("crossbar clearance height"),
+						 FMath::IsNearlyEqual(Model->geom_pos[3 * FirstBar + 2], 1.25, 1e-6));
+				TestTrue(TEXT("crossbar half length"),
+						 FMath::IsNearlyEqual(Model->geom_size[3 * FirstBar + 1], 1.0, 1e-6));
+				mjtNum Axis[3], Z[3] = {0, 0, 1};
+				mju_rotVecQuat(Axis, Z, Model->geom_quat + 4 * FirstBar);
+				TestTrue(TEXT("crossbar follows rotated goal opening"),
+						 FMath::IsNearlyEqual(FMath::Abs(Axis[0]), 1.0, 1e-6));
+			}
+			TestTrue(TEXT("compiled radius"), FMath::IsNearlyEqual(Model->geom_size[3 * BallGeom], 0.11, 1e-6));
+			const int Body = Model->geom_bodyid[BallGeom];
 			TestTrue(TEXT("compiled mass"), FMath::IsNearlyEqual(Model->body_mass[Body], 0.43, 1e-6));
 			TestTrue(TEXT("inertia recomputed"),
 					 FMath::IsNearlyEqual(Model->body_inertia[3 * Body], 0.4 * 0.43 * 0.11 * 0.11, 1e-6));
-			TestTrue(TEXT("compiled friction"), FMath::IsNearlyEqual(Model->geom_friction[2], 0.001, 1e-6));
-			TestTrue(TEXT("compiled contact damping"), FMath::IsNearlyEqual(Model->geom_solref[1], 0.7, 1e-6));
+			TestTrue(TEXT("compiled friction"),
+					 FMath::IsNearlyEqual(Model->geom_friction[3 * BallGeom + 2], 0.001, 1e-6));
+			TestTrue(TEXT("compiled contact damping"),
+					 FMath::IsNearlyEqual(Model->geom_solref[2 * BallGeom + 1], 0.7, 1e-6));
 		}
 		Config.Field.MapImage = TEXT("does-not-exist.png");
 		TestFalse(TEXT("missing external image fails"), Scene->ApplyConfig(Config, Error));
@@ -131,4 +194,59 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 	GEngine->DestroyWorldContext(World);
 	return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSRequiredGoalsTest, "URSoccerLab.Scene.Config.RequiredGoals",
+								 EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FURSRequiredGoalsTest::RunTest(const FString &Parameters)
+{
+	FURSObjectTypeRegistry::Get().RegisterDefaultTypes();
+	FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+	const FString Path = FPaths::CreateTempFilename(*FPaths::ProjectSavedDir(), TEXT("URSGoals"), TEXT(".json"));
+	FURSSceneConfig Loaded;
+	FString Error;
+	const auto Load = [&](const FString &Goals)
+	{
+		const FString Json =
+			TEXT(
+				R"({"version":"urs_scene_v1","field":{"length_m":9,"width_m":6,"map_image":"field.png"},"robots":[])") +
+			(Goals.IsEmpty() ? FString() : TEXT(",\"goals\":") + Goals) + TEXT("}");
+		FFileHelper::SaveStringToFile(Json, *Path);
+		return FURSSceneConfigIo::LoadFromFile(Path, Loaded, Error);
+	};
+	TestFalse(TEXT("missing goals rejected"), Load(TEXT("")));
+	TestFalse(
+		TEXT("one goal rejected"),
+		Load(TEXT(
+			R"({"width_m":1.8,"height_m":1.2,"post_radius_m":0.05,"poses":[{"translation_m":[-4.5,0,0],"yaw_deg":0}]})")));
+	TestFalse(
+		TEXT("missing dimensions rejected"),
+		Load(
+			TEXT(R"({"poses":[{"translation_m":[-4.5,0,0],"yaw_deg":0},{"translation_m":[4.5,0,0],"yaw_deg":180}]})")));
+	TestFalse(
+		TEXT("missing yaw rejected"),
+		Load(TEXT(
+			R"({"width_m":1.8,"height_m":1.2,"post_radius_m":0.05,"poses":[{"translation_m":[-4.5,0,0]},{"translation_m":[4.5,0,0],"yaw_deg":180}]})")));
+	TestFalse(
+		TEXT("string coordinate rejected"),
+		Load(TEXT(
+			R"({"width_m":1.8,"height_m":1.2,"post_radius_m":0.05,"poses":[{"translation_m":["-4.5",0,0],"yaw_deg":0},{"translation_m":[4.5,0,0],"yaw_deg":180}]})")));
+	TestTrue(
+		TEXT("two explicit goals accepted"),
+		Load(TEXT(
+			R"({"width_m":2,"height_m":1,"post_radius_m":0.04,"poses":[{"translation_m":[-2,1,0],"yaw_deg":90},{"translation_m":[2,-1,0.2],"yaw_deg":180}]})")));
+	TestTrue(TEXT("valid goals validate"), FURSSceneConfigIo::Validate(Loaded).bOk);
+	TestEqual(TEXT("yaw parsed"), Loaded.Goals.Poses[0].YawDeg, 90.0);
+	TestTrue(TEXT("goals serialize"), FURSSceneConfigIo::WriteToFile(Path, Loaded, Error));
+	FURSSceneConfig Roundtrip;
+	TestTrue(TEXT("goals reload"), FURSSceneConfigIo::LoadFromFile(Path, Roundtrip, Error));
+	TestEqual(TEXT("width roundtrip"), Roundtrip.Goals.WidthM, 2.0);
+	TestEqual(TEXT("pose roundtrip"), Roundtrip.Goals.Poses[1].TranslationMeters.Z, 0.2);
+	Loaded.Goals.PostRadiusM = 0;
+	TestFalse(TEXT("zero radius rejected"), FURSSceneConfigIo::Validate(Loaded).bOk);
+	Loaded.Goals.PostRadiusM = 0.04;
+	Loaded.Goals.Poses.RemoveAt(1);
+	TestFalse(TEXT("exactly two poses required by native validation"), FURSSceneConfigIo::Validate(Loaded).bOk);
+	IFileManager::Get().Delete(*Path);
+	return true;
+}
+
 #endif

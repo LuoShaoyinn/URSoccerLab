@@ -7,6 +7,8 @@
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 #include "MuJoCo/Components/Geometry/Primitives/MjSphere.h"
+#include "MuJoCo/Components/Geometry/Primitives/MjCylinder.h"
+#include "MuJoCo/Components/Bodies/MjWorldBody.h"
 #include "Misc/Paths.h"
 
 #include "MuJoCo/Components/Geometry/MjGeom.h"
@@ -33,6 +35,10 @@ UURSSceneConfigComponent::UURSSceneConfigComponent()
 		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/M_RuntimeField"));
 	RuntimeFieldMesh = Plane.Object;
 	RuntimeFieldMaterial = Material.Object;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> White(TEXT("/Engine/BasicShapes/BasicShapeMaterial"));
+	GoalCylinderMesh = Cylinder.Object;
+	GoalMaterial = White.Object;
 }
 
 void UURSSceneConfigComponent::BeginPlay()
@@ -101,6 +107,8 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		Manager->NetworkManager->bEnableCameraBroadcast = false;
 	}
 
+	if (!ApplyGoalsConfig(OutError))
+		return false;
 	DestroyConfiguredArticulations();
 
 	TSet<FString> NewActorIds;
@@ -704,33 +712,85 @@ bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 	Material->SetTextureParameterValue(TEXT("FieldMap"), Texture);
 	Material->SetScalarParameterValue(TEXT("FieldLengthCm"), (F.LengthM + 2 * F.BorderXM) * 100);
 	Material->SetScalarParameterValue(TEXT("FieldWidthCm"), (F.WidthM + 2 * F.BorderYM) * 100);
-	for (TActorIterator<AActor> It(World); It; ++It)
-	{
-		TArray<UStaticMeshComponent *> Meshes;
-		It->GetComponents(Meshes);
-		for (auto *Mesh : Meshes)
-		{
-			if (!Mesh->GetStaticMesh())
-				continue;
-			const FString Path = Mesh->GetStaticMesh()->GetPathName();
-			if (Path.StartsWith(TEXT("/Game/URSoccerLab/Scenes/SoccerField/Field/")) &&
-				Path.Contains(TEXT("goal"), ESearchCase::IgnoreCase))
-			{
-				if (!OriginalFieldTransforms.Contains(Mesh))
-					OriginalFieldTransforms.Add(Mesh, Mesh->GetComponentTransform());
-				FTransform Transform = OriginalFieldTransforms[Mesh];
-				// Imported goal geometry has world coordinates baked into its vertices.
-				const double Side =
-					FMath::Sign(Transform.TransformPosition(Mesh->GetStaticMesh()->GetBounds().Origin).X);
-				FVector Location = Transform.GetLocation();
-				Location.X += Side * (F.LengthM - 9.0) * 50.0;
-				Transform.SetLocation(Location);
-				Mesh->SetMobility(EComponentMobility::Movable);
-				Mesh->SetWorldTransform(Transform);
-			}
-		}
-	}
 	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g map=%s"), F.LengthM, F.WidthM, F.BorderXM,
 		   F.BorderYM, *ImagePath);
+	return true;
+}
+
+// Static worldbody geoms participate in the same MuJoCo model as robots and ball.
+bool UURSSceneConfigComponent::ApplyGoalsConfig(FString &OutError)
+{
+	if (!GoalCylinderMesh || !GoalMaterial)
+	{
+		OutError = TEXT("goal cylinder mesh/material is missing");
+		return false;
+	}
+	if (RuntimeGoals)
+		RuntimeGoals->Destroy();
+	RuntimeGoals = GetWorld()->SpawnActor<AMjArticulation>();
+	if (!RuntimeGoals)
+	{
+		OutError = TEXT("could not spawn goals");
+		return false;
+	}
+	RuntimeGoals->ActorId = TEXT("__urs_goals");
+	auto *Root = NewObject<UMjWorldBody>(RuntimeGoals, TEXT("GoalWorldBody"));
+	RuntimeGoals->AddInstanceComponent(Root);
+	RuntimeGoals->SetRootComponent(Root);
+	Root->RegisterComponent();
+	const auto &G = ActiveConfig.Goals;
+	const double PostHeight = G.HeightM + 2 * G.PostRadiusM;
+	for (int32 GoalIndex = 0; GoalIndex < 2; ++GoalIndex)
+	{
+		const auto &Pose = G.Poses[GoalIndex];
+		double Position[3] = {Pose.TranslationMeters.X, Pose.TranslationMeters.Y, Pose.TranslationMeters.Z};
+		const FQuat Yaw(FVector::UpVector, FMath::DegreesToRadians(Pose.YawDeg));
+		double Quaternion[4] = {Yaw.W, Yaw.X, Yaw.Y, Yaw.Z};
+		const FTransform GoalTransform(MjUtils::MjToUERotation(Quaternion), MjUtils::MjToUEPosition(Position));
+		for (int32 Part = 0; Part < 3; ++Part)
+		{
+			const bool Crossbar = Part == 2;
+			const double Length = Crossbar ? G.WidthM + 4 * G.PostRadiusM : PostHeight;
+			const FVector LocalCenter(0, Crossbar ? 0 : (Part == 0 ? -1 : 1) * (G.WidthM / 2 + G.PostRadiusM) * 100,
+									  (Crossbar ? G.HeightM + G.PostRadiusM : PostHeight / 2) * 100);
+			const FQuat Rotation =
+				GoalTransform.GetRotation() * (Crossbar ? FQuat(FVector::ForwardVector, PI / 2) : FQuat::Identity);
+			const FVector Center = GoalTransform.TransformPosition(LocalCenter);
+			const FVector Scale(2 * G.PostRadiusM, 2 * G.PostRadiusM, Length);
+			const FString Name = FString::Printf(TEXT("goal_%d_%s"), GoalIndex,
+												 Crossbar	 ? TEXT("crossbar")
+												 : Part == 0 ? TEXT("left_post")
+															 : TEXT("right_post"));
+			auto *Geom = NewObject<UMjCylinder>(RuntimeGoals, *Name);
+			RuntimeGoals->AddInstanceComponent(Geom);
+			Geom->SetupAttachment(Root);
+			Geom->MjName = Name;
+			Geom->SetRelativeTransform(FTransform(Rotation, Center, Scale));
+			Geom->Pos = Center;
+			Geom->bOverride_Pos = true;
+			Geom->Quat = Rotation;
+			Geom->bOverride_Quat = true;
+			Geom->bOverride_size = true;
+			Geom->contype = 1;
+			Geom->bOverride_contype = true;
+			Geom->conaffinity = 1;
+			Geom->bOverride_conaffinity = true;
+			Geom->group = 3;
+			Geom->bOverride_group = true;
+			Geom->RegisterComponent();
+			Geom->SetGeomVisibility(false);
+			// Keep visuals independent of hidden MuJoCo debug primitives.
+			auto *Visual = NewObject<UStaticMeshComponent>(RuntimeGoals, *(Name + TEXT("_visual")));
+			RuntimeGoals->AddInstanceComponent(Visual);
+			Visual->SetupAttachment(Root);
+			Visual->SetStaticMesh(GoalCylinderMesh);
+			Visual->SetMaterial(0, GoalMaterial);
+			Visual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Visual->SetRelativeTransform(FTransform(Rotation, Center, Scale));
+			Visual->RegisterComponent();
+		}
+	}
+	UE_LOG(LogTemp, Log, TEXT("URS goals: two goals, six collision cylinders; clear width=%g height=%g radius=%g"),
+		   G.WidthM, G.HeightM, G.PostRadiusM);
 	return true;
 }

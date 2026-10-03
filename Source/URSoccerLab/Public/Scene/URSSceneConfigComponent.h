@@ -102,7 +102,10 @@ private:
 	void ApplyRenderConfig();
 	void ApplyPhysicsConfig();
 	bool ApplyFieldConfig(FString &OutError);
-	TMap<TWeakObjectPtr<UStaticMeshComponent>, FTransform> OriginalFieldTransforms;
+	bool ApplyGoalsConfig(FString &OutError);
+	UPROPERTY() TObjectPtr<UStaticMesh> GoalCylinderMesh;
+	UPROPERTY() TObjectPtr<UMaterialInterface> GoalMaterial;
+	UPROPERTY() TObjectPtr<AMjArticulation> RuntimeGoals;
 	UPROPERTY() TObjectPtr<UStaticMesh> RuntimeFieldMesh;
 	UPROPERTY() TObjectPtr<UMaterialInterface> RuntimeFieldMaterial;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> RuntimeFieldSurface;

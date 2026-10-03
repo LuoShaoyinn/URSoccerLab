@@ -33,6 +33,7 @@ def capture(ue: Path, output: Path, name: str, color: tuple[int, int, int], leng
     image.save(output / f'{name}.png')
     config = json.loads((ROOT / 'py_example/examples/standing/scene.json').read_text())
     config['field'] = dict(length_m=length, width_m=width, border_x_m=0.5, border_y_m=0.5, map_image=f'{name}.png')
+    config['goals']['poses'] = [dict(translation_m=[-length/2,0,0],yaw_deg=0), dict(translation_m=[length/2,0,0],yaw_deg=180)]
     config['objects'][0]['physics'] = dict(radius_m=0.11, mass_kg=0.43, friction=[0.6, 0.005, 0.001], solref=[0.02, 0.7])
     config['objects'][0].pop('translation_m', None)
     config['robots'][0]['privilege'] = dict(all_pos=True)
@@ -42,7 +43,6 @@ def capture(ue: Path, output: Path, name: str, color: tuple[int, int, int], leng
     env['LD_LIBRARY_PATH'] = str(ROOT / 'Plugins/UnrealRoboticsLab/Binaries/Linux') + ':' + env.get('LD_LIBRARY_PATH', '')
     command = [sys.executable, str(ROOT/'Tools/runtime/run_scene.py'), '--ue', str(ue), '--scene-config', str(scene), '--sim-extra-arg=-FORCELOGFLUSH', f'--sim-extra-arg=-abslog={output / (name + "_ue.log")}']
     log_path = output / f'{name}.log'
-    (output / f'{name}_ue.log').unlink(missing_ok=True)
     (output / f'{name}_ue.log').unlink(missing_ok=True)
     with log_path.open('w') as log:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)

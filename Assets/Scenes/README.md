@@ -8,7 +8,7 @@ Content/
 │   └── URS_SoccerField.umap
 └── URSoccerLab/Scenes/SoccerField/
     ├── Environment/   # building meshes, materials, textures, import metadata
-    ├── Field/         # goal meshes and materials
+    ├── Field/         # remaining generic material/texture assets
     ├── Lighting/      # scene-specific material assets
     └── Runtime/       # generic external-map material (no pitch image)
     └── Physics/       # Unreal-baked MuJoCo ground collision actor
@@ -35,9 +35,13 @@ run `Tools/editor/bake_field_physics.py` to refresh the baked Unreal actor.
 
 Generated import staging directories and `*_ue.xml` files must not be committed.
 
-The level contains no baked pitch mesh or pitch image. Scene JSON requires
+The level contains no baked pitch mesh, pitch image, or goal meshes. Scene JSON requires
 `field.length_m`, `field.width_m`, and `field.map_image`; the runtime builds the
 pitch surface and loads the image externally. See
 [the field configuration contract](../../docs/URSoccerLab_Scene_Building_Api.md#external-field).
 `Tools/editor/prepare_runtime_field.py` regenerates the generic runtime material
-and removes obsolete pitch assets; it does not cook or package the simulator.
+and removes obsolete pitch and goal assets; it does not cook or package the simulator.
+
+The mandatory `goals` block supplies clear width, clear height, cylinder radius,
+and exactly two explicit poses. The runtime creates six white visual cylinders
+and matching static MuJoCo collisions. The hall remains unchanged.

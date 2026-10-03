@@ -71,5 +71,28 @@
     "border_x_m": 0.8,
     "border_y_m": 0.9,
     "map_image": "../../../Assets/FieldMaps/example.png"
+  },
+  "goals": {
+    "width_m": 1.8,
+    "height_m": 1.2,
+    "post_radius_m": 0.05,
+    "poses": [
+      {
+        "translation_m": [
+          -4.5,
+          0,
+          0
+        ],
+        "yaw_deg": 0
+      },
+      {
+        "translation_m": [
+          4.5,
+          0,
+          0
+        ],
+        "yaw_deg": 180
+      }
+    ]
   }
 }

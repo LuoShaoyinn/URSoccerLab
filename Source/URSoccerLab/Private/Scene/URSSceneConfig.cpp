@@ -331,6 +331,59 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 		}
 	}
 
+	const TSharedPtr<FJsonObject> *Goals = nullptr;
+	if (!Root->TryGetObjectField(TEXT("goals"), Goals))
+	{
+		OutError = TEXT("scene config requires goals with width_m, height_m, post_radius_m and exactly two poses");
+		return false;
+	}
+	Out.Goals.bIsSet = true;
+	for (const auto &N : {TPair<const TCHAR *, double *>(TEXT("width_m"), &Out.Goals.WidthM),
+						  TPair<const TCHAR *, double *>(TEXT("height_m"), &Out.Goals.HeightM),
+						  TPair<const TCHAR *, double *>(TEXT("post_radius_m"), &Out.Goals.PostRadiusM)})
+	{
+		const auto Value = (*Goals)->TryGetField(N.Key);
+		if (!Value.IsValid() || Value->Type != EJson::Number || !Value->TryGetNumber(*N.Value))
+		{
+			OutError = FString::Printf(TEXT("goals.%s must be a number"), N.Key);
+			return false;
+		}
+	}
+	const TArray<TSharedPtr<FJsonValue>> *Poses = nullptr;
+	if (!(*Goals)->TryGetArrayField(TEXT("poses"), Poses) || Poses->Num() != 2)
+	{
+		OutError = TEXT("goals.poses must contain exactly two poses");
+		return false;
+	}
+	for (const auto &Value : *Poses)
+	{
+		const TSharedPtr<FJsonObject> *Pose = nullptr;
+		const TArray<TSharedPtr<FJsonValue>> *Translation = nullptr;
+		FURSGoalPose Parsed;
+		if (!Value.IsValid() || !Value->TryGetObject(Pose) ||
+			!(*Pose)->TryGetArrayField(TEXT("translation_m"), Translation) ||
+			Translation->Num() != 3)
+		{
+			OutError = TEXT("each goal pose requires translation_m with three finite numbers");
+			return false;
+		}
+		for (const auto &Coordinate : *Translation)
+			if (Coordinate->Type != EJson::Number)
+			{
+				OutError = TEXT("goal translation_m must contain numbers");
+				return false;
+			}
+		if (!ReadVec3(Translation, Parsed.TranslationMeters)) { OutError = TEXT("goal translation_m must be finite"); return false; }
+		const auto Yaw = (*Pose)->TryGetField(TEXT("yaw_deg"));
+		if (!Yaw.IsValid() || Yaw->Type != EJson::Number || !Yaw->TryGetNumber(Parsed.YawDeg) ||
+			!FMath::IsFinite(Parsed.YawDeg))
+		{
+			OutError = TEXT("each goal pose requires finite numeric yaw_deg");
+			return false;
+		}
+		Out.Goals.Poses.Add(Parsed);
+	}
+
 	if (!ReadVisionConfig(Root, Out.Vision, OutError))
 	{
 		return false;
@@ -574,6 +627,25 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		F->SetStringField(TEXT("map_image"), In.Field.MapImage);
 		Root->SetObjectField(TEXT("field"), F);
 	}
+	if (In.Goals.bIsSet)
+	{
+		auto Goals = MakeShared<FJsonObject>();
+		Goals->SetNumberField(TEXT("width_m"), In.Goals.WidthM);
+		Goals->SetNumberField(TEXT("height_m"), In.Goals.HeightM);
+		Goals->SetNumberField(TEXT("post_radius_m"), In.Goals.PostRadiusM);
+		TArray<TSharedPtr<FJsonValue>> Poses;
+		for (const auto &P : In.Goals.Poses)
+		{
+			auto Pose = MakeShared<FJsonObject>();
+			Pose->SetArrayField(TEXT("translation_m"), {MakeShared<FJsonValueNumber>(P.TranslationMeters.X),
+														MakeShared<FJsonValueNumber>(P.TranslationMeters.Y),
+														MakeShared<FJsonValueNumber>(P.TranslationMeters.Z)});
+			Pose->SetNumberField(TEXT("yaw_deg"), P.YawDeg);
+			Poses.Add(MakeShared<FJsonValueObject>(Pose));
+		}
+		Goals->SetArrayField(TEXT("poses"), Poses);
+		Root->SetObjectField(TEXT("goals"), Goals);
+	}
 	TSharedPtr<FJsonObject> VisionObj = MakeShared<FJsonObject>();
 	VisionObj->SetStringField(TEXT("mode"), VisionModeString(In.Vision.Mode));
 	VisionObj->SetStringField(TEXT("left_camera"), In.Vision.LeftCamera);
@@ -743,6 +815,8 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 	FURSSceneConfig Config;
 	Config.Field.bIsSet = true;
 	Config.Field.MapImage = TEXT("field.png");
+	Config.Goals.bIsSet = true;
+	Config.Goals.Poses = {{FVector(-4.5, 0, 0), 0}, {FVector(4.5, 0, 0), 180}};
 	FURSRobotSpawn& Robot = Config.Robots.AddDefaulted_GetRef();
 	Robot.ActorId = TEXT("robot_rp0");
 	Robot.Type = TEXT("pi_plus");
@@ -760,6 +834,19 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 {
 	FURSSceneConfigValidationResult Result;
 	TSet<FString> SeenActorIds;
+	SeenActorIds.Add(TEXT("__urs_goals"));
+	const auto &G = Config.Goals;
+	bool GoalsValid = G.bIsSet && G.Poses.Num() == 2;
+	for (double Dimension : {G.WidthM, G.HeightM, G.PostRadiusM})
+		GoalsValid &= FMath::IsFinite(static_cast<float>(Dimension)) && Dimension > 0;
+	for (const auto &Pose : G.Poses)
+		GoalsValid &= IsFiniteVec(Pose.TranslationMeters) && FMath::IsFinite(Pose.YawDeg);
+	if (!GoalsValid)
+	{
+		Result.bOk = false;
+		Result.Errors.Add(
+			TEXT("goals require positive finite width_m, height_m, post_radius_m and exactly two finite poses"));
+	}
 	const auto &F = Config.Field;
 	if (!F.bIsSet || F.MapImage.IsEmpty())
 	{

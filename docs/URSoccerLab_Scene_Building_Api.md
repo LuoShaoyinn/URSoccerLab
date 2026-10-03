@@ -39,6 +39,13 @@ baked into the level.
     "border_x_m": 0.8, "border_y_m": 0.9,
     "map_image": "field.png"
   },
+  "goals": {
+    "width_m": 1.8, "height_m": 1.2, "post_radius_m": 0.05,
+    "poses": [
+      {"translation_m": [-4.5, 0, 0], "yaw_deg": 0},
+      {"translation_m": [4.5, 0, 0], "yaw_deg": 180}
+    ]
+  },
   "vision": {
     "mode": "stereo_rgb",
     "left_camera": "left_eye",
@@ -115,18 +122,48 @@ The hall stays fixed. A generic runtime plane covers
 `(length_m + 2*border_x_m) × (width_m + 2*border_y_m)`, centered at world zero.
 The full image covers this plane: left/right map to MuJoCo -X/+X and top/bottom
 to +Y/-Y. Use an image whose markings and borders match your dimensions; the
-simulator does not infer pitch geometry from pixels. The existing visual goals
-move to the new end lines; their sizes remain fixed.
+simulator does not infer pitch geometry from pixels. Goal placement is controlled
+independently by the mandatory `goals` block.
 
 The MuJoCo ground remains an infinite flat plane. Field dimensions define the
-playing surface and goal placement, not collision walls or out-of-bounds rules.
-The existing goals remain visual-only. Dimensions exceeding the authored hall
-are allowed but may visually overlap its geometry.
+playing surface, not collision walls or out-of-bounds rules.
+Goalposts participate in MuJoCo collisions. Dimensions exceeding the authored
+hall are allowed but may visually overlap its geometry.
 
 Change the JSON/image and relaunch; neither a mesh import nor an extra MJCF is
 required. These are launch-time settings, not live physics-reload controls.
 [`Assets/FieldMaps/example.png`](../Assets/FieldMaps/example.png) is an external
 example input and is not bundled into the simulator.
+
+## Goalposts
+
+`goals` is mandatory. Specify positive `width_m`, `height_m`, `post_radius_m`,
+and exactly two `poses`, each with `translation_m` and `yaw_deg`:
+
+```json
+"goals": {
+  "width_m": 1.8,
+  "height_m": 1.2,
+  "post_radius_m": 0.05,
+  "poses": [
+    {"translation_m": [-4.5, 0, 0], "yaw_deg": 0},
+    {"translation_m": [4.5, 0, 0], "yaw_deg": 180}
+  ]
+}
+```
+
+The pose origin is the ground-level center of the opening. Coordinates use
+MuJoCo metres (+X forward, +Y left, +Z up); positive yaw turns +X toward +Y.
+Each goal's opening lies in its local Y-Z plane. Width is the clear opening
+between posts and height is the clearance under the crossbar. Both goals share
+these dimensions. All three parts have the same cylinder radius.
+
+Each goal consists of two vertical cylinders and one horizontal cylinder.
+The runtime generates six matching visual and static MuJoCo collision cylinders;
+balls and robots can hit them. No net or other goal structure is generated.
+There are no baked goal meshes, implicit poses, or field-size placement defaults.
+When changing the field length, set the two goal positions explicitly as needed.
+Edit JSON and relaunch; no goal rebake or additional MJCF is required.
 
 ## Ball overrides
 

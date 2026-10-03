@@ -123,6 +123,21 @@ struct URSOCCERLAB_API FURSFieldConfig
 	FString MapImage;
 };
 
+struct URSOCCERLAB_API FURSGoalPose
+{
+	FVector TranslationMeters = FVector::ZeroVector;
+	double YawDeg = 0.0;
+};
+
+struct URSOCCERLAB_API FURSGoalsConfig
+{
+	bool bIsSet = false;
+	double WidthM = 1.8;
+	double HeightM = 1.2;
+	double PostRadiusM = 0.05;
+	TArray<FURSGoalPose> Poses;
+};
+
 struct URSOCCERLAB_API FURSBallPhysicsConfig
 {
 	bool bIsSet = false;
@@ -145,6 +160,7 @@ struct URSOCCERLAB_API FURSSceneConfig
 {
 	FString Version = TEXT("urs_scene_v1");
 	FURSFieldConfig Field;
+	FURSGoalsConfig Goals;
 	FString SourceDirectory;
 	FURSVisionConfig Vision;
 	FURSRenderConfig Render;

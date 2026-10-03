@@ -165,4 +165,6 @@ This runs two external maps and field sizes, captures camera images, and writes
 results under `Saved/Tests/change-map-render/`. It does not package an AppImage.
 Unreal automation tests under `URSoccerLab.Scene.Config` validate required fields
 and compile a configured ball through the component pipeline to verify its
-radius, mass, inertia, friction, and contact settings.
+radius, mass, inertia, friction, and contact settings. Goal tests additionally
+require two explicit poses, verify the six static cylinders and their transforms,
+and check ball–goalpost contact.
