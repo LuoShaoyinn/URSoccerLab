@@ -1701,3 +1701,53 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 
 	return SetPose(ActorId, &InitialTrans, &InitialRot, &InitialJointQpos);
 }
+
+TArray<FURSRobotChannel> UURSRobotCoreComponent::GetRobotChannels() const
+{
+	FScopeLock Lock(&EndpointMutex);
+	TArray<FURSRobotChannel> Channels;
+	for (const auto &Ep : Endpoints)
+	{
+		FURSRobotChannel NE;
+		NE.ActorId = Ep.ActorId;
+		NE.StateBuf = Ep.StateBuffer;
+		NE.CmdBuf = Ep.CmdBuffer;
+		NE.GainBuf = Ep.GainBuffer;
+		// Build metadata for JSON
+		for (const auto &Ji : Ep.Joints)
+			if (Ji.JointType != mjJNT_FREE)
+				NE.Meta.JointNames.Add(Ji.Name);
+		for (const auto &Ai : Ep.Actuators)
+			NE.Meta.ActuatorNames.Add(Ai.Name);
+		for (const auto &Ce : Ep.Cameras)
+		{
+			if (auto *Cam = Ce.Camera.Get())
+			{
+				NE.Meta.CameraNames.Add(Ce.Name);
+				NE.Meta.CameraWidths.Add(Cam->resolution.Num() > 0 ? Cam->resolution[0] : 0);
+				NE.Meta.CameraHeights.Add(Cam->resolution.Num() > 1 ? Cam->resolution[1] : 0);
+				NE.Meta.CameraFormats.Add(Cam->CaptureMode == EMjCameraMode::Depth ? TEXT("float32_depth")
+				                                                                   : TEXT("bgra8"));
+			}
+		}
+
+		NE.Meta.bPrivSelfPos = Ep.Privilege.bSelfPos;
+		NE.Meta.bPrivBallPosRelated = Ep.Privilege.bBallPosRelated;
+		NE.Meta.bPrivBallVelRelated = Ep.Privilege.bBallVelRelated;
+		NE.Meta.bPrivAllPos = Ep.Privilege.bAllPos;
+		NE.Meta.Noise = {Ep.Noise.Qpos,
+		                 Ep.Noise.Qvel,
+		                 Ep.Noise.Qtor,
+		                 Ep.Noise.ImuQuat,
+		                 Ep.Noise.ImuAngVel,
+		                 Ep.Noise.CameraImuQuat,
+		                 Ep.Noise.CameraImuAngVel,
+		                 Ep.Noise.SelfPos,
+		                 Ep.Noise.BallPosRelated,
+		                 Ep.Noise.BallVelRelated,
+		                 Ep.Noise.AllPos};
+
+		Channels.Add(MoveTemp(NE));
+	}
+	return Channels;
+}

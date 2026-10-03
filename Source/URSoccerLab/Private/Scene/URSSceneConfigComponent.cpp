@@ -1,4 +1,5 @@
 #include "Scene/URSSceneConfigComponent.h"
+#include "Vision/URSCameraStreamComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
@@ -591,20 +592,17 @@ void UURSSceneConfigComponent::ApplyPhysicsConfig()
 				break;
 			}
 		}
-		if ((StateHz > 0.0 || CamHz > 0.0) && GetOwner())
+		if (GetOwner())
 		{
-			if (auto* T = GetOwner()->FindComponentByClass<UURSTcpTransportComponent>())
+			if (StateHz > 0.0)
 			{
-				if (StateHz > 0.0)
-				{
-					T->StateRateHz = StateHz;
-					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] state rate = %.0f Hz"), StateHz);
-				}
-				if (CamHz > 0.0)
-				{
-					T->CameraRateHz = CamHz;
-					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] camera rate = %.0f Hz"), CamHz);
-				}
+				if (auto* Transport = GetOwner()->FindComponentByClass<UURSTcpTransportComponent>())
+					Transport->StateRateHz = StateHz;
+			}
+			if (CamHz > 0.0)
+			{
+				if (auto* Camera = GetOwner()->FindComponentByClass<UURSCameraStreamComponent>())
+					Camera->SetCameraRate(CamHz);
 			}
 		}
 	});

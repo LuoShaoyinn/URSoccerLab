@@ -5,39 +5,13 @@
 // All input/output is UTF-8 bytes (const char* / TArray<uint8>).
 
 #include "CoreMinimal.h"
-#include "URSSnapshot.h"
+#include "Core/URSRobotChannel.h"
 #include "Core/URSBuffers.h"
 
 struct yyjson_doc;
 struct yyjson_mut_doc;
 typedef struct yyjson_doc yyjson_doc;
 typedef struct yyjson_mut_doc yyjson_mut_doc;
-
-struct FRobotMetadata
-{
-	// Static per-robot data that doesn't change between physics steps.
-	// Set once during initialization, read by the JSON builder.
-	TArray<FString> JointNames;
-	TArray<FString> ActuatorNames;
-	TArray<FString> CameraNames;
-	TArray<int32> CameraWidths;
-	TArray<int32> CameraHeights;
-	TArray<FString> CameraFormats;
-
-	bool bPrivSelfPos = false;
-	bool bPrivBallPosRelated = false;
-	bool bPrivBallVelRelated = false;
-	bool bPrivAllPos = false;
-	TArray<FString> AllActorNames;
-
-	struct FNoiseConfig
-	{
-		double Qpos = 0, Qvel = 0, Qtor = 0;
-		double ImuQuat = 0, ImuAngVel = 0;
-		double CameraImuQuat = 0, CameraImuAngVel = 0;
-		double SelfPos = 0, BallPosRelated = 0, BallVelRelated = 0, AllPos = 0;
-	} Noise;
-};
 
 class URSJsonBuilder
 {

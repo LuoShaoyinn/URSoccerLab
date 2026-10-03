@@ -1,4 +1,5 @@
 #include "URSSoccerGameMode.h"
+#include "Vision/URSCameraStreamComponent.h"
 
 #include "EngineUtils.h"
 #include "GameFramework/SpectatorPawn.h"
@@ -86,6 +87,11 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	{
 		UURSRobotCoreComponent* Core = NewObject<UURSRobotCoreComponent>(Manager, TEXT("URSRobotCore"));
 		Core->RegisterComponent();
+	}
+	if (!Manager->FindComponentByClass<UURSCameraStreamComponent>())
+	{
+		auto* Camera = NewObject<UURSCameraStreamComponent>(Manager, TEXT("URSCameraStream"));
+		Camera->RegisterComponent();
 	}
 	if (!Manager->FindComponentByClass<UURSTcpTransportComponent>())
 	{

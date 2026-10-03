@@ -31,6 +31,11 @@ JPEG quality 85. State is published independently at 60 Hz. Robot `i` uses TCP
 port `10000 + i`; the optional global administration API uses port `11000`.
 URSoccerLab disables URLab's legacy ZMQ, shared-memory, and RPC listeners.
 
+Camera capture/encoding, application protocol, and socket transport have separate
+owners. Robot and admin socket I/O runs on the network worker; admin operations
+execute through game-thread queues. See [runtime boundaries](docs/Runtime_Architecture.md)
+for the adapter interface and threading details.
+
 ## Repository layout
 
 | Path | Purpose |
