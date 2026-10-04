@@ -1,6 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
@@ -105,10 +106,29 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 			if (Mesh->GetName() == TEXT("URSRuntimeField"))
 			{
 				Found = true;
+				TestEqual(TEXT("field retains static mobility"), Mesh->Mobility, EComponentMobility::Static);
+				TestTrue(TEXT("field retains Nanite geometry"), Mesh->GetStaticMesh()->GetNaniteSettings().bEnabled);
 				TestTrue(TEXT("field bounds are 8 x 5 metres"),
 						 Mesh->Bounds.BoxExtent.Equals(FVector(400, 250, 0), 0.1));
 			}
 		TestTrue(TEXT("runtime surface exists"), Found);
+		Config.Field.LengthM = 10;
+		Config.Field.WidthM = 6;
+		if (TestTrue(TEXT("static field can be resized on config reload"), Scene->ApplyConfig(Config, Error)))
+		{
+			Meshes.Reset();
+			Manager->GetComponents(Meshes);
+			int32 SurfaceCount = 0;
+			for (auto *Mesh : Meshes)
+				if (Mesh->GetName() == TEXT("URSRuntimeField"))
+				{
+					++SurfaceCount;
+					TestTrue(TEXT("reloaded field bounds are 11 x 7 metres"),
+						Mesh->Bounds.BoxExtent.Equals(FVector(550, 350, 0), 0.1));
+					TestTrue(TEXT("reloaded static surface is registered"), Mesh->IsRegistered());
+				}
+			TestEqual(TEXT("reload reuses one field surface"), SurfaceCount, 1);
+		}
 		for (TActorIterator<AMjArticulation> It(World); It; ++It)
 			if (It->ActorId == TEXT("ball"))
 				TestTrue(TEXT("default ball center follows radius"),

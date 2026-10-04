@@ -31,9 +31,10 @@ using namespace URSoccerLab;
 UURSSceneConfigComponent::UURSSceneConfigComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(
+		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/SM_RuntimeField"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(
-		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/M_RuntimeField"));
+		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/MI_RuntimeField"));
 	RuntimeFieldMesh = Plane.Object;
 	RuntimeFieldMaterial = Material.Object;
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder"));
@@ -675,7 +676,7 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 			: (bNDisplayOwnsResolution ? TEXT("nDisplay atlas") : TEXT("unchanged")));
 }
 
-// The hall is fixed. Only a generic plane and a parameterized material are cooked.
+// Preserve the original static Nanite surface; the pitch image stays external.
 bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 {
 	const auto &F = ActiveConfig.Field;
@@ -693,23 +694,35 @@ bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 		OutError = FString::Printf(TEXT("cannot load field.map_image: %s"), *ImagePath);
 		return false;
 	}
+	const FVector MeshSize = RuntimeFieldMesh->GetBoundingBox().GetSize();
+	if (MeshSize.X <= 0 || MeshSize.Y <= 0)
+	{
+		OutError = TEXT("runtime field mesh has invalid bounds");
+		return false;
+	}
 	if (!RuntimeFieldSurface)
 	{
 		RuntimeFieldSurface = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("URSRuntimeField"));
 		GetOwner()->AddInstanceComponent(RuntimeFieldSurface);
-		RuntimeFieldSurface->SetMobility(EComponentMobility::Movable);
-		RuntimeFieldSurface->SetStaticMesh(RuntimeFieldMesh);
-		RuntimeFieldSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		RuntimeFieldSurface->RegisterComponent();
 	}
+	// Configure while unregistered, including on reload: changing a registered
+	// static primitive's transform is unsupported and can leave stale render data.
+	if (RuntimeFieldSurface->IsRegistered())
+		RuntimeFieldSurface->UnregisterComponent();
+	RuntimeFieldSurface->SetMobility(EComponentMobility::Static);
+	RuntimeFieldSurface->SetStaticMesh(RuntimeFieldMesh);
+	RuntimeFieldSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	RuntimeFieldSurface->SetWorldLocation(FVector::ZeroVector);
 	RuntimeFieldSurface->SetWorldRotation(FRotator::ZeroRotator);
-	RuntimeFieldSurface->SetWorldScale3D(FVector(F.LengthM + 2 * F.BorderXM, F.WidthM + 2 * F.BorderYM, 1));
+	RuntimeFieldSurface->SetWorldScale3D(
+		FVector((F.LengthM + 2 * F.BorderXM) * 100 / MeshSize.X,
+				(F.WidthM + 2 * F.BorderYM) * 100 / MeshSize.Y, 1));
 	RuntimeFieldSurface->SetMaterial(0, RuntimeFieldMaterial);
 	auto *Material = RuntimeFieldSurface->CreateAndSetMaterialInstanceDynamic(0);
-	Material->SetTextureParameterValue(TEXT("FieldMap"), Texture);
-	Material->SetScalarParameterValue(TEXT("FieldLengthCm"), (F.LengthM + 2 * F.BorderXM) * 100);
-	Material->SetScalarParameterValue(TEXT("FieldWidthCm"), (F.WidthM + 2 * F.BorderYM) * 100);
+	// Keep the original glTF material's UV and PBR inputs. Only base color is
+	// supplied today; normal and metallic/roughness textures can remain optional.
+	Material->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture);
+	RuntimeFieldSurface->RegisterComponent();
 	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g map=%s"), F.LengthM, F.WidthM, F.BorderXM,
 		   F.BorderYM, *ImagePath);
 	return true;

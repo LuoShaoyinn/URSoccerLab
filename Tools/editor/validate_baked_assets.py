@@ -19,7 +19,8 @@ EXPECTED_ASSETS = [
     ("Blueprint", "Content/URSoccerLab/Robots/pi_plus/pi_plus.uasset"),
     ("Soccer ball", "Content/URSoccerLab/Objects/soccer_ball/soccer_ball.uasset"),
     ("Level", "Content/Levels/URS_SoccerField.umap"),
-    ("Runtime field material", "Content/URSoccerLab/Scenes/SoccerField/Runtime/M_RuntimeField.uasset"),
+    ("Runtime field mesh", "Content/URSoccerLab/Scenes/SoccerField/Runtime/SM_RuntimeField.uasset"),
+    ("Runtime field material", "Content/URSoccerLab/Scenes/SoccerField/Runtime/MI_RuntimeField.uasset"),
     ("Environment mesh", "Content/URSoccerLab/Scenes/SoccerField/Environment/StaticMeshes/Material2.uasset"),
     ("Cloud material", "Content/URSoccerLab/Scenes/SoccerField/Lighting/MI_URS_OvercastCloud.uasset"),
     ("Field physics", "Content/URSoccerLab/Scenes/SoccerField/Physics/field_physics.uasset"),
@@ -29,7 +30,8 @@ EXPECTED_UE_PATHS = [
     "/Game/URSoccerLab/Robots/pi_plus/pi_plus.pi_plus",
     "/Game/URSoccerLab/Objects/soccer_ball/soccer_ball.soccer_ball",
     "/Game/Levels/URS_SoccerField",
-    "/Game/URSoccerLab/Scenes/SoccerField/Runtime/M_RuntimeField",
+    "/Game/URSoccerLab/Scenes/SoccerField/Runtime/MI_RuntimeField",
+    "/Game/URSoccerLab/Scenes/SoccerField/Runtime/SM_RuntimeField",
     "/Game/URSoccerLab/Scenes/SoccerField/Physics/field_physics.field_physics",
 ]
 

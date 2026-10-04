@@ -125,6 +125,11 @@ to +Y/-Y. Use an image whose markings and borders match your dimensions; the
 simulator does not infer pitch geometry from pixels. Goal placement is controlled
 independently by the mandatory `goals` block.
 
+The visual surface retains the original static Nanite mesh and glTF material
+parent. Only its RGB base-color texture is supplied by configuration today;
+the material retains UV and PBR inputs for optional textures in future. No
+built-in field image is referenced by the generic mesh or material.
+
 The MuJoCo ground remains an infinite flat plane. Field dimensions define the
 playing surface, not collision walls or out-of-bounds rules.
 Goalposts participate in MuJoCo collisions. Dimensions exceeding the authored
