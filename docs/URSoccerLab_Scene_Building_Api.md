@@ -144,8 +144,9 @@ hall are allowed but may visually overlap its geometry.
 
 Change the JSON/image and relaunch; neither a mesh import nor an extra MJCF is
 required. These are launch-time settings, not live physics-reload controls.
-[`Assets/FieldMaps/example.png`](../Assets/FieldMaps/example.png) is an external
-example input and is not bundled into the simulator.
+`external/field/example.png` is a local external example input. The entire
+`external/` directory is Git-ignored and is not bundled into the simulator;
+supply its files separately when using the example scenes.
 
 ## Goalposts
 

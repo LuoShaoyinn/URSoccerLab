@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
+#include "ImageUtils.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -87,7 +88,14 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 	Config.Field.WidthM = 4;
 	Config.Field.BorderXM = 0.5;
 	Config.Field.BorderYM = 0.5;
-	Config.Field.Visual.BaseColorMap = TEXT("Assets/FieldMaps/example.png");
+	// Native tests generate their own fixture and do not depend on ignored user maps.
+	const FString MapFixture = FPaths::ConvertRelativePathToFull(
+		FPaths::CreateTempFilename(*FPaths::ProjectSavedDir(), TEXT("FieldMap"), TEXT(".png")));
+	TArray<FColor> MapPixels; MapPixels.Init(FColor(40, 150, 40), 64);
+	TArray64<uint8> MapBytes;
+	FImageUtils::PNGCompressImageArray(8, 8, MapPixels, MapBytes);
+	TestTrue(TEXT("temporary field map written"), FFileHelper::SaveArrayToFile(MapBytes, *MapFixture));
+	Config.Field.Visual.BaseColorMap = MapFixture;
 	Config.Field.Physics.Friction = {0.35f, 0.007f, 0.002f};
 	Config.Field.Physics.Condim = 4;
 	Config.Field.Physics.Solref = {0.01f, 0.8f};
@@ -185,6 +193,7 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 				Manager->PhysicsEngine->bShouldStopTask = true;
 				World->DestroyWorld(false);
 				GEngine->DestroyWorldContext(World);
+				IFileManager::Get().Delete(*MapFixture);
 				return false;
 			}
 			if (TestTrue(TEXT("first rotated post exists"), FirstPost >= 0))
@@ -249,6 +258,7 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 	Manager->PhysicsEngine->bShouldStopTask = true;
 	World->DestroyWorld(false);
 	GEngine->DestroyWorldContext(World);
+	IFileManager::Get().Delete(*MapFixture);
 	return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSRequiredGoalsTest, "URSoccerLab.Scene.Config.RequiredGoals",

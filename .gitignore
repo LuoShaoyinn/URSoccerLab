@@ -119,3 +119,6 @@ refs/
 /_pack/
 
 .opencode/
+
+# User-supplied runtime field maps and PBR textures
+/external/

@@ -95,7 +95,7 @@
     "border_x_m": 0.8,
     "border_y_m": 0.9,
     "visual": {
-      "base_color_map": "../../../Assets/FieldMaps/example.png"
+      "base_color_map": "../../../external/field/example.png"
     },
     "physics": {
       "friction": [

@@ -34,6 +34,10 @@ except no detail maps are supplied by default. Border defaults remain unchanged.
 
 ## Files and sampling
 
+Local field files live under `external/field/` (`example.png` and `grass1-ue/`).
+The entire `external/` directory is Git-ignored. Example scenes point there;
+a fresh checkout needs your separately supplied maps.
+
 All paths are external files relative to the scene JSON directory, or absolute
 paths. Moving the JSON requires moving its textures with it or adjusting paths.
 The loader creates transient textures, never imports files into Content, and
