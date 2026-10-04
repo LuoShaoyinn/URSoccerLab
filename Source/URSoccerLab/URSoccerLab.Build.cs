@@ -16,6 +16,7 @@ using UnrealBuildTool;
 				"JsonUtilities",
 				"Sockets",
 				"ImageWrapper",
+				"ImageCore",
 				"DisplayCluster",
 				"DisplayClusterProjection",
 				"RenderCore",

@@ -11,6 +11,97 @@ namespace URSoccerLab
 {
 namespace
 {
+bool ReadFieldSettings(const TSharedPtr<FJsonObject>& Field, FURSFieldConfig& Out, FString& Error)
+{
+	if (Field->HasField(TEXT("map_image")))
+	{
+		Error = TEXT("field.map_image has moved to field.visual.base_color_map");
+		return false;
+	}
+	const TSharedPtr<FJsonObject>* Visual;
+	if (!Field->TryGetObjectField(TEXT("visual"), Visual) || !(*Visual)->HasField(TEXT("base_color_map")))
+	{
+		Error = TEXT("field.visual with base_color_map is required");
+		return false;
+	}
+	auto& V = Out.Visual;
+	for (const auto& Item : {TPair<const TCHAR*, FString*>(TEXT("base_color_map"), &V.BaseColorMap),
+		{TEXT("normal_map"), &V.NormalMap}, {TEXT("roughness_map"), &V.RoughnessMap},
+		{TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
+	{
+		if ((*Visual)->HasField(Item.Key) &&
+			((*Visual)->TryGetField(Item.Key)->Type != EJson::String || !(*Visual)->TryGetStringField(Item.Key, *Item.Value) || Item.Value->IsEmpty()))
+		{
+			Error = FString::Printf(TEXT("field.visual.%s must be a nonempty path string"), Item.Key);
+			return false;
+		}
+	}
+	for (const auto& Item : {TPair<const TCHAR*, double*>(TEXT("detail_tile_size_m"), &V.DetailTileSizeM),
+		{TEXT("normal_strength"), &V.NormalStrength}, {TEXT("roughness"), &V.Roughness}, {TEXT("metallic"), &V.Metallic}})
+	{
+		if ((*Visual)->HasField(Item.Key) &&
+			((*Visual)->TryGetField(Item.Key)->Type != EJson::Number || !(*Visual)->TryGetNumberField(Item.Key, *Item.Value)))
+		{
+			Error = FString::Printf(TEXT("field.visual.%s must be numeric"), Item.Key);
+			return false;
+		}
+	}
+	if ((*Visual)->HasField(TEXT("normal_format")))
+	{
+		FString Format;
+		if (!(*Visual)->TryGetStringField(TEXT("normal_format"), Format) || (Format != TEXT("directx") && Format != TEXT("opengl")))
+		{
+			Error = TEXT("field.visual.normal_format must be directx or opengl");
+			return false;
+		}
+		V.bNormalOpenGL = Format == TEXT("opengl");
+	}
+	if (!Field->HasField(TEXT("physics"))) return true;
+	const TSharedPtr<FJsonObject>* Physics;
+	if (!Field->TryGetObjectField(TEXT("physics"), Physics))
+	{
+		Error = TEXT("field.physics must be an object");
+		return false;
+	}
+	auto& P = Out.Physics;
+	if ((*Physics)->HasField(TEXT("condim")))
+	{
+		double Number;
+		if ((*Physics)->TryGetField(TEXT("condim"))->Type != EJson::Number ||
+			!(*Physics)->TryGetNumberField(TEXT("condim"), Number) ||
+			!(Number == 1 || Number == 3 || Number == 4 || Number == 6))
+		{
+			Error = TEXT("field.physics.condim must be 1, 3, 4 or 6");
+			return false;
+		}
+		P.Condim = int32(Number);
+	}
+	for (const auto& Item : {TPair<const TCHAR*, TArray<float>*>(TEXT("friction"), &P.Friction),
+		{TEXT("solref"), &P.Solref}, {TEXT("solimp"), &P.Solimp}})
+	{
+		if (!(*Physics)->HasField(Item.Key)) continue;
+		const TArray<TSharedPtr<FJsonValue>>* Values;
+		const int32 Count = FCString::Strcmp(Item.Key, TEXT("friction")) == 0 ? 3 : FCString::Strcmp(Item.Key, TEXT("solref")) == 0 ? 2 : 5;
+		if (!(*Physics)->TryGetArrayField(Item.Key, Values) || Values->Num() != Count)
+		{
+			Error = FString::Printf(TEXT("field.physics.%s requires %d numbers"), Item.Key, Count);
+			return false;
+		}
+		Item.Value->Reset();
+		for (const auto& Value : *Values)
+		{
+			double Number;
+			if (Value->Type != EJson::Number || !Value->TryGetNumber(Number) || !FMath::IsFinite(float(Number)))
+			{
+				Error = FString::Printf(TEXT("field.physics.%s requires finite numbers"), Item.Key);
+				return false;
+			}
+			Item.Value->Add(float(Number));
+		}
+	}
+	return true;
+}
+
 bool IsFiniteVec(const FVector& V)
 {
 	return FMath::IsFinite(V.X) && FMath::IsFinite(V.Y) && FMath::IsFinite(V.Z);
@@ -355,7 +446,7 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 	const TSharedPtr<FJsonObject> *Field = nullptr;
 	if (!Root->HasField(TEXT("field")))
 	{
-		OutError = TEXT("scene config requires field with length_m, width_m and map_image");
+		OutError = TEXT("scene config requires field with length_m, width_m and visual.base_color_map");
 		return false;
 	}
 	{
@@ -365,7 +456,7 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 			return false;
 		}
 		Out.Field.bIsSet = true;
-		for (const TCHAR *Key : {TEXT("length_m"), TEXT("width_m"), TEXT("map_image")})
+		for (const TCHAR *Key : {TEXT("length_m"), TEXT("width_m")})
 			if (!(*Field)->HasField(Key))
 			{
 				OutError = FString::Printf(TEXT("field.%s is required"), Key);
@@ -382,13 +473,7 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 				OutError = FString::Printf(TEXT("field.%s must be numeric"), N.Key);
 				return false;
 			}
-		if ((*Field)->HasField(TEXT("map_image")) &&
-			((*Field)->TryGetField(TEXT("map_image"))->Type != EJson::String ||
-			 !(*Field)->TryGetStringField(TEXT("map_image"), Out.Field.MapImage)))
-		{
-			OutError = TEXT("field.map_image must be a string");
-			return false;
-		}
+		if (!ReadFieldSettings(*Field, Out.Field, OutError)) return false;
 	}
 
 	const TSharedPtr<FJsonObject> *Goals = nullptr;
@@ -686,7 +771,29 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		F->SetNumberField(TEXT("width_m"), In.Field.WidthM);
 		F->SetNumberField(TEXT("border_x_m"), In.Field.BorderXM);
 		F->SetNumberField(TEXT("border_y_m"), In.Field.BorderYM);
-		F->SetStringField(TEXT("map_image"), In.Field.MapImage);
+		auto Visual = MakeShared<FJsonObject>();
+		const auto& V = In.Field.Visual;
+		Visual->SetStringField(TEXT("base_color_map"), V.BaseColorMap);
+		for (const auto& Item : {TPair<const TCHAR*, const FString*>(TEXT("normal_map"), &V.NormalMap),
+			{TEXT("roughness_map"), &V.RoughnessMap}, {TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
+			if (!Item.Value->IsEmpty()) Visual->SetStringField(Item.Key, *Item.Value);
+		Visual->SetNumberField(TEXT("detail_tile_size_m"), V.DetailTileSizeM);
+		Visual->SetNumberField(TEXT("normal_strength"), V.NormalStrength);
+		Visual->SetNumberField(TEXT("roughness"), V.Roughness);
+		Visual->SetNumberField(TEXT("metallic"), V.Metallic);
+		Visual->SetStringField(TEXT("normal_format"), V.bNormalOpenGL ? TEXT("opengl") : TEXT("directx"));
+		F->SetObjectField(TEXT("visual"), Visual);
+		auto Physics = MakeShared<FJsonObject>();
+		const auto& P = In.Field.Physics;
+		Physics->SetNumberField(TEXT("condim"), P.Condim);
+		for (const auto& Item : {TPair<const TCHAR*, const TArray<float>*>(TEXT("friction"), &P.Friction),
+			{TEXT("solref"), &P.Solref}, {TEXT("solimp"), &P.Solimp}})
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			for (float Value : *Item.Value) Values.Add(MakeShared<FJsonValueNumber>(Value));
+			Physics->SetArrayField(Item.Key, Values);
+		}
+		F->SetObjectField(TEXT("physics"), Physics);
 		Root->SetObjectField(TEXT("field"), F);
 	}
 	if (In.Goals.bIsSet)
@@ -893,7 +1000,7 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 {
 	FURSSceneConfig Config;
 	Config.Field.bIsSet = true;
-	Config.Field.MapImage = TEXT("field.png");
+	Config.Field.Visual.BaseColorMap = TEXT("field.png");
 	Config.Goals.bIsSet = true;
 	Config.Goals.Poses = {{FVector(-4.5, 0, 0), 0}, {FVector(4.5, 0, 0), 180}};
 	FURSRobotSpawn& Robot = Config.Robots.AddDefaulted_GetRef();
@@ -926,6 +1033,7 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
  { Result.bOk = false; Result.Errors.Add(TEXT("guest_inspector requires valid port, max_guests [1,4], even width [64,1920]/height [64,1080], fov_degrees [10,150]")); }
 	TSet<FString> SeenActorIds;
 	SeenActorIds.Add(TEXT("__urs_goals"));
+	SeenActorIds.Add(TEXT("__urs_ground"));
 	const auto &G = Config.Goals;
 	bool GoalsValid = G.bIsSet && G.Poses.Num() == 2;
 	for (double Dimension : {G.WidthM, G.HeightM, G.PostRadiusM})
@@ -939,16 +1047,40 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 			TEXT("goals require positive finite width_m, height_m, post_radius_m and exactly two finite poses"));
 	}
 	const auto &F = Config.Field;
-	if (!F.bIsSet || F.MapImage.IsEmpty())
+	if (!F.bIsSet || F.Visual.BaseColorMap.IsEmpty())
 	{
 		Result.bOk = false;
-		Result.Errors.Add(TEXT("field with dimensions and nonempty map_image is required"));
+		Result.Errors.Add(TEXT("field with dimensions and nonempty visual.base_color_map is required"));
 	}
 	if (F.bIsSet && (!FMath::IsFinite(F.LengthM) || F.LengthM <= 0 || !FMath::IsFinite(F.WidthM) || F.WidthM <= 0 ||
 					 !FMath::IsFinite(F.BorderXM) || F.BorderXM < 0 || !FMath::IsFinite(F.BorderYM) || F.BorderYM < 0))
 	{
 		Result.bOk = false;
 		Result.Errors.Add(TEXT("field dimensions must be finite; length/width positive and borders nonnegative"));
+	}
+
+	const auto& FieldVisual = F.Visual;
+	if (!FMath::IsFinite(FieldVisual.DetailTileSizeM) || FieldVisual.DetailTileSizeM <= 0 ||
+		!FMath::IsFinite(FieldVisual.NormalStrength) || FieldVisual.NormalStrength < 0 || FieldVisual.NormalStrength > 10 ||
+		!FMath::IsFinite(FieldVisual.Roughness) || FieldVisual.Roughness < 0 || FieldVisual.Roughness > 1 ||
+		!FMath::IsFinite(FieldVisual.Metallic) || FieldVisual.Metallic < 0 || FieldVisual.Metallic > 1)
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("field.visual requires positive finite detail_tile_size_m, normal_strength [0,10], roughness/metallic [0,1]"));
+	}
+	const auto& FieldPhysics = F.Physics;
+	bool PhysicsValid = FieldPhysics.Friction.Num() == 3 && FieldPhysics.Solref.Num() == 2 && FieldPhysics.Solimp.Num() == 5 &&
+		(FieldPhysics.Condim == 1 || FieldPhysics.Condim == 3 || FieldPhysics.Condim == 4 || FieldPhysics.Condim == 6);
+	for (float Value : FieldPhysics.Friction) PhysicsValid &= FMath::IsFinite(Value) && Value >= 0;
+	for (float Value : FieldPhysics.Solref) PhysicsValid &= FMath::IsFinite(Value);
+	for (float Value : FieldPhysics.Solimp) PhysicsValid &= FMath::IsFinite(Value);
+	if (FieldPhysics.Solref.Num() == 2) PhysicsValid &= (FieldPhysics.Solref[0] > 0 && FieldPhysics.Solref[1] > 0) || (FieldPhysics.Solref[0] <= 0 && FieldPhysics.Solref[1] <= 0);
+	if (FieldPhysics.Solimp.Num() == 5) PhysicsValid &= FieldPhysics.Solimp[0] > 0 && FieldPhysics.Solimp[0] < 1 && FieldPhysics.Solimp[1] > 0 && FieldPhysics.Solimp[1] < 1 &&
+		FieldPhysics.Solimp[2] > 0 && FieldPhysics.Solimp[3] > 0 && FieldPhysics.Solimp[3] < 1 && FieldPhysics.Solimp[4] >= 1;
+	if (!PhysicsValid)
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("invalid field.physics: friction requires three nonnegative finite values, condim 1/3/4/6, solref two same-format finite values, solimp [d0,dwidth,width,midpoint,power] within valid solver ranges"));
 	}
 
 	if (Config.Vision.LeftCamera.IsEmpty())

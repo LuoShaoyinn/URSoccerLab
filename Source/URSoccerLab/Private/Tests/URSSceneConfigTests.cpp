@@ -141,7 +141,7 @@ bool FURSSceneConfigLoadRejectionTest::RunTest(const FString& Parameters)
 		WithField.InsertAt(
 			1, TEXT("\"goals\":{\"width_m\":1.8,\"height_m\":1.2,\"post_radius_m\":0.05,\"poses\":[{\"translation_m\":["
 					"-4.5,0,0],\"yaw_deg\":0},{\"translation_m\":[4.5,0,0],\"yaw_deg\":180}]},"));
-		WithField.InsertAt(1, TEXT("\"field\":{\"length_m\":9,\"width_m\":6,\"map_image\":\"field.png\"},"));
+		WithField.InsertAt(1, TEXT("\"field\":{\"length_m\":9,\"width_m\":6,\"visual\":{\"base_color_map\":\"field.png\"}},"));
 		FFileHelper::SaveStringToFile(WithField, *Path);
 		const bool bOk = FURSSceneConfigIo::LoadFromFile(Path, OutCfg, OutError);
 		IFileManager::Get().Delete(*Path);

@@ -50,7 +50,7 @@ def run(ue: Path, output: Path, codec: str) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     original = ROOT / "py_example/examples/standing/scene.json"
     config = json.loads(original.read_text())
-    config["field"]["map_image"] = str((original.parent / config["field"]["map_image"]).resolve())
+    config["field"]["visual"]["base_color_map"] = str((original.parent / config["field"]["visual"]["base_color_map"]).resolve())
     # Small raw frames keep this a protocol/behavior test rather than a bandwidth benchmark.
     config["camera_freq"] = 12
     config["vision"] = {"rgb": {"compression": codec, "rate_hz": 12, "jpeg_quality": 85}}

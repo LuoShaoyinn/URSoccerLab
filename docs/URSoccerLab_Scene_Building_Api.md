@@ -37,7 +37,11 @@ baked into the level.
   "field": {
     "length_m": 9.0, "width_m": 6.0,
     "border_x_m": 0.8, "border_y_m": 0.9,
-    "map_image": "field.png"
+    "visual": {"base_color_map": "textures/field.png"},
+    "physics": {
+      "friction": [1.0, 0.005, 0.0001], "condim": 3,
+      "solref": [0.02, 1.0], "solimp": [0.9, 0.95, 0.001, 0.5, 2]
+    }
   },
   "goals": {
     "width_m": 1.8, "height_m": 1.2, "post_radius_m": 0.05,
@@ -112,7 +116,7 @@ uses raw float, raw millimetres, or lossless zlib-compressed millimetres.
 ## External field
 
 The `field` object is mandatory, including positive `length_m` and `width_m`
-(in metres) and a nonempty `map_image` path. `border_x_m` and `border_y_m` are
+(in metres) and a `visual` object with nonempty `base_color_map` path. `border_x_m` and `border_y_m` are
 nonnegative borders on each side, defaulting to 0.8 and 0.9 metres. PNG and JPEG
 images load at launch; relative paths resolve from the scene JSON directory,
 including when launching from another working directory. Missing or unreadable
@@ -126,11 +130,14 @@ simulator does not infer pitch geometry from pixels. Goal placement is controlle
 independently by the mandatory `goals` block.
 
 The visual surface retains the original static Nanite mesh and glTF material
-parent. Only its RGB base-color texture is supplied by configuration today;
-the material retains UV and PBR inputs for optional textures in future. No
-built-in field image is referenced by the generic mesh or material.
+parent. External normal, roughness, metallic and AO maps are optional; these
+repeat at `visual.detail_tile_size_m` while base color covers the full field.
+See [PBR maps and ground contact settings](Field_PBR.md) for their formats and
+`field.physics` parameters. No authored field maps are cooked into the material.
+The old `field.map_image` key is rejected with a migration message.
 
-The MuJoCo ground remains an infinite flat plane. Field dimensions define the
+The MuJoCo ground remains an infinite flat plane; `field.physics` configures
+its friction, contact dimensions and contact solver parameters before compilation. Field dimensions define the
 playing surface, not collision walls or out-of-bounds rules.
 Goalposts participate in MuJoCo collisions. Dimensions exceeding the authored
 hall are allowed but may visually overlap its geometry.

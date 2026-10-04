@@ -2,6 +2,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
@@ -30,21 +31,21 @@ bool FURSRequiredFieldTest::RunTest(const FString &Parameters)
 	};
 	TestFalse(TEXT("missing field rejected"), Load(TEXT(R"({"version":"urs_scene_v1","robots":[]})")));
 	TestFalse(TEXT("missing dimensions rejected"),
-			  Load(TEXT(R"({"version":"urs_scene_v1","field":{"map_image":"map.png"},"robots":[]})")));
+			  Load(TEXT(R"({"version":"urs_scene_v1","field":{"visual":{"base_color_map":"map.png"}},"robots":[]})")));
 	TestFalse(
 		TEXT("string dimensions rejected"),
 		Load(TEXT(
-			R"({"version":"urs_scene_v1","field":{"length_m":"9","width_m":6,"map_image":"map.png"},"robots":[]})")));
+			R"({"version":"urs_scene_v1","field":{"length_m":"9","width_m":6,"visual":{"base_color_map":"map.png"}},"robots":[]})")));
 	TestFalse(TEXT("wrong image type rejected"),
-			  Load(TEXT(R"({"version":"urs_scene_v1","field":{"length_m":9,"width_m":6,"map_image":5},"robots":[]})")));
+			  Load(TEXT(R"({"version":"urs_scene_v1","field":{"length_m":9,"width_m":6,"visual":{"base_color_map":5}},"robots":[]})")));
 	TestTrue(
 		TEXT("valid explicit field loads"),
 		Load(TEXT(
-			R"({"version":"urs_scene_v1","field":{"length_m":7,"width_m":4,"map_image":"map.png"},"goals":{"width_m":1.8,"height_m":1.2,"post_radius_m":0.05,"poses":[{"translation_m":[-4.5,0,0],"yaw_deg":0},{"translation_m":[4.5,0,0],"yaw_deg":180}]},"robots":[]})")));
+			R"({"version":"urs_scene_v1","field":{"length_m":7,"width_m":4,"visual":{"base_color_map":"map.png"}},"goals":{"width_m":1.8,"height_m":1.2,"post_radius_m":0.05,"poses":[{"translation_m":[-4.5,0,0],"yaw_deg":0},{"translation_m":[4.5,0,0],"yaw_deg":180}]},"robots":[]})")));
 	TestTrue(TEXT("image resolved relative to JSON directory"),
 			 Loaded.SourceDirectory == FPaths::GetPath(FPaths::ConvertRelativePathToFull(Path)));
 	TestTrue(TEXT("valid config accepted"), FURSSceneConfigIo::Validate(Loaded).bOk);
-	Loaded.Field.MapImage.Empty();
+	Loaded.Field.Visual.BaseColorMap.Empty();
 	TestFalse(TEXT("empty image rejected"), FURSSceneConfigIo::Validate(Loaded).bOk);
 	auto Config = FURSSceneConfigIo::MakeDefault();
 	Config.Field.LengthM = -1;
@@ -86,7 +87,11 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 	Config.Field.WidthM = 4;
 	Config.Field.BorderXM = 0.5;
 	Config.Field.BorderYM = 0.5;
-	Config.Field.MapImage = TEXT("Assets/FieldMaps/example.png");
+	Config.Field.Visual.BaseColorMap = TEXT("Assets/FieldMaps/example.png");
+	Config.Field.Physics.Friction = {0.35f, 0.007f, 0.002f};
+	Config.Field.Physics.Condim = 4;
+	Config.Field.Physics.Solref = {0.01f, 0.8f};
+	Config.Field.Physics.Solimp = {0.8f, 0.9f, 0.002f, 0.4f, 3.f};
 	Config.SourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	Config.Objects[0].TranslationMeters.Reset();
 	Config.Goals.Poses = {{FVector(-2, 1, 0), 90}, {FVector(2, -1, 0.2), 180}};
@@ -107,6 +112,13 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 			{
 				Found = true;
 				TestEqual(TEXT("field retains static mobility"), Mesh->Mobility, EComponentMobility::Static);
+				auto* Material = Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(0));
+				if (TestNotNull(TEXT("dynamic field material"), Material))
+				{
+					const FLinearColor Tiling = Material->K2_GetVectorParameterValue(TEXT("NormalTexture_OffsetScale"));
+					TestTrue(TEXT("detail tiling follows physical surface size"), Tiling.Equals(FLinearColor(0, 0, 16, 10), 1e-5));
+					TestEqual(TEXT("fallback roughness applied"), Material->K2_GetScalarParameterValue(TEXT("RoughnessFactor")), 0.8f);
+				}
 				TestTrue(TEXT("field retains Nanite geometry"), Mesh->GetStaticMesh()->GetNaniteSettings().bEnabled);
 				TestTrue(TEXT("field bounds are 8 x 5 metres"),
 						 Mesh->Bounds.BoxExtent.Equals(FVector(400, 250, 0), 0.1));
@@ -137,13 +149,15 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 		mjModel *Model = Manager->PhysicsEngine->m_model;
 		if (TestNotNull(TEXT("MuJoCo compiles configured ball"), Model))
 		{
-			TestEqual(TEXT("one sphere and six goal cylinders in compiled model"), Model->ngeom, 7);
+			TestEqual(TEXT("one sphere, one ground and six goal cylinders in compiled model"), Model->ngeom, 8);
 			int BallGeom = -1;
+			int GroundGeom = -1;
 			int FirstPost = -1;
 			int FirstBar = -1;
 			int CylinderCount = 0;
 			for (int I = 0; I < Model->ngeom; ++I)
 			{
+				if (Model->geom_type[I] == mjGEOM_PLANE) GroundGeom = I;
 				if (Model->geom_type[I] == mjGEOM_SPHERE)
 					BallGeom = I;
 				if (Model->geom_type[I] == mjGEOM_CYLINDER)
@@ -159,6 +173,13 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 				}
 			}
 			TestEqual(TEXT("exactly six goal cylinders"), CylinderCount, 6);
+			if (TestTrue(TEXT("one configured ground exists"), GroundGeom >= 0))
+			{
+				TestEqual(TEXT("ground contact dimensions"), Model->geom_condim[GroundGeom], 4);
+				TestTrue(TEXT("ground friction reaches model"), FMath::IsNearlyEqual(Model->geom_friction[3*GroundGeom], 0.35, 1e-6));
+				TestTrue(TEXT("ground solver reaches model"), FMath::IsNearlyEqual(Model->geom_solref[2*GroundGeom + 1], 0.8, 1e-6));
+				TestTrue(TEXT("ground impedance reaches model"), FMath::IsNearlyEqual(Model->geom_solimp[5*GroundGeom + 4], 3., 1e-6));
+			}
 			if (!TestTrue(TEXT("compiled sphere exists"), BallGeom >= 0))
 			{
 				Manager->PhysicsEngine->bShouldStopTask = true;
@@ -203,10 +224,26 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 					 FMath::IsNearlyEqual(Model->body_inertia[3 * Body], 0.4 * 0.43 * 0.11 * 0.11, 1e-6));
 			TestTrue(TEXT("compiled friction"),
 					 FMath::IsNearlyEqual(Model->geom_friction[3 * BallGeom + 2], 0.001, 1e-6));
+			if (GroundGeom >= 0)
+			{
+				auto* Data = Manager->PhysicsEngine->m_data;
+				Data->qpos[0] = 0; Data->qpos[1] = 0; Data->qpos[2] = 0.10;
+				mj_forward(Model, Data);
+				bool Contact = false;
+				for (int C = 0; C < Data->ncon; ++C)
+					if ((Data->contact[C].geom[0] == BallGeom && Data->contact[C].geom[1] == GroundGeom) ||
+						(Data->contact[C].geom[1] == BallGeom && Data->contact[C].geom[0] == GroundGeom))
+					{
+						Contact = true;
+						TestEqual(TEXT("ground and ball condim combine in actual contact"), Data->contact[C].dim,
+							FMath::Max(Model->geom_condim[GroundGeom], Model->geom_condim[BallGeom]));
+					}
+				TestTrue(TEXT("ball contacts configured ground"), Contact);
+			}
 			TestTrue(TEXT("compiled contact damping"),
 					 FMath::IsNearlyEqual(Model->geom_solref[2 * BallGeom + 1], 0.7, 1e-6));
 		}
-		Config.Field.MapImage = TEXT("does-not-exist.png");
+		Config.Field.Visual.BaseColorMap = TEXT("does-not-exist.png");
 		TestFalse(TEXT("missing external image fails"), Scene->ApplyConfig(Config, Error));
 	}
 	Manager->PhysicsEngine->bShouldStopTask = true;
@@ -227,7 +264,7 @@ bool FURSRequiredGoalsTest::RunTest(const FString &Parameters)
 	{
 		const FString Json =
 			TEXT(
-				R"({"version":"urs_scene_v1","field":{"length_m":9,"width_m":6,"map_image":"field.png"},"robots":[])") +
+				R"({"version":"urs_scene_v1","field":{"length_m":9,"width_m":6,"visual":{"base_color_map":"field.png"}},"robots":[])") +
 			(Goals.IsEmpty() ? FString() : TEXT(",\"goals\":") + Goals) + TEXT("}");
 		FFileHelper::SaveStringToFile(Json, *Path);
 		return FURSSceneConfigIo::LoadFromFile(Path, Loaded, Error);

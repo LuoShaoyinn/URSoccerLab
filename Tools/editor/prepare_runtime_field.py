@@ -24,6 +24,12 @@ unreal.MaterialEditingLibrary.set_material_instance_parent(material, parent)
 unreal.MaterialEditingLibrary.set_material_instance_texture_parameter_value(
     material, 'BaseColorTexture', unreal.load_asset('/Engine/EngineResources/WhiteSquareTexture'))
 unreal.MaterialEditingLibrary.set_material_instance_scalar_parameter_value(material, 'MetallicFactor', 0.0)
+# Keep every supported PBR path in the compiled template. Runtime dynamic
+# instances bind external textures and neutral defaults without shader changes.
+for parameter in ['bHasBaseColorTexture', 'bHasNormalTexture',
+                  'bHasMetallicRoughnessTexture', 'bHasOcclusionTexture']:
+    unreal.MaterialEditingLibrary.set_material_instance_static_switch_parameter_value(
+        material, parameter, True)
 unreal.EditorAssetLibrary.save_loaded_asset(material)
 mesh = unreal.load_asset(MESH)
 if mesh is None:

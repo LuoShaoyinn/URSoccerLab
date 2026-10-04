@@ -103,6 +103,8 @@ private:
 	void ApplyPhysicsConfig();
 	bool ApplyFieldConfig(FString &OutError);
 	bool ApplyGoalsConfig(FString &OutError);
+	bool ApplyFieldPhysicsConfig(FString &OutError);
+	UPROPERTY() TObjectPtr<AMjArticulation> RuntimeGround;
 	UPROPERTY() TObjectPtr<UStaticMesh> GoalCylinderMesh;
 	UPROPERTY() TObjectPtr<UMaterialInterface> GoalMaterial;
 	UPROPERTY() TObjectPtr<AMjArticulation> RuntimeGoals;

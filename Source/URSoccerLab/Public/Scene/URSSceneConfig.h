@@ -127,7 +127,30 @@ struct URSOCCERLAB_API FURSRobotSpawn
 	FURSNoiseConfig Noise;
 };
 
-// Required launch-time field settings. SourceDirectory resolves external images relative to JSON.
+// External texture paths are relative to the scene JSON. No authored maps are cooked.
+struct URSOCCERLAB_API FURSFieldVisualConfig
+{
+	FString BaseColorMap;
+	FString NormalMap;
+	FString RoughnessMap;
+	FString MetallicMap;
+	FString AoMap;
+	double DetailTileSizeM = 0.5;
+	double NormalStrength = 1.0;
+	double Roughness = 0.8;
+	double Metallic = 0.0;
+	// Tangent-space DirectX normals by default; OpenGL flips the green channel.
+	bool bNormalOpenGL = false;
+};
+
+struct URSOCCERLAB_API FURSFieldPhysicsConfig
+{
+	TArray<float> Friction = {1.0f, 0.005f, 0.0001f};
+	int32 Condim = 3;
+	TArray<float> Solref = {0.02f, 1.0f};
+	TArray<float> Solimp = {0.9f, 0.95f, 0.001f, 0.5f, 2.0f};
+};
+
 struct URSOCCERLAB_API FURSFieldConfig
 {
 	bool bIsSet = false;
@@ -135,7 +158,8 @@ struct URSOCCERLAB_API FURSFieldConfig
 	double WidthM = 6.0;
 	double BorderXM = 0.8;
 	double BorderYM = 0.9;
-	FString MapImage;
+	FURSFieldVisualConfig Visual;
+	FURSFieldPhysicsConfig Physics;
 };
 
 struct URSOCCERLAB_API FURSGoalPose

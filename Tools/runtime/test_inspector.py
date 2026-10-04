@@ -54,7 +54,7 @@ def run(codec):
     output.mkdir(parents=True, exist_ok=True)
     original = ROOT / 'py_example/examples/standing/scene.json'
     config = json.loads(original.read_text())
-    config['field']['map_image'] = str((original.parent / config['field']['map_image']).resolve())
+    config['field']['visual']['base_color_map'] = str((original.parent / config['field']['visual']['base_color_map']).resolve())
     config['camera_freq'] = 12
     scene = output / 'scene.json'
     scene.write_text(json.dumps(config))

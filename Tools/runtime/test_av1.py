@@ -26,7 +26,7 @@ def run(mode):
     output.mkdir(parents=True, exist_ok=True)
     original = ROOT / 'py_example/examples/standing/scene.json'
     config = json.loads(original.read_text())
-    config['field']['map_image'] = str((original.parent / config['field']['map_image']).resolve())
+    config['field']['visual']['base_color_map'] = str((original.parent / config['field']['visual']['base_color_map']).resolve())
     config['vision']['mode'] = mode
     config['vision']['rgb'].update(compression='av1', rate_hz=30, keyframe_interval_s=2)
     config['camera_freq'] = 30

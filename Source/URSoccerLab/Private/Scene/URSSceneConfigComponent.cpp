@@ -1,9 +1,10 @@
 #include "Scene/URSSceneConfigComponent.h"
+#include "Scene/URSFieldTextures.h"
+#include "MuJoCo/Components/Geometry/Primitives/MjPlane.h"
 #include "Vision/URSCameraStreamComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
-#include "Kismet/KismetRenderingLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
@@ -109,6 +110,8 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		Manager->NetworkManager->bEnableCameraBroadcast = false;
 	}
 
+	if (!ApplyFieldPhysicsConfig(OutError))
+		return false;
 	if (!ApplyGoalsConfig(OutError))
 		return false;
 	DestroyConfiguredArticulations();
@@ -686,14 +689,9 @@ bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 		OutError = TEXT("runtime field mesh/material is missing");
 		return false;
 	}
-	const FString ImagePath =
-		FPaths::IsRelative(F.MapImage) ? FPaths::Combine(ActiveConfig.SourceDirectory, F.MapImage) : F.MapImage;
-	UTexture2D *Texture = UKismetRenderingLibrary::ImportFileAsTexture2D(this, ImagePath);
-	if (!Texture)
-	{
-		OutError = FString::Printf(TEXT("cannot load field.map_image: %s"), *ImagePath);
+	FFieldTextures Textures;
+	if (!FFieldTextures::Load(F.Visual, ActiveConfig.SourceDirectory, Textures, OutError))
 		return false;
-	}
 	const FVector MeshSize = RuntimeFieldMesh->GetBoundingBox().GetSize();
 	if (MeshSize.X <= 0 || MeshSize.Y <= 0)
 	{
@@ -719,12 +717,76 @@ bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 				(F.WidthM + 2 * F.BorderYM) * 100 / MeshSize.Y, 1));
 	RuntimeFieldSurface->SetMaterial(0, RuntimeFieldMaterial);
 	auto *Material = RuntimeFieldSurface->CreateAndSetMaterialInstanceDynamic(0);
-	// Keep the original glTF material's UV and PBR inputs. Only base color is
-	// supplied today; normal and metallic/roughness textures can remain optional.
-	Material->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture);
+	// Preserve the original glTF/Nanite shader, including its UV derivative path.
+	Material->SetTextureParameterValue(TEXT("BaseColorTexture"), Textures.BaseColor);
+	Material->SetTextureParameterValue(TEXT("NormalTexture"), Textures.Normal);
+	Material->SetTextureParameterValue(TEXT("MetallicRoughnessTexture"), Textures.MetallicRoughness);
+	Material->SetTextureParameterValue(TEXT("OcclusionTexture"), Textures.Ao);
+	Material->SetScalarParameterValue(TEXT("NormalScale"), F.Visual.NormalMap.IsEmpty() ? 0 : F.Visual.NormalStrength);
+	Material->SetScalarParameterValue(TEXT("RoughnessFactor"), F.Visual.RoughnessMap.IsEmpty() ? F.Visual.Roughness : 1);
+	Material->SetScalarParameterValue(TEXT("MetallicFactor"), F.Visual.MetallicMap.IsEmpty() ? F.Visual.Metallic : 1);
+	// Base color covers the full surface including borders. Detail maps tile in
+	// metres, using the same UV0 orientation as that authored field mesh.
+	Material->SetVectorParameterValue(TEXT("BaseColorTexture_OffsetScale"), FLinearColor(0, 0, 1, 1));
+	const FLinearColor DetailTransform(0, 0, (F.LengthM + 2 * F.BorderXM) / F.Visual.DetailTileSizeM,
+		(F.WidthM + 2 * F.BorderYM) / F.Visual.DetailTileSizeM);
+	for (const TCHAR* Name : {TEXT("NormalTexture_OffsetScale"), TEXT("MetallicRoughnessTexture_OffsetScale"), TEXT("OcclusionTexture_OffsetScale")})
+		Material->SetVectorParameterValue(Name, DetailTransform);
 	RuntimeFieldSurface->RegisterComponent();
-	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g map=%s"), F.LengthM, F.WidthM, F.BorderXM,
-		   F.BorderYM, *ImagePath);
+	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g base_color=%s detail_tile=%g m"),
+		F.LengthM, F.WidthM, F.BorderXM, F.BorderYM, *F.Visual.BaseColorMap, F.Visual.DetailTileSizeM);
+	return true;
+}
+
+// Configure the existing hall ground before model compilation; create one only
+// for worlds that lack the hall's ground actor (e.g. standalone scene tests).
+bool UURSSceneConfigComponent::ApplyFieldPhysicsConfig(FString& OutError)
+{
+	UMjPlane* Ground = nullptr;
+	for (TActorIterator<AMjArticulation> It(GetWorld()); It; ++It)
+	{
+		TArray<UMjPlane*> Planes;
+		It->GetComponents(Planes);
+		for (UMjPlane* Plane : Planes)
+			if (Plane->MjName == TEXT("field_ground"))
+			{
+				if (Ground) { OutError = TEXT("multiple field_ground planes found"); return false; }
+				Ground = Plane;
+			}
+	}
+	if (!Ground)
+	{
+		RuntimeGround = GetWorld()->SpawnActor<AMjArticulation>();
+		if (!RuntimeGround) { OutError = TEXT("could not spawn field ground"); return false; }
+		RuntimeGround->ActorId = TEXT("__urs_ground");
+		auto* Root = NewObject<UMjWorldBody>(RuntimeGround, TEXT("FieldWorldBody"));
+		RuntimeGround->AddInstanceComponent(Root);
+		RuntimeGround->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Ground = NewObject<UMjPlane>(RuntimeGround, TEXT("field_ground"));
+		RuntimeGround->AddInstanceComponent(Ground);
+		Ground->SetupAttachment(Root);
+		Ground->MjName = TEXT("field_ground");
+		Ground->bOverride_Type = true; Ground->Type = EMjGeomType::Plane;
+		Ground->bOverride_Pos = true; Ground->Pos = FVector::ZeroVector;
+		Ground->bOverride_Quat = true; Ground->Quat = FQuat::Identity;
+		Ground->bOverride_contype = true; Ground->contype = 1;
+		Ground->bOverride_conaffinity = true; Ground->conaffinity = 1;
+		Ground->bOverride_group = true; Ground->group = 3;
+		Ground->RegisterComponent();
+	}
+	const auto& P = ActiveConfig.Field.Physics;
+	Ground->bOverride_friction = true; Ground->friction = P.Friction;
+	Ground->bOverride_condim = true; Ground->condim = P.Condim;
+	Ground->bOverride_solref = true; Ground->solref = P.Solref;
+	Ground->bOverride_solimp = true; Ground->solimp = P.Solimp;
+	// MuJoCo planes are infinite; size controls only their debug visualization.
+	Ground->bOverride_size = true;
+	Ground->size = {float((ActiveConfig.Field.LengthM + 2 * ActiveConfig.Field.BorderXM) / 2),
+		float((ActiveConfig.Field.WidthM + 2 * ActiveConfig.Field.BorderYM) / 2), 0.1f};
+	Ground->SetGeomVisibility(false);
+	UE_LOG(LogTemp, Log, TEXT("URS field physics: friction=%g,%g,%g condim=%d solref=%g,%g"),
+		P.Friction[0], P.Friction[1], P.Friction[2], P.Condim, P.Solref[0], P.Solref[1]);
 	return true;
 }
 
