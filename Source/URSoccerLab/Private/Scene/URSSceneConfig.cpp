@@ -65,6 +65,7 @@ bool ParseVisionMode(const FString& Value, EURSVisionMode& Out)
 
 bool ParseRgbCompression(const FString& Value, EURSRgbCompression& Out)
 {
+	if (Value == TEXT("av1")) { Out = EURSRgbCompression::Av1; return true; }
 	if (Value == TEXT("raw"))
 	{
 		Out = EURSRgbCompression::Raw;
@@ -105,7 +106,7 @@ const TCHAR* VisionModeString(const EURSVisionMode Value)
 
 const TCHAR* RgbCompressionString(const EURSRgbCompression Value)
 {
-	return Value == EURSRgbCompression::Raw ? TEXT("raw") : TEXT("jpeg");
+	return Value == EURSRgbCompression::Av1 ? TEXT("av1") : Value == EURSRgbCompression::Raw ? TEXT("raw") : TEXT("jpeg");
 }
 
 const TCHAR* DepthCompressionString(const EURSDepthCompression Value)
@@ -120,6 +121,64 @@ const TCHAR* DepthCompressionString(const EURSDepthCompression Value)
 	default:
 		return TEXT("zlib_u16_mm");
 	}
+}
+
+bool ReadStreamOptions(const TSharedPtr<FJsonObject>& Obj, FURSRgbStreamConfig& Out, FString& Error)
+{
+ for (const auto& Pair : {TPair<const TCHAR*, double*>(TEXT("rate_hz"), &Out.RateHz),
+                        TPair<const TCHAR*, double*>(TEXT("keyframe_interval_s"), &Out.KeyframeIntervalSeconds)})
+ {
+  if (!Obj->HasField(Pair.Key)) continue;
+  const auto V = Obj->TryGetField(Pair.Key);
+  if (V->Type != EJson::Number || !V->TryGetNumber(*Pair.Value)) { Error = FString(Pair.Key) + TEXT(" must be numeric"); return false; }
+ }
+ if (Obj->HasField(TEXT("bitrate_kbps")))
+ {
+  double N = 0; const auto V = Obj->TryGetField(TEXT("bitrate_kbps"));
+  if (V->Type != EJson::Number || !V->TryGetNumber(N) || !FMath::IsFinite(N) || N < 64 || N > 100000 || N != FMath::TruncToDouble(N))
+  { Error = TEXT("bitrate_kbps must be an integer in [64,100000]"); return false; }
+  Out.BitrateKbps = int32(N);
+ }
+ if (!FMath::IsFinite(Out.RateHz) || Out.RateHz < 1 || Out.RateHz > 120 ||
+     !FMath::IsFinite(Out.KeyframeIntervalSeconds) || Out.KeyframeIntervalSeconds < 0.1 || Out.KeyframeIntervalSeconds > 60)
+ { Error = TEXT("rate_hz must be in [1,120] and keyframe_interval_s in [0.1,60]"); return false; }
+ if (Obj->HasField(TEXT("vulkan_device")) && !Obj->TryGetStringField(TEXT("vulkan_device"), Out.VulkanDevice))
+ { Error = TEXT("vulkan_device must be a string"); return false; }
+ return true;
+}
+
+bool ReadGuestInspector(const TSharedPtr<FJsonObject>& Root, FURSGuestInspectorConfig& Out, FString& Error)
+{
+ if (!Root->HasField(TEXT("guest_inspector"))) return true;
+ const TSharedPtr<FJsonObject>* Ptr = nullptr;
+ if (!Root->TryGetObjectField(TEXT("guest_inspector"), Ptr)) { Error = TEXT("guest_inspector must be an object"); return false; }
+ const auto& Obj = *Ptr;
+ if (Obj->HasField(TEXT("enabled")) && !Obj->TryGetBoolField(TEXT("enabled"), Out.bEnabled))
+ { Error = TEXT("guest_inspector.enabled must be boolean"); return false; }
+ for (const auto& Pair : {TPair<const TCHAR*, int32*>(TEXT("port"), &Out.Port),
+                        TPair<const TCHAR*, int32*>(TEXT("max_guests"), &Out.MaxGuests),
+                        TPair<const TCHAR*, int32*>(TEXT("width"), &Out.Width),
+                        TPair<const TCHAR*, int32*>(TEXT("height"), &Out.Height),
+                        TPair<const TCHAR*, int32*>(TEXT("jpeg_quality"), &Out.Rgb.JpegQuality)})
+ {
+  if (!Obj->HasField(Pair.Key)) continue;
+  double N = 0; const auto V = Obj->TryGetField(Pair.Key);
+  if (V->Type != EJson::Number || !V->TryGetNumber(N) || !FMath::IsFinite(N) || N < 0 || N > 65535 || N != FMath::TruncToDouble(N))
+  { Error = FString(TEXT("guest_inspector.")) + Pair.Key + TEXT(" must be an integer"); return false; }
+  *Pair.Value = int32(N);
+ }
+ if (Obj->HasField(TEXT("fov_degrees")))
+ {
+  const auto V = Obj->TryGetField(TEXT("fov_degrees"));
+  if (V->Type != EJson::Number || !V->TryGetNumber(Out.FovDegrees)) { Error = TEXT("fov_degrees must be numeric"); return false; }
+ }
+ if (Obj->HasField(TEXT("compression")))
+ {
+  FString Codec;
+  if (!Obj->TryGetStringField(TEXT("compression"), Codec) || !ParseRgbCompression(Codec, Out.Rgb.Compression))
+  { Error = TEXT("guest_inspector.compression must be raw, jpeg, or av1"); return false; }
+ }
+ return ReadStreamOptions(Obj, Out.Rgb, Error);
 }
 
 bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out, FString& OutError)
@@ -164,11 +223,12 @@ bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out
 			return false;
 		}
 		const TSharedPtr<FJsonObject>& RgbObj = *RgbObjPtr;
+		if (!ReadStreamOptions(RgbObj, Out.Rgb, OutError)) return false;
 		RgbObj->TryGetNumberField(TEXT("rate_hz"), Out.Rgb.RateHz);
 		if (RgbObj->TryGetStringField(TEXT("compression"), StringValue)
 			&& !ParseRgbCompression(StringValue, Out.Rgb.Compression))
 		{
-			OutError = TEXT("scene config: vision.rgb.compression must be 'raw' or 'jpeg'");
+			OutError = TEXT("scene config: vision.rgb.compression must be 'raw', 'jpeg', or 'av1'");
 			return false;
 		}
 		double Quality = static_cast<double>(Out.Rgb.JpegQuality);
@@ -388,6 +448,8 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 	{
 		return false;
 	}
+
+	if (!ReadGuestInspector(Root, Out.GuestInspector, OutError)) return false;
 
 	if (!ReadRenderConfig(Root, Out.Render, OutError))
 	{
@@ -646,6 +708,20 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		Goals->SetArrayField(TEXT("poses"), Poses);
 		Root->SetObjectField(TEXT("goals"), Goals);
 	}
+ auto Guest = MakeShared<FJsonObject>();
+ Guest->SetBoolField(TEXT("enabled"), In.GuestInspector.bEnabled);
+ Guest->SetNumberField(TEXT("port"), In.GuestInspector.Port);
+ Guest->SetNumberField(TEXT("max_guests"), In.GuestInspector.MaxGuests);
+ Guest->SetNumberField(TEXT("width"), In.GuestInspector.Width);
+ Guest->SetNumberField(TEXT("height"), In.GuestInspector.Height);
+ Guest->SetNumberField(TEXT("fov_degrees"), In.GuestInspector.FovDegrees);
+ Guest->SetNumberField(TEXT("rate_hz"), In.GuestInspector.Rgb.RateHz);
+ Guest->SetStringField(TEXT("compression"), RgbCompressionString(In.GuestInspector.Rgb.Compression));
+ Guest->SetNumberField(TEXT("jpeg_quality"), In.GuestInspector.Rgb.JpegQuality);
+ Guest->SetNumberField(TEXT("bitrate_kbps"), In.GuestInspector.Rgb.BitrateKbps);
+ Guest->SetNumberField(TEXT("keyframe_interval_s"), In.GuestInspector.Rgb.KeyframeIntervalSeconds);
+ Guest->SetStringField(TEXT("vulkan_device"), In.GuestInspector.Rgb.VulkanDevice);
+ Root->SetObjectField(TEXT("guest_inspector"), Guest);
 	TSharedPtr<FJsonObject> VisionObj = MakeShared<FJsonObject>();
 	VisionObj->SetStringField(TEXT("mode"), VisionModeString(In.Vision.Mode));
 	VisionObj->SetStringField(TEXT("left_camera"), In.Vision.LeftCamera);
@@ -655,6 +731,9 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 	RgbObj->SetNumberField(TEXT("rate_hz"), In.Vision.Rgb.RateHz);
 	RgbObj->SetStringField(TEXT("compression"), RgbCompressionString(In.Vision.Rgb.Compression));
 	RgbObj->SetNumberField(TEXT("jpeg_quality"), In.Vision.Rgb.JpegQuality);
+	RgbObj->SetNumberField(TEXT("bitrate_kbps"), In.Vision.Rgb.BitrateKbps);
+	RgbObj->SetNumberField(TEXT("keyframe_interval_s"), In.Vision.Rgb.KeyframeIntervalSeconds);
+	RgbObj->SetStringField(TEXT("vulkan_device"), In.Vision.Rgb.VulkanDevice);
 	VisionObj->SetObjectField(TEXT("rgb"), RgbObj);
 
 	TSharedPtr<FJsonObject> DepthObj = MakeShared<FJsonObject>();
@@ -833,6 +912,18 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfig& Config)
 {
 	FURSSceneConfigValidationResult Result;
+ for (const auto* Stream : {&Config.Vision.Rgb, &Config.GuestInspector.Rgb})
+ {
+  if (!FMath::IsFinite(Stream->RateHz) || Stream->RateHz < 1 || Stream->RateHz > 120 ||
+      !FMath::IsFinite(Stream->KeyframeIntervalSeconds) || Stream->KeyframeIntervalSeconds < 0.1 || Stream->KeyframeIntervalSeconds > 60 ||
+      Stream->BitrateKbps < 64 || Stream->BitrateKbps > 100000 || Stream->JpegQuality < 1 || Stream->JpegQuality > 100)
+  { Result.bOk = false; Result.Errors.Add(TEXT("RGB/guest rate_hz [1,120], keyframe_interval_s [0.1,60], bitrate_kbps [64,100000], jpeg_quality [1,100] required")); }
+ }
+ const auto& Guest = Config.GuestInspector;
+ if (Guest.Port < 1 || Guest.Port > 65535 || Guest.MaxGuests < 1 || Guest.MaxGuests > 4 ||
+     Guest.Width < 64 || Guest.Width > 1920 || Guest.Height < 64 || Guest.Height > 1080 ||
+     Guest.Width % 2 || Guest.Height % 2 || !FMath::IsFinite(Guest.FovDegrees) || Guest.FovDegrees < 10 || Guest.FovDegrees > 150)
+ { Result.bOk = false; Result.Errors.Add(TEXT("guest_inspector requires valid port, max_guests [1,4], even width [64,1920]/height [64,1080], fov_degrees [10,150]")); }
 	TSet<FString> SeenActorIds;
 	SeenActorIds.Add(TEXT("__urs_goals"));
 	const auto &G = Config.Goals;

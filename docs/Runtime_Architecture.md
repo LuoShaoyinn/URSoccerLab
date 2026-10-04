@@ -1,7 +1,7 @@
 # Runtime boundaries
 
 The simulator has independent physics, camera, protocol, and transport responsibilities.
-The existing TCP ports and wire format remain compatible with the Python clients.
+The existing TCP ports and outer framing are retained. AV1 uses codec ID 3 and requires the updated Python client.
 
 ```mermaid
 flowchart LR
@@ -42,7 +42,13 @@ uses subscriber demand reported by the network service. With no robot subscriber
 does not request camera readback or encoding; nDisplay's normal rendering can continue.
 A local consumer can use the same component without a network listener.
 
-`FImageEncoder` accepts owned pixels and produces raw BGRA8 or JPEG image data. There is
+`FImageEncoder` accepts owned pixels and produces raw BGRA8 or JPEG image data.
+`FAv1Encoder` owns a persistent FFmpeg Vulkan AV1 codec per robot/guest. Stereo
+eyes are packed side by side before encoding and split by the Python decoder.
+`FVideoDeliveryGate` handles each connection independently: sequence gaps or
+unsent packet replacement skip dependent video until a periodic keyframe.
+No connection or recovery event requests a keyframe. Lossless depth remains
+a separate independently scheduled message. See [AV1 runtime](AV1_Runtime.md). There is
 at most one encoding job per robot per scene generation. Jobs use a shared completion
 mailbox, never a UObject. Old-generation completions are discarded after a scene rebuild;
 shutdown waits for outstanding jobs before releasing the encoder module. Completely black

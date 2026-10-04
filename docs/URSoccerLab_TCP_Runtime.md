@@ -8,7 +8,7 @@
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
 - **State publishing**: outbound JSON on the robot port at `StateRateHz` (default 60 Hz). Includes `sim_time`, base pose/velocity, joint qpos/qvel, actuator values, and camera metadata.
 - **Vision publishing**: the independent camera component emits versioned RGB (`0x01`) image sets after GPU readback. The protocol also reserves depth (`0x02`); the current capture/encoder path publishes RGB.
-- **Default camera stream**: stereo 640x480 RGB at 30 Hz, JPEG quality 85.
+- **Default camera stream**: example scenes use stereo 640x480 per eye at 30 Hz, Vulkan AV1. JPEG/raw remain selectable. See [AV1 runtime](AV1_Runtime.md).
 - **Bounded asynchronous encoding**: `UURSCameraStreamComponent` owns capture scheduling and `FImageEncoder` runs on Unreal's worker pool. Each robot permits at most one in-flight RGB job per scene generation. No socket or packet-framing code runs in the camera component or encoder.
 - **Single network owner**: URSoccerLab leaves URLab camera rendering and
   readback enabled but disables URLab's legacy ZMQ, shared-memory, and RPC
@@ -68,7 +68,7 @@ All TCP communication uses length-prefixed frames:
 [sequence LE32] [sim_time LE float64]
   per image:
     [camera_name_length u8] [camera_name UTF-8]
-    [codec u8] [pixel_format u8] [reserved u8]
+    [codec u8] [pixel_format u8] [image_flags u8]
     [width LE16] [height LE16]
     [uncompressed_length LE32] [data_length LE32] [data]
 ```

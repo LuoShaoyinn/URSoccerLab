@@ -90,7 +90,7 @@ TArray<uint8> FMessageProtocol::EncodeCamera(const FEncodedCameraFrame& Frame)
 		Payload.Append(reinterpret_cast<const uint8*>(Name.Get()), Name.Length());
 		Payload.Add(Image.Codec);
 		Payload.Add(Image.PixelFormat);
-		Payload.Add(0);
+		Payload.Add(Image.Flags);
 		Payload.Append(reinterpret_cast<const uint8*>(&Image.Width), 2);
 		Payload.Append(reinterpret_cast<const uint8*>(&Image.Height), 2);
 		Payload.Append(reinterpret_cast<const uint8*>(&Image.RawLength), 4);

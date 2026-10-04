@@ -200,7 +200,7 @@ def main() -> int:
             / f"match_{rgb_view_count}_rgb.ndisplay"
         )
         atlas_width, atlas_height = write_ndisplay_config(
-            rgb_view_count, ndisplay_path
+            rgb_view_count, ndisplay_path, config.get("guest_inspector")
         )
         render_args = [
             "-ForceRes",

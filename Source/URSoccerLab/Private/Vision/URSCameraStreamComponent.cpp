@@ -5,6 +5,7 @@
 #include "IImageWrapperModule.h"
 #include "Async/Async.h"
 #include "Misc/CommandLine.h"
+#include "Misc/Compression.h"
 #include "HAL/PlatformTime.h"
 UURSCameraStreamComponent::UURSCameraStreamComponent()
 {
@@ -23,10 +24,11 @@ void UURSCameraStreamComponent::BeginPlay()
 	if (const auto* Config = GetOwner()->FindComponentByClass<UURSSceneConfigComponent>())
 		if (Config->GetActiveConfig().CameraFreq > 0)
 			CameraRateHz = Config->GetActiveConfig().CameraFreq;
-	CameraCompress = VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg ? TEXT("jpeg") : TEXT("raw");
+	CameraCompress = VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Av1 ? TEXT("av1") : VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg ? TEXT("jpeg") : TEXT("raw");
 	JpegQuality = VisionConfig.Rgb.JpegQuality;
 	FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
 	CameraRateHz = FMath::Clamp(CameraRateHz, 1.0, 120.0);
+	VisionConfig.Rgb.RateHz = CameraRateHz;
 	if (Core.IsValid())
 		Core->OnRobotsChanged.AddDynamic(this, &UURSCameraStreamComponent::OnRobotsChanged);
 	OnRobotsChanged();
@@ -48,7 +50,11 @@ void UURSCameraStreamComponent::OnRobotsChanged()
 	CameraStates.Empty();
 	if (Core.IsValid())
 		for (const auto& Id : Core->GetRobotIds())
-			CameraStates.Add({Id});
+			{
+				FCameraState State; State.ActorId = Id;
+				if (CameraCompress == TEXT("av1")) State.Av1Encoder = MakeShared<URSoccerLab::FAv1Encoder, ESPMode::ThreadSafe>(VisionConfig.Rgb);
+				CameraStates.Add(MoveTemp(State));
+			}
 	NextRgbTimeSec = FPlatformTime::Seconds();
 }
 void UURSCameraStreamComponent::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -60,6 +66,7 @@ void UURSCameraStreamComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	if (!NDisplayBinder.IsValid())
 		NDisplayBinder = GetOwner()->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
 	TickCameraCapture();
+	TickDepthCapture();
 }
 void UURSCameraStreamComponent::DrainCompletedFrames()
 {
@@ -72,7 +79,10 @@ void UURSCameraStreamComponent::DrainCompletedFrames()
 			continue;
 		for (auto& Camera : CameraStates)
 			if (Camera.ActorId == Result.Frame.ActorId)
-				Camera.bRgbEncodeInFlight = false;
+				{
+					if (Result.Frame.MessageType == 2) Camera.bDepthEncodeInFlight = false;
+					else Camera.bRgbEncodeInFlight = false;
+				}
 		if (!Result.Frame.Images.IsEmpty())
 			OnEncodedFrame.Broadcast(Result.Frame);
 	}
@@ -117,6 +127,7 @@ void UURSCameraStreamComponent::TickCameraCapture()
 	{
 		if (Ri >= CameraStates.Num())
 			break;
+		if (CameraStates[Ri].bRgbEncodeInFlight || Now < CameraStates[Ri].NextEncodeTime) continue;
 		const FString& ActorId = RobotIds[Ri];
 		FURSRobotState State;
 		if (!Core->GetRobotState(ActorId, State))
@@ -191,22 +202,29 @@ void UURSCameraStreamComponent::TickCameraCapture()
 		if (CameraStates[Ri].bRgbEncodeInFlight)
 			continue;
 
+		if (CameraStates[Ri].NextEncodeTime == 0) CameraStates[Ri].NextEncodeTime = Now;
+		do { CameraStates[Ri].NextEncodeTime += RgbInterval; } while (CameraStates[Ri].NextEncodeTime <= Now);
 		const uint32 Seq = Sequence++;
 		const uint32 Gen = CaptureGeneration;
 		const double SimTime = State.SimTime;
+		const auto Av1Encoder = CameraStates[Ri].Av1Encoder;
 		const bool bJpeg = CameraCompress == TEXT("jpeg");
 		const int32 Quality = JpegQuality;
 		IImageWrapperModule* Module = ImageWrapperModule;
 		auto CompletionMailbox = Mailbox;
 		CameraStates[Ri].bRgbEncodeInFlight = true;
-		EncodeJobs.Add(Async(EAsyncExecution::ThreadPool, [CompletionMailbox, Gen, Seq, SimTime, ActorId, bJpeg,
+		EncodeJobs.Add(Async(EAsyncExecution::ThreadPool, [CompletionMailbox, Gen, Seq, SimTime, ActorId, Av1Encoder, bJpeg,
 		                                                   Quality, Module, Images = MoveTemp(Images)]() {
 			FCompletedFrame Result;
 			Result.Generation = Gen;
 			Result.Frame.ActorId = ActorId;
 			Result.Frame.Sequence = Seq;
 			Result.Frame.SimTime = SimTime;
-			for (const auto& Image : Images)
+			if (Av1Encoder)
+			{
+				if (!Av1Encoder->Encode(Images, Result.Frame)) Result.Frame.Images.Empty();
+			}
+			else for (const auto& Image : Images)
 			{
 				URSoccerLab::FEncodedCameraImage Encoded;
 				if (!URSoccerLab::FImageEncoder::Encode(Image, bJpeg, Quality, *Module, Encoded))
@@ -228,4 +246,60 @@ bool UURSCameraStreamComponent::IsLayoutReady() const
 	if (FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras")))
 		return NDisplayBinder.IsValid() && NDisplayBinder->IsReady();
 	return true;
+}
+
+void UURSCameraStreamComponent::TickDepthCapture()
+{
+ if (!Core.IsValid() || !bCaptureDemand || VisionConfig.Mode != URSoccerLab::EURSVisionMode::Rgbd) return;
+ const double Now = FPlatformTime::Seconds();
+ if (Now >= NextDepthTime)
+ {
+  NextDepthTime = Now + 1.0 / VisionConfig.Depth.RateHz;
+  for (const auto& Camera : CameraStates) Core->RequestNamedCameraReadback(Camera.ActorId, VisionConfig.RightCamera);
+ }
+ for (auto& Camera : CameraStates)
+ {
+  if (Camera.bDepthEncodeInFlight || !Core->IsCameraFrameReady(Camera.ActorId, VisionConfig.RightCamera)) continue;
+  TArray<float> Depth; int32 W = 0, H = 0;
+  if (!Core->ConsumeDepthCameraFrame(Camera.ActorId, VisionConfig.RightCamera, Depth)) continue;
+  FURSRobotState State;
+  if (!Core->GetRobotState(Camera.ActorId, State)) continue;
+  for (const auto& Info : State.Cameras) if (Info.Name == VisionConfig.RightCamera) { W = Info.Width; H = Info.Height; }
+  if (W <= 0 || H <= 0 || Depth.Num() != W*H) continue;
+  Camera.bDepthEncodeInFlight = true;
+  const auto Outbox = Mailbox; const auto Settings = VisionConfig.Depth;
+  const FString ActorId = Camera.ActorId, Name = VisionConfig.RightCamera;
+  const uint32 Gen = CaptureGeneration, Seq = Sequence++;
+  const double SimTime = State.SimTime;
+  EncodeJobs.Add(Async(EAsyncExecution::ThreadPool, [Outbox, Settings, ActorId, Name, Gen, Seq, SimTime, W, H, Depth = MoveTemp(Depth)] {
+   FCompletedFrame Result; Result.Generation = Gen;
+   Result.Frame.ActorId = ActorId; Result.Frame.MessageType = 2;
+   Result.Frame.Sequence = Seq; Result.Frame.SimTime = SimTime;
+   URSoccerLab::FEncodedCameraImage Image; Image.Name = Name; Image.Width = W; Image.Height = H;
+   if (Settings.Compression == URSoccerLab::EURSDepthCompression::RawFloat32)
+   {
+    Image.PixelFormat = 1; Image.Data.Append(reinterpret_cast<const uint8*>(Depth.GetData()), Depth.Num()*sizeof(float));
+    Image.RawLength = Image.Data.Num();
+   }
+   else
+   {
+    Image.PixelFormat = 2; TArray<uint16> Millimeters; Millimeters.SetNumUninitialized(Depth.Num());
+    for (int32 I = 0; I < Depth.Num(); ++I)
+     Millimeters[I] = FMath::IsFinite(Depth[I]) && Depth[I] > 0 && Depth[I] <= Settings.MaxDepthMeters
+       ? uint16(FMath::Clamp(FMath::RoundToInt(Depth[I]*1000), 1, 65535)) : 0;
+    Image.RawLength = Millimeters.Num()*sizeof(uint16);
+    if (Settings.Compression == URSoccerLab::EURSDepthCompression::ZlibUint16Millimeters)
+    {
+     Image.Codec = 2; int32 Length = FCompression::CompressMemoryBound(NAME_Zlib, Image.RawLength);
+     Image.Data.SetNumUninitialized(Length);
+     if (FCompression::CompressMemory(NAME_Zlib, Image.Data.GetData(), Length, Millimeters.GetData(), Image.RawLength))
+      Image.Data.SetNum(Length);
+     else Image.Data.Empty();
+    }
+    else Image.Data.Append(reinterpret_cast<const uint8*>(Millimeters.GetData()), Image.RawLength);
+   }
+   if (!Image.Data.IsEmpty()) Result.Frame.Images.Add(MoveTemp(Image));
+   Outbox->Frames.Enqueue(MoveTemp(Result));
+  }));
+ }
 }

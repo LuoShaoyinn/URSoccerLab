@@ -108,8 +108,8 @@ def main() -> int:
                         help="wall-clock cap after which the sim is force-killed")
     parser.add_argument("--ready-timeout", type=float, default=180.0,
                         help="how long to wait for the TCP transport to come up")
-    parser.add_argument("--res-x", type=int, default=1920)
-    parser.add_argument("--res-y", type=int, default=960)
+    parser.add_argument("--res-x", type=int, help="must match the generated atlas width")
+    parser.add_argument("--res-y", type=int, help="must match the generated atlas height")
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("client", nargs=argparse.REMAINDER,
                         help="client command (precede with '--')")
@@ -125,7 +125,10 @@ def main() -> int:
     view_count = len(config["robots"]) * (2 if mode == "stereo_rgb" else 1)
     NDISPLAY_DIR.mkdir(parents=True, exist_ok=True)
     ndisplay_path = NDISPLAY_DIR / f"match_{view_count}_rgb.ndisplay"
-    write_ndisplay_config(view_count, ndisplay_path)
+    atlas_width, atlas_height = write_ndisplay_config(view_count, ndisplay_path, config.get("guest_inspector"))
+    if args.res_x not in (None, atlas_width) or args.res_y not in (None, atlas_height):
+        parser.error(f"this camera layout requires --res-x {atlas_width} --res-y {atlas_height}")
+    args.res_x, args.res_y = atlas_width, atlas_height
 
     sim_cmd = _build_sim_command(args, ndisplay_path)
     log_path = ROOT / "Saved/Logs/run_with_sim.log"

@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--quaternion", type=float, nargs=4, default=[0, 0, 0, 1],
                         help="xyzw, MuJoCo world, camera +X forward and +Z up")
     parser.add_argument("--duration", type=float, default=10)
-    parser.add_argument("--fps", type=float, default=15, help="output playback FPS")
+    parser.add_argument("--fps", type=float, default=30, help="output playback FPS")
     parser.add_argument("--video", type=Path, default=Path("out/inspector.mp4"))
     args = parser.parse_args()
     if not all(math.isfinite(v) and v > 0 for v in (args.duration, args.fps)):

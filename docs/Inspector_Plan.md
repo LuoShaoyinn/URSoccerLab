@@ -9,7 +9,7 @@ Use one TCP listener on port **12000**, alongside robot ports 10000 + index and
 admin 11000. Each accepted connection owns one floating camera, with a stable
 session ID. Several guests can connect to the same port with independent views.
 There is no MuJoCo body, collision, actuator, robot state subscription, or admin
-capability. Closing a connection destroys only its camera. Firewall rules can
+capability. Closing a connection releases its camera slot. Firewall rules can
 expose the inspector listener while keeping robot/admin ports private.
 
 The inspector parser accepts only `set_camera`. Reject motor, gain, actor pose,
@@ -51,10 +51,10 @@ Server RGB (type 1) reuses the existing v2 image payload: one image named
 state or depth messages. Simulation time is sampled at frame consumption, with
 the same synchronization limits as robot cameras. Sequences are per session;
 reconnecting creates a new session. JSON/RGB can interleave. The server preset is
-640x480, at most 15 Hz, JPEG quality 80, and four guest
+640x480, at most 30 Hz, Vulkan AV1 at 2000 kbps, and four guest
 sessions. Encoding is globally capped at four jobs, including jobs from recently
-disconnected sessions. Use `-URSInspectorPort=12000` to override the port or
-`-URSInspectorCodec=raw` for raw BGRA8 diagnostics. These are server startup
+disconnected sessions. Configure startup limits using the `guest_inspector` scene JSON section (see [AV1 runtime](AV1_Runtime.md)). Use `-URSInspectorPort=12000` to override the port or
+`-URSInspectorCodec=raw` or `jpeg` for diagnostics. These are server startup
 options; clients cannot raise resource limits.
 
 ## Implementation boundaries
@@ -64,14 +64,17 @@ options; clients cannot raise resource limits.
 - `IURSInspectorNetwork` is a replaceable transport contract. Its TCP worker owns
   sockets, framing, connection IDs, admission, and backpressure. Camera lifecycle
   and pose events cross bounded queues to the game thread.
-- `UURSInspectorCameraComponent` owns one SceneCapture/render target per session.
-  It applies poses on the game thread, reads GPU pixels asynchronously, and uses
-  the existing `FImageEncoder`. Dynamic cameras are separate from the fixed robot
-  nDisplay atlas. SceneCapture is verified in the hall/offscreen/nDisplay setup.
+- `UURSInspectorCameraComponent` assigns each session a reserved nDisplay camera
+  slot. Guests use the robot camera policy, post-processing, shared atlas GPU
+  readback, and `FImageEncoder`; no separate SceneCapture/render target exists.
+  The generated atlas reserves four 640x480 guest viewports. These render at the
+  engine frame rate; streaming follows `guest_inspector.rate_hz` (default 30 Hz). Reserved views increase render
+  cost even without connected guests. Older custom layouts without `guest_00`
+  through `guest_03` continue to support robots but cannot admit all four guests.
 - Encoders own pixels and mailbox handles, never UObjects. Session IDs and camera
   generations discard results for closed or obsolete cameras. Latest pending
   frames replace only unsent video; partially sent TCP frames always finish.
-- Disconnect and shutdown remove cameras. Scene rebuilds stop sessions and reset
+- Disconnect and shutdown release guest slots. Scene rebuilds stop sessions and reset
   generations. Each guest must reconnect and submit a fresh camera pose.
 
 The separation allows a future UDP inspector transport to share typed camera
@@ -84,7 +87,7 @@ fragmentation/reassembly, loss handling, and reliable control strategy.
 cd py_example
 uv run python examples/inspector/receive.py --host 127.0.0.1 --port 12000 \
   --position -4 0 2 --quaternion 0 0 0 1 --duration 10 \
-  --video out/inspector.mp4
+  --fps 30 --video out/inspector.mp4
 ```
 
 `InspectorClient` exposes only camera pose updates and status/RGB polling. The

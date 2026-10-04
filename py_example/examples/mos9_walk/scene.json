@@ -100,5 +100,24 @@
         "yaw_deg": 180
       }
     ]
+  },
+  "vision": {
+    "rgb": {
+      "compression": "av1",
+      "bitrate_kbps": 2000,
+      "keyframe_interval_s": 2
+    }
+  },
+  "guest_inspector": {
+    "enabled": true,
+    "port": 12000,
+    "max_guests": 4,
+    "width": 640,
+    "height": 480,
+    "rate_hz": 30,
+    "fov_degrees": 90,
+    "compression": "av1",
+    "bitrate_kbps": 2000,
+    "keyframe_interval_s": 2
   }
 }

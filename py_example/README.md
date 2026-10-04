@@ -37,13 +37,16 @@ for kind, data in client.recv():
 
 - Motor commands: JSON dict of `{actuator_name: float}`
 - State: JSON with `sim_time`, `base`, `joints`, `actuators`, `cameras`
-- RGB: versioned binary image sets with JPEG/raw BGRA pixels
+- RGB: versioned binary image sets with AV1/JPEG/raw RGB
 - Depth: independent versioned messages with float32 metres or
   raw/zlib-compressed uint16 millimetres
 
 Commands, state, RGB, and depth share this one bidirectional TCP connection.
-Their rates are independent: the default publishes state at 60 Hz and two
-JPEG-compressed RGB cameras at 30 Hz. Worker threads encode images, then hand completed frames through bounded
+Their rates are independent: the example scenes publish state at 60 Hz and
+stereo AV1 RGB at 30 Hz. The package decodes AV1 with PyAV and returns separate
+left/right RGB images. RGBD keeps independent lossless depth messages.
+New connections receive state immediately and wait for a periodic video keyframe;
+connections never request or force keyframes. See [AV1 runtime](../docs/AV1_Runtime.md). Worker threads encode images, then hand completed frames through bounded
 mailboxes to the dedicated network worker, which owns socket I/O.
 
 ## Controller Parameters — actuator mode and PD gains

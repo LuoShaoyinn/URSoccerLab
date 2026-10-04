@@ -75,6 +75,14 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	Original.Vision.Mode = EURSVisionMode::Rgbd;
 	Original.Vision.Rgb.RateHz = 30.0;
 	Original.Vision.Rgb.JpegQuality = 78;
+	Original.Vision.Rgb.Compression = EURSRgbCompression::Av1;
+	Original.Vision.Rgb.BitrateKbps = 3500;
+	Original.Vision.Rgb.KeyframeIntervalSeconds = 3.0;
+	Original.GuestInspector.Rgb.RateHz = 30;
+	Original.GuestInspector.Width = 800;
+	Original.GuestInspector.Height = 600;
+	Original.GuestInspector.MaxGuests = 2;
+	Original.GuestInspector.Port = 12010;
 	Original.Vision.Depth.RateHz = 12.5;
 	Original.Vision.Depth.MaxDepthMeters = 20.0;
 	Original.Robots[0].JointPositionsRad = TMap<FString, float>{{TEXT("head_yaw_joint"), 0.25f}};
@@ -86,6 +94,12 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("load temp config"), FURSSceneConfigIo::LoadFromFile(Path, Loaded, Error));
 	TestTrue(TEXT("load error empty"), Error.IsEmpty());
 
+	TestTrue(TEXT("round-trip AV1 codec"), Loaded.Vision.Rgb.Compression == EURSRgbCompression::Av1);
+	TestEqual(TEXT("round-trip bitrate"), Loaded.Vision.Rgb.BitrateKbps, 3500);
+	TestEqual(TEXT("round-trip GOP"), Loaded.Vision.Rgb.KeyframeIntervalSeconds, 3.0);
+	TestEqual(TEXT("round-trip guest dimensions"), Loaded.GuestInspector.Width, 800);
+	TestEqual(TEXT("round-trip guest capacity"), Loaded.GuestInspector.MaxGuests, 2);
+	TestEqual(TEXT("round-trip guest port"), Loaded.GuestInspector.Port, 12010);
 	TestEqual(TEXT("round-trip robot count"), Loaded.Robots.Num(), Original.Robots.Num());
 	TestEqual(TEXT("round-trip object count"), Loaded.Objects.Num(), Original.Objects.Num());
 	TestEqual(TEXT("round-trip object actor_id"), Loaded.Objects[0].ActorId, Original.Objects[0].ActorId);
@@ -134,6 +148,9 @@ bool FURSSceneConfigLoadRejectionTest::RunTest(const FString& Parameters)
 		return bOk;
 	};
 
+ TestFalse(TEXT("guest fractional dimension rejected"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"guest_inspector\":{\"width\":640.5}}"), Out, Error));
+ TestFalse(TEXT("guest string rate rejected"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"guest_inspector\":{\"rate_hz\":\"30\"}}"), Out, Error));
+ TestFalse(TEXT("guest AV1 GOP zero rejected"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"guest_inspector\":{\"keyframe_interval_s\":0}}"), Out, Error));
 	TestFalse(TEXT("missing version rejected"),
 		WriteAndLoad(TEXT("{\"robots\":[]}"), Out, Error));
 

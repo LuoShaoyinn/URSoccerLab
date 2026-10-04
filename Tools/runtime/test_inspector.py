@@ -78,6 +78,7 @@ def run(codec):
                 time.sleep(.1)
             else:
                 raise TimeoutError('runtime startup')
+            assert '[URS nDisplay] reserved 4 guest camera slots.' in ue_log.read_text(errors='replace')
             robot = RobotClient('127.0.0.1')
             clients.append(robot)
             baseline_states, baseline_images = [], 0

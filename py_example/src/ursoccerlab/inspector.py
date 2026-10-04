@@ -12,6 +12,8 @@ class InspectorClient:
 
     def __init__(self, host: str = "127.0.0.1", port: int = 12000):
         self.conn = FrameConn(host, port)
+        from .video import VideoDecoder
+        self._video = VideoDecoder()
 
     def set_camera(self, translation_m, rotation_quat_xyzw):
         """Set an absolute MuJoCo-world pose: local +X forward, +Z up."""
@@ -48,7 +50,9 @@ class InspectorClient:
                 images = parse_image_message(payload)
                 if any(image["pixel_format"] != "bgra8" for image in images):
                     raise ValueError("inspector RGB must use BGRA8 pixel format")
-                yield "rgb", images
+                images = self._video.decode(images)
+                if images:
+                    yield "rgb", images
             else:
                 raise ValueError(f"unexpected inspector message type: {kind}")
 

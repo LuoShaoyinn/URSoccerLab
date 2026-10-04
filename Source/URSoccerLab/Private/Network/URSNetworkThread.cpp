@@ -122,7 +122,7 @@ void URSNetworkThread::EnqueueCameraFrame(const URSoccerLab::FEncodedCameraFrame
 	    }))
 		return;
 	FScopeLock Lock(&CameraMutex);
-	CameraFrames.Add(Frame.ActorId, Frame);
+	CameraFrames.Add(Frame.ActorId + FString::FromInt(Frame.MessageType), Frame);
 }
 bool URSNetworkThread::DequeueAdminRequest(URSoccerLab::FAdminMessage& Out)
 {
@@ -299,18 +299,20 @@ void URSNetworkThread::DrainCameraQueues()
 		FScopeLock Lock(&CameraMutex);
 		Swap(Frames, CameraFrames);
 	}
-	for (auto& Endpoint : Endpoints)
-	{
-		const auto* Frame = Frames.Find(Endpoint.Channel.ActorId);
-		if (!Frame || Endpoint.Clients.IsEmpty())
-			continue;
-		auto Payload = URSoccerLab::FMessageProtocol::EncodeCamera(*Frame);
-		if (Payload.IsEmpty())
-			continue;
-		for (auto& Client : Endpoint.Clients)
-			if (Client.bConnected)
-				Client.PendingCameraPayload = Payload;
-	}
+ for (auto& Endpoint : Endpoints)
+  for (uint8 Type : {uint8(1), uint8(2)})
+  {
+   const auto* Frame = Frames.Find(Endpoint.Channel.ActorId + FString::FromInt(Type));
+   if (!Frame || Endpoint.Clients.IsEmpty()) continue;
+   auto Payload = URSoccerLab::FMessageProtocol::EncodeCamera(*Frame);
+   if (Payload.IsEmpty()) continue;
+   for (auto& Client : Endpoint.Clients)
+    if (Client.bConnected)
+    {
+     if (Type == 2) Client.PendingDepthPayload = Payload;
+     else Client.VideoGate.Offer(*Frame, Client.PendingCameraPayload, Payload);
+    }
+  }
 }
 void URSNetworkThread::DrainAdminReplies()
 {
@@ -371,6 +373,12 @@ void URSNetworkThread::FlushClients(TArray<FClient>& Clients)
 				continue;
 			}
 		}
+  if (Client.WriteBuf.IsEmpty() && !Client.PendingDepthPayload.IsEmpty())
+  {
+   URSoccerLab::TcpFraming::Append(Client.WriteBuf, 2, Client.PendingDepthPayload.GetData(), Client.PendingDepthPayload.Num());
+   Client.PendingDepthPayload.Empty();
+   if (!SendBuffered()) { Clients.RemoveAt(Index); continue; }
+  }
 		if (Client.WriteBuf.Num() > 4 * 1024 * 1024)
 		{
 			UE_LOG(LogTemp, Log, TEXT("[URS TCP] Client backpressure disconnect (queued=%d)"), Client.WriteBuf.Num());

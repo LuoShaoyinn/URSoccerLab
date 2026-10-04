@@ -19,6 +19,7 @@ private:
  TWeakObjectPtr<UURSInspectorCameraComponent> Camera;
  TWeakObjectPtr<UURSRobotCoreComponent> Core;
  FDelegateHandle FrameHandle;
+ bool Enabled = true; int32 Capacity = 4;
  int32 Port = 12000; bool Failed = false;
  UFUNCTION() void OnRobotsChanged();
  void Send(uint64 Id, const URSoccerLab::FEncodedCameraFrame& Frame);

@@ -57,7 +57,7 @@ def main() -> int:
         ROOT / "Saved/Generated/NDisplay"
         / f"match_{rgb_view_count}_rgb.ndisplay"
     )
-    width, height = write_ndisplay_config(rgb_view_count, ndisplay_path)
+    width, height = write_ndisplay_config(rgb_view_count, ndisplay_path, config.get("guest_inspector"))
 
     extra = list(args.sim_extra_arg)
     if mode == "rgbd":

@@ -1,5 +1,6 @@
 #include "Inspector/URSInspectorNetwork.h"
 #include "Network/URSSocket.h"
+#include "Vision/URSVideoDeliveryGate.h"
 #include "Network/URSTcpFraming.h"
 #include "Protocol/URSMessageProtocol.h"
 #include "HAL/Runnable.h"
@@ -15,6 +16,7 @@ class FInspectorTcp final : public IURSInspectorNetwork, public FRunnable
  struct FClient
  {
   uint64 Id; URSNonBlockingSocket Socket;
+  URSoccerLab::FVideoDeliveryGate VideoGate;
   TArray<uint8> Read, Write, PendingImage;
   int32 WriteOffset = 0; bool PendingPose = false;
   double NextPose = 0;
@@ -30,6 +32,7 @@ class FInspectorTcp final : public IURSInspectorNetwork, public FRunnable
  std::atomic<bool> Running{false};
  std::atomic<int32> PendingEvents{0};
  FRunnableThread* Thread = nullptr;
+ int32 Capacity = 4;
  int32 Port = 12000; uint64 NextId = 1;
  void Event(URSoccerLab::FInspectorEvent::EKind Kind, uint64 Id, const URSoccerLab::FInspectorPose& Pose = {})
  { PendingEvents.fetch_add(1); Events.Enqueue({Kind, Id, Pose}); }
@@ -47,10 +50,11 @@ class FInspectorTcp final : public IURSInspectorNetwork, public FRunnable
  }
 public:
  ~FInspectorTcp() override { Stop(); }
- bool Start(int32 InPort) override
+ bool Start(int32 InPort, int32 MaxGuests) override
  {
   Stop(); if (InPort < 1 || InPort > 65535) return false;
-  Port = InPort; Running = true;
+  if (MaxGuests < 1 || MaxGuests > 4) return false;
+  Capacity = MaxGuests; Port = InPort; Running = true;
   Thread = FRunnableThread::Create(this, TEXT("URSInspectorTCP"));
   return Thread && Running;
  }
@@ -79,7 +83,7 @@ public:
    for (int N = 0; N < 8 && Listener.HasNewConnection(); ++N)
    {
     auto C = MakeUnique<FClient>(); if (!Listener.Accept(C->Socket)) break;
-    if (Clients.Num() >= 4 || PendingEvents.load() >= 32) continue;
+    if (Clients.Num() >= Capacity || PendingEvents.load() >= 32) continue;
     C->Id = NextId++;
     { FScopeLock Lock(&FrameMutex); LiveIds.Add(C->Id); }
     Event(URSoccerLab::FInspectorEvent::EKind::Connected, C->Id);
@@ -91,7 +95,7 @@ public:
    TMap<uint64, URSoccerLab::FEncodedCameraFrame> NewFrames;
    { FScopeLock Lock(&FrameMutex); Swap(NewFrames, Frames); }
    for (auto& Pair : NewFrames) for (auto& C : Clients) if (C->Id == Pair.Key)
-    C->PendingImage = URSoccerLab::FMessageProtocol::EncodeCamera(Pair.Value);
+    C->VideoGate.Offer(Pair.Value, C->PendingImage, URSoccerLab::FMessageProtocol::EncodeCamera(Pair.Value));
    for (int Index = Clients.Num()-1; Index >= 0; --Index)
    {
     auto& C = *Clients[Index]; bool Alive = true; uint8 Bytes[16384];
@@ -122,7 +126,7 @@ public:
     // Never discard bytes of a partially sent frame. Replace only PendingImage.
     if (C.Write.IsEmpty() && !C.PendingImage.IsEmpty())
     { URSoccerLab::TcpFraming::Append(C.Write, 1, C.PendingImage.GetData(), C.PendingImage.Num()); C.PendingImage.Empty(); }
-    if (C.Write.Num() > 4*1024*1024) Alive = false;
+    if (C.Write.Num() > 16*1024*1024) Alive = false;
     if (Alive && C.Write.Num() > C.WriteOffset)
     {
      const int Sent = C.Socket.Send(C.Write.GetData()+C.WriteOffset, C.Write.Num()-C.WriteOffset);

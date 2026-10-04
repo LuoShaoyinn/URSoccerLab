@@ -16,6 +16,7 @@ enum class EURSRgbCompression : uint8
 {
 	Raw,
 	Jpeg,
+	Av1,
 };
 
 enum class EURSDepthCompression : uint8
@@ -30,6 +31,20 @@ struct URSOCCERLAB_API FURSRgbStreamConfig
 	double RateHz = 30.0;
 	EURSRgbCompression Compression = EURSRgbCompression::Jpeg;
 	int32 JpegQuality = 85;
+	int32 BitrateKbps = 2000;
+	double KeyframeIntervalSeconds = 2.0;
+	FString VulkanDevice;
+};
+
+struct URSOCCERLAB_API FURSGuestInspectorConfig
+{
+ FURSGuestInspectorConfig() { Rgb.Compression = EURSRgbCompression::Av1; }
+ bool bEnabled = true;
+ int32 Port = 12000;
+ int32 MaxGuests = 4;
+ int32 Width = 640, Height = 480;
+ double FovDegrees = 90;
+ FURSRgbStreamConfig Rgb;
 };
 
 struct URSOCCERLAB_API FURSDepthStreamConfig
@@ -163,6 +178,7 @@ struct URSOCCERLAB_API FURSSceneConfig
 	FURSGoalsConfig Goals;
 	FString SourceDirectory;
 	FURSVisionConfig Vision;
+	FURSGuestInspectorConfig GuestInspector;
 	FURSRenderConfig Render;
 
 	// Physics timestep override. 0 = use MJCF default.

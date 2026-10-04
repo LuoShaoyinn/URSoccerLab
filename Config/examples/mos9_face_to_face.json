@@ -4,22 +4,49 @@
     {
       "actor_id": "robot_rp0",
       "type": "mos9",
-      "translation_m": [-1.0, -0.5, 0.53],
-      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+      "translation_m": [
+        -1.0,
+        -0.5,
+        0.53
+      ],
+      "rotation_quat_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
     },
     {
       "actor_id": "robot_rp1",
       "type": "mos9",
-      "translation_m": [1.0, -0.5, 0.53],
-      "rotation_quat_xyzw": [0.0, 0.0, 1.0, 0.0]
+      "translation_m": [
+        1.0,
+        -0.5,
+        0.53
+      ],
+      "rotation_quat_xyzw": [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ]
     }
   ],
   "objects": [
     {
       "actor_id": "ball",
       "type": "soccer_ball",
-      "translation_m": [0.0, 0.0, 0.075],
-      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
+      "translation_m": [
+        0.0,
+        0.0,
+        0.075
+      ],
+      "rotation_quat_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
     }
   ],
   "field": {
@@ -51,5 +78,24 @@
         "yaw_deg": 180
       }
     ]
+  },
+  "vision": {
+    "rgb": {
+      "compression": "av1",
+      "bitrate_kbps": 2000,
+      "keyframe_interval_s": 2
+    }
+  },
+  "guest_inspector": {
+    "enabled": true,
+    "port": 12000,
+    "max_guests": 4,
+    "width": 640,
+    "height": 480,
+    "rate_hz": 30,
+    "fov_degrees": 90,
+    "compression": "av1",
+    "bitrate_kbps": 2000,
+    "keyframe_interval_s": 2
   }
 }

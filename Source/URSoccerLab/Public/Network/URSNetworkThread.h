@@ -5,6 +5,7 @@
 #include "Network/URSSocket.h"
 #include "Network/URSNetworkService.h"
 #include "Containers/Queue.h"
+#include "Vision/URSVideoDeliveryGate.h"
 // Owns TCP sockets exclusively. No UObjects or render/MuJoCo APIs.
 class URSNetworkThread : public IURSNetworkService
 {
@@ -30,7 +31,8 @@ private:
 	{
 		URSNonBlockingSocket Socket;
 		TArray<uint8> ReadBuf, WriteBuf;
-		TArray<uint8> PendingCameraPayload;
+		TArray<uint8> PendingCameraPayload, PendingDepthPayload;
+		URSoccerLab::FVideoDeliveryGate VideoGate;
 		bool bConnected = true;
 		uint64 ClientId = 0;
 	};

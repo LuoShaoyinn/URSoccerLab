@@ -5,6 +5,7 @@
 #include "Async/Future.h"
 #include "Scene/URSSceneConfig.h"
 #include "Vision/URSImageEncoder.h"
+#include "Vision/URSAv1Encoder.h"
 #include "URSCameraStreamComponent.generated.h"
 class UURSRobotCoreComponent;
 class UURSDisplayClusterCameraBinderComponent;
@@ -44,8 +45,10 @@ private:
 	struct FCameraState
 	{
 		FString ActorId;
-		bool bRgbEncodeInFlight = false;
+		bool bRgbEncodeInFlight = false, bDepthEncodeInFlight = false;
+		TSharedPtr<URSoccerLab::FAv1Encoder, ESPMode::ThreadSafe> Av1Encoder;
 		uint64 LastNDisplayRgbSequence = 0;
+		double NextEncodeTime = 0;
 	};
 	TArray<FCameraState> CameraStates;
 	struct FCompletedFrame
@@ -62,4 +65,6 @@ private:
 	UFUNCTION() void OnRobotsChanged();
 	void TickCameraCapture();
 	void DrainCompletedFrames();
+	void TickDepthCapture();
+	double NextDepthTime = 0;
 };

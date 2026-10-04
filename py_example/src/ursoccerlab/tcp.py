@@ -24,6 +24,7 @@ TYPE_CAMERA = TYPE_RGB
 CODEC_RAW = 0x00
 CODEC_JPEG = 0x01
 CODEC_ZLIB = 0x02
+CODEC_AV1 = 0x03
 
 PIXEL_BGRA8 = 0x00
 PIXEL_DEPTH_F32_M = 0x01
@@ -35,6 +36,7 @@ _CODEC_NAMES = {
     CODEC_RAW: "raw",
     CODEC_JPEG: "jpeg",
     CODEC_ZLIB: "zlib",
+    CODEC_AV1: "av1",
 }
 _PIXEL_FORMAT_NAMES = {
     PIXEL_BGRA8: "bgra8",
@@ -195,6 +197,7 @@ def parse_image_message(payload: bytes) -> list[dict]:
             "codec": _CODEC_NAMES[codec_id],
             "pixel_format": _PIXEL_FORMAT_NAMES[pixel_id],
             "sequence": sequence,
+            "keyframe": bool(_reserved & 1),
             "sim_time": sim_time,
             "width": width,
             "height": height,
@@ -213,6 +216,8 @@ class RobotClient:
 
     def __init__(self, host: str, port: int = 10000):
         self.conn = FrameConn(host, port)
+        from .video import VideoDecoder
+        self._video = VideoDecoder()
 
     def send_command(self, named_values: dict[str, float]):
         self.conn.send_json(named_values)
@@ -259,7 +264,9 @@ class RobotClient:
             elif ftype == TYPE_RGB:
                 try:
                     if payload and payload[0] == IMAGE_MESSAGE_VERSION:
-                        yield "rgb", parse_image_message(payload)
+                        images = self._video.decode(parse_image_message(payload))
+                        if images:
+                            yield "rgb", images
                     else:
                         yield "camera", parse_camera(payload)
                 except (ValueError, IndexError):

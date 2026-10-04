@@ -6,7 +6,7 @@ class IURSInspectorNetwork
 {
 public:
  virtual ~IURSInspectorNetwork() = default;
- virtual bool Start(int32 Port) = 0;
+ virtual bool Start(int32 Port, int32 MaxGuests = 4) = 0;
  virtual void Stop() = 0;
  virtual bool Dequeue(URSoccerLab::FInspectorEvent& Event) = 0;
  virtual void Reply(uint64 Session, const FString& Json) = 0;

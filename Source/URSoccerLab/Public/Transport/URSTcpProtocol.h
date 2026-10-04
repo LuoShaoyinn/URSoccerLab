@@ -13,6 +13,7 @@ inline constexpr uint8 ImageMessageVersion = 0x02;
 inline constexpr uint8 ImageCodecRaw = 0x00;
 inline constexpr uint8 ImageCodecJpeg = 0x01;
 inline constexpr uint8 ImageCodecZlib = 0x02;
+inline constexpr uint8 ImageCodecAv1 = 0x03;
 
 inline constexpr uint8 PixelFormatBgra8 = 0x00;
 inline constexpr uint8 PixelFormatDepthFloat32Meters = 0x01;
