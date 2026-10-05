@@ -25,6 +25,11 @@ After importing an environment GLB whose lamp meshes use a non-zero glTF
 `EmissiveFactor`, create one movable point light per disconnected physical lamp
 volume and save the field level:
 
+Lamp meshes and lights use lighting channel 0, matching the rest of the hall.
+The visible lamp materials are Unlit; generated point lights default to 224
+lumens each. Separate lamp channels previously produced dark wall and field
+patches in moving camera views.
+
 ```bash
 UnrealEditor-Cmd URSoccerLab.uproject \
   -ExecutePythonScript="$PWD/Tools/editor/convert_emissive_lamps.py" \

@@ -33,7 +33,7 @@ REPORT_PATH = ROOT / "Saved/Diagnostics/emissive_lights.json"
 
 # These are broad indoor-area-light defaults. They can be tuned in one place
 # and the script rerun without accumulating duplicate actors.
-INTENSITY_LUMENS = 280.0
+INTENSITY_LUMENS = 224.0
 EMISSIVE_STRENGTH = 1.0
 EMISSIVE_FACTOR_LEVEL = 10.0
 ATTENUATION_RADIUS_CM = 900.0
@@ -298,6 +298,10 @@ def configure_light(
     component.set_cast_shadows(CAST_SHADOWS)
     component.set_indirect_lighting_intensity(1.0)
     component.set_volumetric_scattering_intensity(1.0)
+    component.set_editor_property(
+        "lighting_channels",
+        unreal.LightingChannels(channel0=True, channel1=False, channel2=False),
+    )
 
 
 def main() -> None:
@@ -358,14 +362,13 @@ def main() -> None:
             # high camera-visible emission from becoming an extra Lumen source.
             mesh_component.set_emissive_light_source(False)
             mesh_component.set_affect_dynamic_indirect_lighting(False)
-            # Keep the visible emitter purely emissive. Otherwise its centered
-            # analytic Point Light illuminates the opaque lamp shell itself,
-            # producing a misleading bright dot instead of an even glow.
+            # The Unlit material keeps the visible emitter purely emissive.
+            # Use the same lighting channel as the rest of the scene.
             mesh_component.set_editor_property(
                 "lighting_channels",
                 unreal.LightingChannels(
-                    channel0=False,
-                    channel1=True,
+                    channel0=True,
+                    channel1=False,
                     channel2=False,
                 ),
             )
