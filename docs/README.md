@@ -8,7 +8,7 @@
   messages, concurrency, and administration RPCs.
 - [URLab builtin behavior](URLab_Builtin_Behavior.md) — coordinate conversion,
   camera attachment, and the boundary between URLab and URSoccerLab.
-- [Robot source convention](../Assets/Robots/README.md) — one MJCF plus one
+- [External robot packages](Robot_Packages.md) — external manifests, MJCF plus
   GLB mesh directory per robot.
 - [Dynamic object convention](../Assets/Objects/README.md) — MJCF physics and
   Unreal-only visuals for objects such as the soccer ball.

@@ -127,7 +127,9 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 					TestTrue(TEXT("detail tiling follows physical surface size"), Tiling.Equals(FLinearColor(0, 0, 16, 10), 1e-5));
 					TestEqual(TEXT("fallback roughness applied"), Material->K2_GetScalarParameterValue(TEXT("RoughnessFactor")), 0.8f);
 				}
+#if WITH_EDITOR
 				TestTrue(TEXT("field retains Nanite geometry"), Mesh->GetStaticMesh()->GetNaniteSettings().bEnabled);
+#endif
 				TestTrue(TEXT("field bounds are 8 x 5 metres"),
 						 Mesh->Bounds.BoxExtent.Equals(FVector(400, 250, 0), 0.1));
 			}

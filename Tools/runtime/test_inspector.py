@@ -50,10 +50,11 @@ def status(client, ok, timeout=5):
 
 
 def run(codec):
-    output = ROOT / 'Saved/Tests/inspector' / codec
+    output = ROOT / 'artifacts/tests/inspector' / codec
     output.mkdir(parents=True, exist_ok=True)
     original = ROOT / 'py_example/examples/standing/scene.json'
     config = json.loads(original.read_text())
+    config["robot_types"] = {name: str((original.parent / path).resolve()) for name, path in config["robot_types"].items()}
     config['field']['visual']['base_color_map'] = str((original.parent / config['field']['visual']['base_color_map']).resolve())
     config['camera_freq'] = 12
     scene = output / 'scene.json'

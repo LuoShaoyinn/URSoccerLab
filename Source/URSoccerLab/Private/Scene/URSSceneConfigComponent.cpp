@@ -3,7 +3,9 @@
 #include "MuJoCo/Components/Geometry/Primitives/MjPlane.h"
 #include "Vision/URSCameraStreamComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/StaticMesh.h"
+#include "SceneUtils.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -88,6 +90,20 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		return false;
 	}
 
+    // Validate all packages before changing the active scene.
+    TMap<FString,TSharedPtr<FExternalRobotPackage>> Packages;
+    for (const auto& Spawn:Config.Robots)
+    {
+        if (Packages.Contains(Spawn.Type)) continue;
+        const FString& Path=Config.RobotTypes.FindChecked(Spawn.Type);
+        FString Absolute=FPaths::ConvertRelativePathToFull(FPaths::IsRelative(Path)?FPaths::Combine(Config.SourceDirectory,Path):Path);
+        auto Package=FExternalRobotLoader::Load(Absolute,OutError);
+        if (!Package) return false;
+        if (Package->Id!=Spawn.Type) { OutError=TEXT("robot manifest id must match scene type: ")+Spawn.Type; return false; }
+        for (const auto& Warning:Package->Warnings) UE_LOG(LogTemp,Warning,TEXT("Robot package %s: %s"),*Spawn.Type,*Warning);
+        Packages.Add(Spawn.Type,Package);
+    }
+    RobotPackages=MoveTemp(Packages);
 	ActiveConfig = Config;
 	if (!ApplyFieldConfig(OutError))
 		return false;
@@ -188,6 +204,7 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s), %d object(s)."),
 		SpawnedRobots.Num(), SpawnedObjects.Num());
 	ApplyRenderConfig();
+	ApplyLightingConfig();
 	ApplyPhysicsConfig();
 	OnSceneConfigApplied.Broadcast();
 	return true;
@@ -329,23 +346,12 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	const URSoccerLab::FURSRobotSpawn& Spawn,
 	FString& OutError)
 {
-	const URSoccerLab::FURSRobotType* Type = URSoccerLab::FURSRobotTypeRegistry::Get().Find(Spawn.Type);
-	if (!Type)
-	{
-		OutError = FString::Printf(TEXT("unknown robot type '%s'"), *Spawn.Type);
-		return false;
-	}
-
-	const FString GeneratedClassPath = Type->BlueprintAssetPath + TEXT("_C");
-	TSubclassOf<AActor> BlueprintClass = LoadClass<AActor>(nullptr, *GeneratedClassPath);
-	if (!BlueprintClass)
-	{
-		OutError = FString::Printf(TEXT("failed to load blueprint class %s"), *GeneratedClassPath);
-		return false;
-	}
+    const auto* PackagePtr=RobotPackages.Find(Spawn.Type);
+    if (!PackagePtr) { OutError=TEXT("unloaded robot package: ")+Spawn.Type; return false; }
+    const auto& Package=**PackagePtr;
 
 	const FVector TranslationMeters = Spawn.TranslationMeters.Get(
-		FVector(0.0, 0.0, Type->DefaultBaseHeightM));
+		FVector(0.0, 0.0, Package.DefaultBaseHeightM));
 	const FQuat RotationXyzw = Spawn.RotationQuatXyzw.Get(FQuat::Identity);
 
 	double MjPos[3] = {TranslationMeters.X, TranslationMeters.Y, TranslationMeters.Z};
@@ -358,8 +364,8 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	FActorSpawnParameters Params;
 	Params.Name = FName(*Spawn.ActorId);
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AMjArticulation* Articulation = Manager->GetWorld()->SpawnActor<AMjArticulation>(
-		BlueprintClass, UELocation, UERotator, Params);
+	AMjArticulation* Articulation = Manager->GetWorld()->SpawnActor<AURSExternalRobot>(
+		AURSExternalRobot::StaticClass(), UELocation, UERotator, Params);
 	if (!Articulation)
 	{
 		OutError = FString::Printf(TEXT("SpawnActor returned null for actor_id '%s'"), *Spawn.ActorId);
@@ -379,6 +385,15 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	Articulation->SetActorLabel(Spawn.ActorId);
 #endif
 
+    if (!FExternalRobotLoader::Populate(CastChecked<AURSExternalRobot>(Articulation),Package,OutError))
+    { Articulation->Destroy(); return false; }
+    // Keep the configured camera channel names; MJCF binding names remain intact.
+    TArray<UMjCamera*> ExternalCameras; Articulation->GetComponents<UMjCamera>(ExternalCameras);
+    for (UMjCamera* Camera:ExternalCameras)
+    {
+        if (Camera->MjName==Package.LeftCamera) Camera->Rename(*ActiveConfig.Vision.LeftCamera);
+        else if (Camera->MjName==Package.RightCamera) Camera->Rename(*ActiveConfig.Vision.RightCamera);
+    }
 	ConfigureRobotCameras(Articulation, Spawn.ActorId);
 	HideImportedFieldGeoms(Articulation);
 
@@ -406,6 +421,59 @@ bool UURSSceneConfigComponent::GetInitialPose(
 	return true;
 }
 
+void UURSSceneConfigComponent::ConfigureCameraEffects(FPostProcessSettings& Settings, double RateHz) const
+{
+	const auto& R = ActiveConfig.Render;
+	int32 MotionBlurEnabled = R.bIsSet ? int32(R.bMotionBlur) : 1;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlur="), MotionBlurEnabled);
+
+	float MotionBlurAmount = R.MotionBlurAmount;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurAmount="), MotionBlurAmount);
+	MotionBlurAmount = FMath::Clamp(MotionBlurAmount, 0.0f, 1.0f);
+
+	float MotionBlurMax = R.MotionBlurMaxPercent;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurMax="), MotionBlurMax);
+	MotionBlurMax = FMath::Clamp(MotionBlurMax, 0.0f, 100.0f);
+
+	int32 MotionBlurTargetFps = R.MotionBlurTargetFps > 0 ? R.MotionBlurTargetFps : FMath::Clamp(FMath::RoundToInt(RateHz), 1, 120);
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurTargetFPS="), MotionBlurTargetFps);
+	MotionBlurTargetFps = FMath::Clamp(MotionBlurTargetFps, 0, 120);
+
+ if (R.bIsSet && !R.bEnable) MotionBlurEnabled = 0;
+ Settings.bOverride_MotionBlurAmount = true;
+ Settings.MotionBlurAmount = MotionBlurEnabled ? MotionBlurAmount : 0.0f;
+ Settings.bOverride_MotionBlurMax = true;
+ Settings.MotionBlurMax = MotionBlurMax;
+ Settings.bOverride_MotionBlurTargetFPS = true;
+ Settings.MotionBlurTargetFPS = MotionBlurTargetFps;
+ Settings.bOverride_MotionBlurPerObjectSize = true;
+ Settings.MotionBlurPerObjectSize = 0.0f;
+ if (R.bIsSet)
+ {
+  // Captures inherit the hall's volume, which explicitly enables auto exposure.
+  // Override it on every camera so illumination changes remain measurable.
+  Settings.bOverride_AutoExposureMethod = true;
+  Settings.AutoExposureMethod = R.bAutoExposure ? AEM_Histogram : AEM_Manual;
+  Settings.bOverride_AutoExposureBias = true;
+  Settings.AutoExposureBias = R.ExposureCompensation;
+  if (!R.bAutoExposure)
+  {
+   Settings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
+   Settings.AutoExposureApplyPhysicalCameraExposure = false;
+  }
+  Settings.bOverride_FilmGrainIntensity = true;
+  Settings.FilmGrainIntensity = R.bEnable ? R.FilmGrainIntensity : 0.0f;
+  Settings.bOverride_FilmGrainIntensityShadows = true;
+  Settings.FilmGrainIntensityShadows = R.FilmGrainShadows;
+  Settings.bOverride_FilmGrainIntensityMidtones = true;
+  Settings.FilmGrainIntensityMidtones = R.FilmGrainMidtones;
+  Settings.bOverride_FilmGrainIntensityHighlights = true;
+  Settings.FilmGrainIntensityHighlights = R.FilmGrainHighlights;
+  Settings.bOverride_FilmGrainTexelSize = true;
+  Settings.FilmGrainTexelSize = R.FilmGrainTexelSize;
+ }
+}
+
 void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId)
 {
 	if (!Articulation)
@@ -413,22 +481,14 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		return;
 	}
 
-	int32 MotionBlurEnabled = 1;
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlur="), MotionBlurEnabled);
-
-	float MotionBlurAmount = 0.5f;
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurAmount="), MotionBlurAmount);
-	MotionBlurAmount = FMath::Clamp(MotionBlurAmount, 0.0f, 1.0f);
-
-	float MotionBlurMax = 5.0f;
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurMax="), MotionBlurMax);
-	MotionBlurMax = FMath::Clamp(MotionBlurMax, 0.0f, 100.0f);
-
-	double CameraRateHz = ActiveConfig.Vision.Rgb.RateHz;
-	FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
-	int32 MotionBlurTargetFps = FMath::Clamp(FMath::RoundToInt(CameraRateHz), 1, 120);
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurTargetFPS="), MotionBlurTargetFps);
-	MotionBlurTargetFps = FMath::Clamp(MotionBlurTargetFps, 0, 120);
+ double CameraRateHz = ActiveConfig.CameraFreq > 0 ? ActiveConfig.CameraFreq : ActiveConfig.Vision.Rgb.RateHz;
+ FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
+ FPostProcessSettings Effects;
+ ConfigureCameraEffects(Effects, CameraRateHz);
+ const bool MotionBlurEnabled = Effects.MotionBlurAmount > 0;
+ const float MotionBlurAmount = Effects.MotionBlurAmount;
+ const float MotionBlurMax = Effects.MotionBlurMax;
+ const int32 MotionBlurTargetFps = Effects.MotionBlurTargetFPS;
 
 	TArray<UMjCamera*> Cameras;
 	Articulation->GetComponents<UMjCamera>(Cameras);
@@ -511,14 +571,7 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 			Capture->ShowFlags.SetMotionBlur(MotionBlurEnabled != 0);
 
 			FPostProcessSettings& PostProcess = Capture->PostProcessSettings;
-			PostProcess.bOverride_MotionBlurAmount = true;
-			PostProcess.MotionBlurAmount = MotionBlurEnabled != 0 ? MotionBlurAmount : 0.0f;
-			PostProcess.bOverride_MotionBlurMax = true;
-			PostProcess.MotionBlurMax = MotionBlurMax;
-			PostProcess.bOverride_MotionBlurTargetFPS = true;
-			PostProcess.MotionBlurTargetFPS = MotionBlurTargetFps;
-			PostProcess.bOverride_MotionBlurPerObjectSize = true;
-			PostProcess.MotionBlurPerObjectSize = 0.0f;
+			ConfigureCameraEffects(PostProcess, CameraRateHz);
 		}
 		if (Camera->resolution.Num() < 2)
 		{
@@ -612,6 +665,27 @@ void UURSSceneConfigComponent::ApplyPhysicsConfig()
 	});
 }
 
+void UURSSceneConfigComponent::ApplyLightingConfig()
+{
+ if (!ActiveConfig.Lighting.bIsSet || !GetWorld()) return;
+ int32 Count = 0;
+ for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+ {
+  if (!It->ActorHasTag(TEXT("URS_AutoEmissiveLamp"))) continue;
+  TArray<UPointLightComponent*> Lights;
+  It->GetComponents(Lights);
+  for (auto* Light : Lights)
+  {
+   Light->SetIntensityUnits(ELightUnits::Lumens);
+   Light->SetIntensity(ActiveConfig.Lighting.LampIntensityLumens);
+   Light->SetSourceRadius(ActiveConfig.Lighting.SourceRadiusCm);
+   Light->SetSpecularScale(ActiveConfig.Lighting.SpecularScale);
+   ++Count;
+  }
+ }
+ UE_LOG(LogTemp, Log, TEXT("[URS Lighting] %d lamps at %.3f lumens each."), Count, ActiveConfig.Lighting.LampIntensityLumens);
+}
+
 void UURSSceneConfigComponent::ApplyRenderConfig()
 {
 	if (!ActiveConfig.Render.bIsSet) return;
@@ -648,15 +722,17 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 	// settable toggle for hardware-accelerated Lumen traces.
 	Exec(R.bHardwareRayTracing ? TEXT("r.Lumen.HardwareRayTracing 1") : TEXT("r.Lumen.HardwareRayTracing 0"));
 
-	int32 AAMethod = 3; // tsr
-	if (R.AntiAliasing == TEXT("none")) AAMethod = 0;
-	else if (R.AntiAliasing == TEXT("fxaa")) AAMethod = 1;
-	else if (R.AntiAliasing == TEXT("taa")) AAMethod = 2;
+	int32 AAMethod = AAM_TSR;
+	if (R.AntiAliasing == TEXT("none")) AAMethod = AAM_None;
+	else if (R.AntiAliasing == TEXT("fxaa")) AAMethod = AAM_FXAA;
+	else if (R.AntiAliasing == TEXT("taa")) AAMethod = AAM_TemporalAA;
 	Exec(*FString::Printf(TEXT("r.AntiAliasingMethod %d"), AAMethod));
 
 	Exec(*FString::Printf(TEXT("r.ScreenPercentage %g"), R.ScreenPercentage));
 	Exec(*FString::Printf(TEXT("r.ShadowQuality %d"), R.ShadowQuality));
-	Exec(R.bMotionBlur ? TEXT("r.MotionBlurQuality 4") : TEXT("r.MotionBlurQuality 0"));
+	FPostProcessSettings Effects;
+	ConfigureCameraEffects(Effects, ActiveConfig.Vision.Rgb.RateHz);
+	Exec(Effects.MotionBlurAmount > 0 ? TEXT("r.MotionBlurQuality 4") : TEXT("r.MotionBlurQuality 0"));
 	Exec(R.bAutoExposure ? TEXT("r.DefaultFeature.AutoExposure 1") : TEXT("r.DefaultFeature.AutoExposure 0"));
 	Exec(*FString::Printf(TEXT("r.EyeAdaptationExposureCompensation %g"), R.ExposureCompensation));
 

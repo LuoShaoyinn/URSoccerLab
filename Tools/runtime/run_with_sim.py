@@ -46,7 +46,7 @@ DEFAULT_UE = Path(
 )
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
-NDISPLAY_DIR = ROOT / "Saved/Generated/NDisplay"
+NDISPLAY_DIR = ROOT / "artifacts/generated/NDisplay"
 READY_MARKER = "Robot 'robot_rp0' listening on port"
 
 
@@ -131,7 +131,7 @@ def main() -> int:
     args.res_x, args.res_y = atlas_width, atlas_height
 
     sim_cmd = _build_sim_command(args, ndisplay_path)
-    log_path = ROOT / "Saved/Logs/run_with_sim.log"
+    log_path = ROOT / "artifacts/logs/run_with_sim.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = log_path.open("w")
 

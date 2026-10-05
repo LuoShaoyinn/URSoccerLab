@@ -54,7 +54,7 @@ def main() -> int:
     robot_count = len(config["robots"])
     rgb_view_count = robot_count * (2 if mode == "stereo_rgb" else 1)
     ndisplay_path = (
-        ROOT / "Saved/Generated/NDisplay"
+        ROOT / "artifacts/generated/NDisplay"
         / f"match_{rgb_view_count}_rgb.ndisplay"
     )
     width, height = write_ndisplay_config(rgb_view_count, ndisplay_path, config.get("guest_inspector"))

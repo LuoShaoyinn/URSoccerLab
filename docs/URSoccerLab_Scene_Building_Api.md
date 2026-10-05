@@ -5,6 +5,63 @@ MuJoCo scene. The production level contains the background, lighting, manager,
 and project components. A JSON file selects the robots, dynamic objects, poses,
 and camera transport settings for each run.
 
+## Illumination and camera effects
+
+Scene JSON can adjust the existing hall lamps without changing the level or
+external robot packages:
+
+```json
+"lighting": {
+  "lamp_intensity_lumens": 224,
+  "source_radius_cm": 60,
+  "specular_scale": 0.1
+}
+```
+
+Source radius controls soft shadow/highlight size (0..500 cm); specular scale
+controls reflected light intensity (0..1). The hall preset uses broad sources
+and restrained highlights to keep black metal readable.
+
+The intensity value sets each of the 21 generated point lights (`URS_AutoEmissiveLamp`
+actor tag). Zero turns their illumination off. Omitting `lighting` preserves
+the authored intensity. Lighting channels stay on channel 0. This changes
+illumination, while the visible Unlit lamp materials keep their authored glow.
+Keep `render.auto_exposure` false when comparing illumination settings. This
+now explicitly overrides the hall volume's automatic exposure. Use
+`render.exposure_compensation` to tune fixed camera brightness (each +1 is
+one exposure stop); the hall and camera examples use +2.5.
+
+Add these fields to the existing `render` object:
+
+```json
+"motion_blur": true,
+"motion_blur_amount": 0.5,
+"motion_blur_max_percent": 5,
+"motion_blur_target_fps": 0,
+"film_grain": {
+  "intensity": 0.1,
+  "shadows": 1,
+  "midtones": 1,
+  "highlights": 0.25,
+  "texel_size": 1
+}
+```
+
+Film Grain is Unreal's built-in post-process effect; there is no custom noise
+model. Intensity and tone-region multipliers accept 0..1, and texel size accepts
+0..4. Intensity zero disables grain. Motion blur amount accepts 0..1, maximum
+blur accepts 0..100 percent of screen width, and target FPS accepts integers
+0..120. Target FPS zero follows each camera's configured output rate, including
+its guest-inspector rate. Existing `URSMotionBlur*` command-line overrides are
+retained. `render.enable=false` disables both effects.
+
+Robot eye views and guests share these post-process controls through the
+existing nDisplay camera pipeline. Raw/JPEG/AV1 receive the processed RGB;
+metric depth remains separate. Settings are applied when the scene config is
+loaded; editing the JSON alone does not automatically reload the application.
+The next cooked application must include this code once, after which these
+JSON values need no rebake.
+
 ## Startup flow
 
 ```text
@@ -216,32 +273,29 @@ flip.
 | +Y | `[0, 0, 0.7071, 0.7071]` |
 | -Y | `[0, 0, -0.7071, 0.7071]` |
 
-## Type registries
+## Robot types and object registry
 
-Registries map the short JSON `type` to a baked Unreal Blueprint and a default
-base height. Defaults are registered in `FURSoccerLabModule::StartupModule`.
+Robot types are explicitly declared through `robot_types`, mapping names to
+external package manifests. There are no built-in robot types. See
+[Robot packages](Robot_Packages.md) for the `urs_robot_v1` contract and validation.
 
-| Kind | Type | Blueprint | Base height |
-| --- | --- | --- | ---: |
-| robot | `pi_plus` | `/Game/URSoccerLab/Robots/pi_plus/pi_plus` | 0.3762 m |
-| object | `soccer_ball` | `/Game/URSoccerLab/Objects/soccer_ball/soccer_ball` | 0.075 m |
-
-Adding a type requires an authoritative asset directory under `Assets`, a
-baked Blueprint under `/Game/URSoccerLab`, and one registry entry. Robot names,
-joint names, actuator names, and camera names form part of the external API.
+Objects still use the baked object registry; `soccer_ball` defaults to a base
+height of 0.075 m. Joint/actuator identifiers remain the supplied MJCF names.
 
 ## Source and baked assets
 
 ```text
 Assets/                              editable source of truth
-  Robots/pi_plus/pi_plus.xml         robot physics, names, cameras, visual frames
-  Robots/pi_plus/meshes/*.glb        Unreal-only robot visuals
   Objects/soccer_ball/*.xml|meshes/  dynamic ball physics and visual
   Scenes/SoccerField/physics/*.xml   flat MuJoCo field collision
 
+external/robots/<type>/               ignored, distributed separately
+  robot.json                         identity and bindings
+  model.xml                          physics plus GLB visual references
+  meshes/*.glb                       Unreal render geometry and PBR
+
 Content/                             Unreal-generated, tracked with Git LFS
   Levels/URS_SoccerField.umap        authored hall, goals, ground physics and lighting
-  URSoccerLab/Robots/...             baked robot Blueprint and meshes
   URSoccerLab/Objects/...            baked object Blueprint and meshes
   URSoccerLab/Scenes/...             background assets referenced by the level
 ```
@@ -250,11 +304,9 @@ The original background GLB is intentionally not retained: the `.umap` and its
 referenced Content assets are the authoritative visual scene. The pitch surface is created at runtime from required external configuration.
 MuJoCo sees only the flat ground plane plus configured articulations.
 
-Robot and object GLBs are not passed to MuJoCo. Empty MJCF frames named
-`visual__<mesh-name>` preserve the body-relative visual transform while the
-editor import tools attach the matching GLB to the baked Blueprint. See the
-[robot](../Assets/Robots/README.md) and
-[object](../Assets/Objects/README.md) conventions.
+Robot GLB mesh/geoms are extracted by the runtime loader and removed from the
+MuJoCo input; see [Robot packages](Robot_Packages.md). Objects retain their baked
+editor workflow and `visual__` frame convention.
 
 ## Rebuilding and validation
 

@@ -24,7 +24,7 @@ Then run the client:
 ```bash
 cd py_example
 uv run python examples/standing/standing.py --port 10000 10001 --duration 5 \
-  --video out/standing
+  --video ../artifacts/outputs/standing
 ```
 
 ## Options
@@ -34,8 +34,8 @@ uv run python examples/standing/standing.py --port 10000 10001 --duration 5 \
 | `--port` | `10000` | one or more robot TCP ports (nargs `+`) |
 | `--duration` | `5` | capture length in seconds |
 | `--cmd-hz` | `60` | actuator-hold command rate |
-| `--video` | `out/standing` | video prefix; `_N.mp4` appended per robot when >1 |
+| `--video` | `../artifacts/outputs/standing` | video prefix; `_N.mp4` appended per robot when >1 |
 
 ## Output
 
-One H.264 MP4 per robot under `out/` (left-eye camera).
+One H.264 MP4 per robot under `../artifacts/outputs/` (left-eye camera).

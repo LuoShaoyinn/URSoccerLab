@@ -24,7 +24,7 @@ Then run the client:
 ```bash
 cd py_example
 uv run python examples/move_head/move_head.py --port 10000 10001 --duration 10 \
-  --video out/head_motion
+  --video ../artifacts/outputs/head_motion
 ```
 
 For a single robot: `--port 10000`.
@@ -37,8 +37,8 @@ For a single robot: `--port 10000`.
 | `--duration` | `10` | sweep length in seconds |
 | `--mode` | `sweep` | `sweep` or `static` (no head commands) |
 | `--cmd-hz` | `60` | command rate |
-| `--video` | `out/head_demo` | video prefix; `_N.mp4` appended per robot when >1 |
+| `--video` | `../artifacts/outputs/head_demo` | video prefix; `_N.mp4` appended per robot when >1 |
 
 ## Output
 
-One H.264 MP4 per robot under `out/`.
+One H.264 MP4 per robot under `../artifacts/outputs/`.

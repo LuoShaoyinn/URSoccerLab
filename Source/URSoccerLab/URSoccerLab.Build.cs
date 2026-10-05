@@ -14,6 +14,8 @@ using UnrealBuildTool;
 			{
 				"Json",
 				"JsonUtilities",
+                "XmlParser",
+                "glTFRuntime",
 				"Sockets",
 				"ImageWrapper",
 				"ImageCore",

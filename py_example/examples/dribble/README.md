@@ -63,7 +63,7 @@ uv run --extra vision --extra torch_rocm \
 
 ## Output
 
-`out/dribble/{left_eye,detections,observer}.mp4` and `trace.json`.
+`../artifacts/outputs/dribble/{left_eye,detections,observer}.mp4` and `trace.json`.
 
 ## Self-contained
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Package the URSoccerLab simulator into a Linux AppImage.
 
-The AppImage contains ONLY the cooked simulator + robots (field, robot/ball
-assets, runtime C++: TCP transport, MuJoCo, nDisplay binder). It excludes the
-UnrealEditor, py_example, and Tools. External (user-provided at runtime): the
-scene config (``-URSSceneConfig=``), the nDisplay config (``-dc_cfg=``), and
-Python clients. Vulkan/GPU drivers come from the host (AMD or NVIDIA); they are
-intentionally NOT bundled.
+The AppImage contains the cooked hall, ball and generic runtime loaders
+(TCP transport, MuJoCo, nDisplay, glTFRuntime). Robot packages, field textures
+and scene configuration are external filesystem inputs. It excludes UnrealEditor,
+py_example and Tools. Vulkan/GPU drivers come from the host (AMD or NVIDIA);
+they are intentionally NOT bundled.
 
 Phases (each resumable; run with no subcommand to do all)::
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Scene/URSExternalRobot.h"
 #include "Components/ActorComponent.h"
 #include "Scene/URSSceneConfig.h"
 #include "URSSceneConfigComponent.generated.h"
@@ -10,6 +11,7 @@ class UStaticMesh;
 class UMaterialInterface;
 class AAMjManager;
 class AMjArticulation;
+struct FPostProcessSettings;
 USTRUCT(BlueprintType)
 struct FURSSpawnedRobotInfo
 {
@@ -79,6 +81,7 @@ public:
 	const TMap<FString, FURSSpawnedRobotInfo>& GetSpawnedRobots() const { return SpawnedRobots; }
 	const TMap<FString, FURSSpawnedObjectInfo>& GetSpawnedObjects() const { return SpawnedObjects; }
 	const URSoccerLab::FURSSceneConfig& GetActiveConfig() const { return ActiveConfig; }
+	void ConfigureCameraEffects(FPostProcessSettings& Settings, double RateHz) const;
 
 	/** Returns the actor_ids this component has spawned at some point and
 	 *  still knows about (used to detect ids that were removed from the
@@ -89,6 +92,7 @@ public:
 
 private:
 	URSoccerLab::FURSSceneConfig ActiveConfig;
+	TMap<FString, TSharedPtr<URSoccerLab::FExternalRobotPackage>> RobotPackages;
 	TMap<FString, FURSSpawnedRobotInfo> SpawnedRobots;
 	TMap<FString, FURSSpawnedObjectInfo> SpawnedObjects;
 	TSet<FString> KnownActorIds;
@@ -100,6 +104,7 @@ private:
 	void ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId);
 	void HideImportedFieldGeoms(AMjArticulation* Articulation);
 	void ApplyRenderConfig();
+	void ApplyLightingConfig();
 	void ApplyPhysicsConfig();
 	bool ApplyFieldConfig(FString &OutError);
 	bool ApplyGoalsConfig(FString &OutError);

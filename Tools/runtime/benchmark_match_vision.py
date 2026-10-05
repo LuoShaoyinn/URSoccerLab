@@ -170,7 +170,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "Saved/Benchmarks/match_vision.json",
+        default=ROOT / "artifacts/benchmarks/match_vision.json",
     )
     parser.add_argument(
         "--sim-extra-arg",
@@ -188,7 +188,7 @@ def main() -> int:
     expect_depth = mode == "rgbd"
     rgb_view_count = len(robots) * expected_rgb_entries
 
-    log_path = ROOT / "Saved/Logs/URS_MatchVisionBenchmark.log"
+    log_path = ROOT / "artifacts/logs/URS_MatchVisionBenchmark.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     ready = threading.Event()
     render_args: list[str]
@@ -196,7 +196,7 @@ def main() -> int:
         render_args = ["-ForceRes", "-ResX=64", "-ResY=64"]
     else:
         ndisplay_path = (
-            ROOT / "Saved/Generated/NDisplay"
+            ROOT / "artifacts/generated/NDisplay"
             / f"match_{rgb_view_count}_rgb.ndisplay"
         )
         atlas_width, atlas_height = write_ndisplay_config(

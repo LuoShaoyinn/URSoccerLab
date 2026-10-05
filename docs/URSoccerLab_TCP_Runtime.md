@@ -191,11 +191,11 @@ py_example/.venv/bin/python Tools/runtime/run_scene.py \
 ```bash
 py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_rgbd.json \
-  --duration-sec 12 --output Saved/Benchmarks/six_rgbd.json
+  --duration-sec 12 --output artifacts/benchmarks/six_rgbd.json
 
 py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json \
-  --duration-sec 12 --output Saved/Benchmarks/six_stereo_rgb.json
+  --duration-sec 12 --output artifacts/benchmarks/six_stereo_rgb.json
 ```
 
 The benchmark uses the production nDisplay atlas by default. Pass

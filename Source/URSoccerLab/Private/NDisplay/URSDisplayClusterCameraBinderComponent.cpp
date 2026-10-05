@@ -249,6 +249,7 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 		Proxy->FieldOfView = Guest.FovDegrees;
 		Proxy->AspectRatio = float(Guest.Width) / Guest.Height;
 		Proxy->PostProcessSettings = CameraProxies[0]->PostProcessSettings;
+		if (SceneConfig) SceneConfig->ConfigureCameraEffects(Proxy->PostProcessSettings, Guest.Rgb.RateHz);
 		Proxy->PostProcessBlendWeight = CameraProxies[0]->PostProcessBlendWeight;
 		Proxy->SetWorldLocation(FVector(0, 0, 100000));
 		Proxy->RegisterComponent();

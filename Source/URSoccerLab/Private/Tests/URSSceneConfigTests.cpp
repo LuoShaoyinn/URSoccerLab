@@ -250,7 +250,7 @@ bool FURSSceneConfigValidateTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSRobotTypeRegistryTest,
-	"URSoccerLab.Scene.Registry.DefaultTypesRegistered",
+	"URSoccerLab.Scene.Registry.NoBuiltinRobots",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FURSRobotTypeRegistryTest::RunTest(const FString& Parameters)
@@ -258,16 +258,11 @@ bool FURSRobotTypeRegistryTest::RunTest(const FString& Parameters)
 	FURSRobotTypeRegistry& Reg = FURSRobotTypeRegistry::Get();
 	Reg.RegisterDefaultTypes();
 
-	const FURSRobotType* PiPlus = Reg.Find(TEXT("pi_plus"));
-	TestNotNull(TEXT("pi_plus registered"), PiPlus);
-	TestTrue(TEXT("pi_plus blueprint path set"), !PiPlus->BlueprintAssetPath.IsEmpty());
-	TestEqual(TEXT("pi_plus default base height"), PiPlus->DefaultBaseHeightM, 0.3762);
+    TestNull(TEXT("pi_plus is not built in"), Reg.Find(TEXT("pi_plus")));
+    TestNull(TEXT("mos9 is not built in"), Reg.Find(TEXT("mos9")));
+    Reg.RegisterDefaultTypes();
+    TestTrue(TEXT("default registry stays empty"),Reg.GetRegisteredNames().IsEmpty());
 
-	TestNull(TEXT("unknown type returns null"), Reg.Find(TEXT("nope")));
-
-	Reg.RegisterDefaultTypes();
-	const FURSRobotType* PiPlusAgain = Reg.Find(TEXT("pi_plus"));
-	TestNotNull(TEXT("pi_plus still registered after re-register"), PiPlusAgain);
 	return true;
 }
 
@@ -287,6 +282,53 @@ bool FURSObjectTypeRegistryTest::RunTest(const FString& Parameters)
 
 	TestNull(TEXT("unknown object type returns null"), Reg.Find(TEXT("nope")));
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSSceneLightingEffectsTest,
+ "URSoccerLab.Scene.Config.LightingEffects",
+ EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FURSSceneLightingEffectsTest::RunTest(const FString& Parameters)
+{
+ FURSSceneConfig Config;
+ FString Error;
+ if (!TestTrue(TEXT("load external scene"), FURSSceneConfigIo::LoadFromFile(
+     FPaths::Combine(FPaths::ProjectDir(), TEXT("Config/URS_scene.json")), Config, Error))) return false;
+ Config.Lighting.bIsSet = true;
+ Config.Lighting.LampIntensityLumens = 112;
+ Config.Lighting.SourceRadiusCm = 60;
+ Config.Lighting.SpecularScale = 0.1;
+ Config.Render.bIsSet = true;
+ Config.Render.bMotionBlur = true;
+ Config.Render.MotionBlurAmount = 0.3;
+ Config.Render.MotionBlurMaxPercent = 7;
+ Config.Render.MotionBlurTargetFps = 60;
+ Config.Render.FilmGrainIntensity = 0.25;
+ Config.Render.FilmGrainShadows = 0.8;
+ Config.Render.FilmGrainMidtones = 0.4;
+ Config.Render.FilmGrainHighlights = 0.1;
+ Config.Render.FilmGrainTexelSize = 1.5;
+ const auto Path = WriteTempConfig(Config);
+ FURSSceneConfig Loaded;
+ if (!TestTrue(TEXT("round trip"), FURSSceneConfigIo::LoadFromFile(Path, Loaded, Error))) return false;
+ TestEqual(TEXT("lumens"), Loaded.Lighting.LampIntensityLumens, 112.0);
+ TestEqual(TEXT("source radius"), Loaded.Lighting.SourceRadiusCm, 60.0);
+ TestEqual(TEXT("specular scale"), Loaded.Lighting.SpecularScale, 0.1);
+ TestEqual(TEXT("blur amount"), Loaded.Render.MotionBlurAmount, 0.3);
+ TestEqual(TEXT("blur max"), Loaded.Render.MotionBlurMaxPercent, 7.0);
+ TestEqual(TEXT("blur FPS"), Loaded.Render.MotionBlurTargetFps, 60);
+ TestEqual(TEXT("grain intensity"), Loaded.Render.FilmGrainIntensity, 0.25);
+ TestEqual(TEXT("grain shadows"), Loaded.Render.FilmGrainShadows, 0.8);
+ TestEqual(TEXT("grain midtones"), Loaded.Render.FilmGrainMidtones, 0.4);
+ TestEqual(TEXT("grain highlights"), Loaded.Render.FilmGrainHighlights, 0.1);
+ TestEqual(TEXT("grain size"), Loaded.Render.FilmGrainTexelSize, 1.5);
+ Config.Lighting.LampIntensityLumens = -1;
+ TestFalse(TEXT("reject negative lumens"), FURSSceneConfigIo::Validate(Config).bOk);
+ Config.Lighting.LampIntensityLumens = 224;
+ Config.Render.FilmGrainIntensity = 1.1;
+ TestFalse(TEXT("reject invalid grain"), FURSSceneConfigIo::Validate(Config).bOk);
+ IFileManager::Get().Delete(*Path);
+ return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

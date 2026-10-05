@@ -122,7 +122,7 @@ def main() -> int:
         args.ue,
         [*args.sim_extra_arg, f"-URSSceneConfig={args.scene_config.resolve()}"],
     )
-    sim_log_path = ROOT / "Saved" / "Logs" / "URS_AdminSmokeRuntime.log"
+    sim_log_path = ROOT / "artifacts" / "logs" / "URS_AdminSmokeRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(
         sim,

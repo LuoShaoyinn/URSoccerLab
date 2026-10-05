@@ -1,4 +1,5 @@
 #include "Core/URSRobotCoreComponent.h"
+#include "Scene/URSExternalRobot.h"
 
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
@@ -339,6 +340,9 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		FRobotEndpoint Ep;
 		Ep.ActorId = ActorId;
 		Ep.Articulation = Articulation;
+
+        if (const auto* External=Cast<AURSExternalRobot>(Articulation))
+            Ep.HeadCameraBodyId=mj_name2id(Model,mjOBJ_BODY,TCHAR_TO_UTF8(*(Articulation->GetName()+TEXT("_")+External->HeadBodyName)));
 
 		// Allocate heap triple buffers (stable across array reallocation)
 		Ep.StateBuffer = MakeShared<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe>();
@@ -1644,15 +1648,6 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 		return Result;
 	}
 
-	URSoccerLab::FURSRobotTypeRegistry& Registry = URSoccerLab::FURSRobotTypeRegistry::Get();
-	Registry.RegisterDefaultTypes();
-	const URSoccerLab::FURSRobotType* RobotType = Registry.Find(Spawn->Type);
-	if (!RobotType)
-	{
-		Result.Error = TEXT("unknown_robot_type");
-		Result.Message = FString::Printf(TEXT("unknown robot type '%s'"), *Spawn->Type);
-		return Result;
-	}
 
 	FVector InitialTrans = FVector::ZeroVector;
 	FQuat InitialRot = FQuat::Identity;

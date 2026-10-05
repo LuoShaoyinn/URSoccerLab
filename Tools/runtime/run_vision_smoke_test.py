@@ -215,7 +215,7 @@ def main() -> int:
     parser.add_argument("--robot", default="robot_rp0")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--timeout-ms", type=int, default=30000)
-    parser.add_argument("--out", type=Path, default=ROOT / "py_example" / "out" / "vision_smoke")
+    parser.add_argument("--out", type=Path, default=ROOT / "artifacts" / "outputs" / "vision_smoke")
     parser.add_argument("--scene-config", type=Path, default=ROOT / "Config" / "URS_scene.json")
     parser.add_argument("--sim-extra-arg", action="append", default=[])
     parser.add_argument("--render-warmup-sec", type=float, default=2.0)
@@ -261,7 +261,7 @@ def main() -> int:
     sim = start_simulator(
         args.ue, sim_extra_args, force_memory_ddc=args.force_memory_ddc
     )
-    sim_log_path = ROOT / "Saved" / "Logs" / "URS_VisionSmokeRuntime.log"
+    sim_log_path = ROOT / "artifacts" / "logs" / "URS_VisionSmokeRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(
         sim,

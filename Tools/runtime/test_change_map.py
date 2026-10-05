@@ -32,6 +32,7 @@ def capture(ue: Path, output: Path, name: str, color: tuple[int, int, int], leng
     draw.line((400, margin_y, 400, 500-margin_y), fill='white', width=5)
     image.save(output / f'{name}.png')
     config = json.loads((ROOT / 'py_example/examples/standing/scene.json').read_text())
+    config["robot_types"] = {name: str((ROOT / "py_example/examples/standing" / path).resolve()) for name, path in config["robot_types"].items()}
     config['field'] = dict(length_m=length, width_m=width, border_x_m=0.5, border_y_m=0.5, visual=dict(base_color_map=f'{name}.png'))
     config['goals']['poses'] = [dict(translation_m=[-length/2,0,0],yaw_deg=0), dict(translation_m=[length/2,0,0],yaw_deg=180)]
     config['objects'][0]['physics'] = dict(radius_m=0.11, mass_kg=0.43, friction=[0.6, 0.005, 0.001], solref=[0.02, 0.7])
@@ -112,7 +113,7 @@ def capture(ue: Path, output: Path, name: str, color: tuple[int, int, int], leng
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ue', type=Path, default=Path.home()/'software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor')
-    parser.add_argument('--out', type=Path, default=ROOT/'Saved/Tests/change-map-render')
+    parser.add_argument('--out', type=Path, default=ROOT/'artifacts/tests/change-map-render')
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)

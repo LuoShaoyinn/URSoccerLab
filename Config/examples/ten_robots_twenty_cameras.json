@@ -248,5 +248,8 @@
     "compression": "av1",
     "bitrate_kbps": 2000,
     "keyframe_interval_s": 2
+  },
+  "robot_types": {
+    "pi_plus": "../../external/robots/pi_plus/robot.json"
   }
 }

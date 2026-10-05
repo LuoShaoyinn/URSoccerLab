@@ -111,5 +111,5 @@ py_example/.venv/bin/python Tools/runtime/test_network_refactor.py
 
 It checks JPEG and raw stereo streams, two robot ports, multiple clients, applied commands,
 admin operations, fragmented and malformed admin frames, and reconnects. Logs, images,
-and results are written to `Saved/Tests/network-refactor-runtime/`. It never cooks or
+and results are written to `artifacts/tests/network-refactor-runtime/`. It never cooks or
 updates the AppImage.

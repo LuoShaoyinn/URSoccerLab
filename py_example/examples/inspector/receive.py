@@ -21,7 +21,7 @@ def main():
                         help="xyzw, MuJoCo world, camera +X forward and +Z up")
     parser.add_argument("--duration", type=float, default=10)
     parser.add_argument("--fps", type=float, default=30, help="output playback FPS")
-    parser.add_argument("--video", type=Path, default=Path("out/inspector.mp4"))
+    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/inspector.mp4")
     args = parser.parse_args()
     if not all(math.isfinite(v) and v > 0 for v in (args.duration, args.fps)):
         parser.error("duration and FPS must be positive and finite")

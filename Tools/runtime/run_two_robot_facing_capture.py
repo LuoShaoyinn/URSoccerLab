@@ -8,8 +8,8 @@ Robots are placed by Config/examples/two_robots_face_to_face.json:
 The ball remains at field origin, offset 0.5 m to the side of their sightline.
 
 Output PNGs:
-  py_example/out/two_robot_facing/robot_rp0_camera.png
-  py_example/out/two_robot_facing/robot_rp1_camera.png
+  artifacts/outputs/two_robot_facing/robot_rp0_camera.png
+  artifacts/outputs/two_robot_facing/robot_rp1_camera.png
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ DEFAULT_UE = Path(
 )
 PROJECT = ROOT / "URSoccerLab.uproject"
 MAP_PATH = "/Game/Levels/URS_SoccerField"
-OUT_DIR = ROOT / "py_example" / "out" / "two_robot_facing"
+OUT_DIR = ROOT / "artifacts" / "outputs" / "two_robot_facing"
 DEFAULT_SCENE_CONFIG = ROOT / "Config" / "examples" / "two_robots_face_to_face.json"
 
 
@@ -110,7 +110,7 @@ def main() -> int:
     if not args.scene_config.exists():
         raise FileNotFoundError(args.scene_config)
     sim = start_simulator(args.ue, args.scene_config)
-    sim_log_path = ROOT / "Saved" / "Logs" / "URS_TwoRobotFacingRuntime.log"
+    sim_log_path = ROOT / "artifacts" / "logs" / "URS_TwoRobotFacingRuntime.log"
     sim_log_path.parent.mkdir(parents=True, exist_ok=True)
     sim_ready, log_thread = drain_process_log(
         sim,

@@ -79,10 +79,27 @@ struct URSOCCERLAB_API FURSRenderConfig
 	double ScreenPercentage = 100.0;  // 10..200
 	int32 ShadowQuality = 3;          // 0..5
 	bool bMotionBlur = false;
+	double MotionBlurAmount = 0.5;
+	double MotionBlurMaxPercent = 5.0;
+	// 0 follows the camera's configured frame rate.
+	int32 MotionBlurTargetFps = 0;
+	double FilmGrainIntensity = 0.0;
+	double FilmGrainShadows = 1.0;
+	double FilmGrainMidtones = 1.0;
+	double FilmGrainHighlights = 1.0;
+	double FilmGrainTexelSize = 1.0;
 	bool bAutoExposure = false;
 	double ExposureCompensation = 0.0;
 	TOptional<int32> ResolutionX;   // e.g. 640
 	TOptional<int32> ResolutionY;   // e.g. 480
+};
+
+struct URSOCCERLAB_API FURSLightingConfig
+{
+	bool bIsSet = false;
+	double LampIntensityLumens = 224.0;
+	double SourceRadiusCm = 60.0;
+	double SpecularScale = 0.1;
 };
 
 struct URSOCCERLAB_API FURSPrivilegeConfig
@@ -204,6 +221,7 @@ struct URSOCCERLAB_API FURSSceneConfig
 	FURSVisionConfig Vision;
 	FURSGuestInspectorConfig GuestInspector;
 	FURSRenderConfig Render;
+	FURSLightingConfig Lighting;
 
 	// Physics timestep override. 0 = use MJCF default.
 	double MujocoDt = 0.0;
@@ -214,6 +232,8 @@ struct URSOCCERLAB_API FURSSceneConfig
 	// Camera publish rate (Hz). 0 = use vision config default.
 	double CameraFreq = 0.0;
 
+	// External manifests, resolved relative to the scene JSON.
+	TMap<FString, FString> RobotTypes;
 	TArray<FURSRobotSpawn> Robots;
 	TArray<FURSObjectSpawn> Objects;
 };

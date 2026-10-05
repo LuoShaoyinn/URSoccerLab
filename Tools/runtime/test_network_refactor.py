@@ -50,6 +50,7 @@ def run(ue: Path, output: Path, codec: str) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     original = ROOT / "py_example/examples/standing/scene.json"
     config = json.loads(original.read_text())
+    config["robot_types"] = {name: str((original.parent / path).resolve()) for name, path in config["robot_types"].items()}
     config["field"]["visual"]["base_color_map"] = str((original.parent / config["field"]["visual"]["base_color_map"]).resolve())
     # Small raw frames keep this a protocol/behavior test rather than a bandwidth benchmark.
     config["camera_freq"] = 12
@@ -184,7 +185,7 @@ def run(ue: Path, output: Path, codec: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ue", type=Path, default=Path.home() / "software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor")
-    parser.add_argument("--out", type=Path, default=ROOT / "Saved/Tests/network-refactor-runtime")
+    parser.add_argument("--out", type=Path, default=ROOT / "artifacts/tests/network-refactor-runtime")
     args = parser.parse_args()
     for codec in ("jpeg", "raw"):
         result = run(args.ue, args.out.resolve() / codec, codec)

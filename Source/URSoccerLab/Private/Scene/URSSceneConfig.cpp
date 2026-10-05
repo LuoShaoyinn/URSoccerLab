@@ -356,6 +356,17 @@ bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out
 	return true;
 }
 
+bool ReadEffectNumber(const TSharedPtr<FJsonObject>& Object, const TCHAR* Key, double& Value,
+                      const TCHAR* Prefix, FString& OutError)
+{
+ if (Object->HasField(Key) && (!Object->TryGetNumberField(Key, Value) || !FMath::IsFinite(Value)))
+ {
+  OutError = FString::Printf(TEXT("scene config: %s.%s must be a finite number"), Prefix, Key);
+  return false;
+ }
+ return true;
+}
+
 bool ReadRenderConfig(const TSharedPtr<FJsonObject>& Root, FURSRenderConfig& Out, FString& OutError)
 {
 	const TSharedPtr<FJsonObject>* RenderObjPtr = nullptr;
@@ -371,6 +382,25 @@ bool ReadRenderConfig(const TSharedPtr<FJsonObject>& Root, FURSRenderConfig& Out
 	}
 	Out.bIsSet = true;
 	const TSharedPtr<FJsonObject>& R = *RenderObjPtr;
+ if (!ReadEffectNumber(R, TEXT("motion_blur_amount"), Out.MotionBlurAmount, TEXT("render"), OutError)
+     || !ReadEffectNumber(R, TEXT("motion_blur_max_percent"), Out.MotionBlurMaxPercent, TEXT("render"), OutError)) return false;
+ double TargetFps = Out.MotionBlurTargetFps;
+ if (!ReadEffectNumber(R, TEXT("motion_blur_target_fps"), TargetFps, TEXT("render"), OutError)) return false;
+ if (TargetFps != FMath::TruncToDouble(TargetFps) || TargetFps < 0 || TargetFps > 120)
+ { OutError = TEXT("render.motion_blur_target_fps must be an integer in [0,120]"); return false; }
+ Out.MotionBlurTargetFps = int32(TargetFps);
+ if (R->HasField(TEXT("film_grain")))
+ {
+  const TSharedPtr<FJsonObject>* Grain = nullptr;
+  if (!R->TryGetObjectField(TEXT("film_grain"), Grain) || !Grain || !Grain->IsValid())
+  { OutError = TEXT("render.film_grain must be an object"); return false; }
+  if (!ReadEffectNumber(*Grain, TEXT("intensity"), Out.FilmGrainIntensity, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("shadows"), Out.FilmGrainShadows, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("midtones"), Out.FilmGrainMidtones, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("highlights"), Out.FilmGrainHighlights, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("texel_size"), Out.FilmGrainTexelSize, TEXT("render.film_grain"), OutError)) return false;
+ }
+
 
 	bool bValue = false;
 	if (R->TryGetBoolField(TEXT("enable"), bValue)) Out.bEnable = bValue;
@@ -443,6 +473,18 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 	}
 
 	Out.SourceDirectory = FPaths::GetPath(FPaths::ConvertRelativePathToFull(AbsPath));
+    if (Root->HasField(TEXT("robot_types")))
+    {
+        const TSharedPtr<FJsonObject>* Types=nullptr;
+        if (!Root->TryGetObjectField(TEXT("robot_types"),Types)) { OutError=TEXT("robot_types must map type names to external manifest paths"); return false; }
+        for (const auto& Item:(*Types)->Values)
+        {
+            FString Path;
+            if (Item.Key.IsEmpty()||!Item.Value->TryGetString(Path)||Path.IsEmpty()) { OutError=TEXT("robot_types entries require nonempty names and manifest paths"); return false; }
+            Out.RobotTypes.Add(Item.Key,Path);
+        }
+    }
+
 	const TSharedPtr<FJsonObject> *Field = nullptr;
 	if (!Root->HasField(TEXT("field")))
 	{
@@ -540,6 +582,18 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 	{
 		return false;
 	}
+
+ if (Root->HasField(TEXT("lighting")))
+ {
+  const TSharedPtr<FJsonObject>* Lighting = nullptr;
+  if (!Root->TryGetObjectField(TEXT("lighting"), Lighting) || !Lighting || !Lighting->IsValid())
+  { OutError = TEXT("lighting must be an object"); return false; }
+  Out.Lighting.bIsSet = true;
+  if (!ReadEffectNumber(*Lighting, TEXT("lamp_intensity_lumens"), Out.Lighting.LampIntensityLumens,
+                        TEXT("lighting"), OutError)
+      || !ReadEffectNumber(*Lighting, TEXT("source_radius_cm"), Out.Lighting.SourceRadiusCm, TEXT("lighting"), OutError)
+      || !ReadEffectNumber(*Lighting, TEXT("specular_scale"), Out.Lighting.SpecularScale, TEXT("lighting"), OutError)) return false;
+ }
 
 	Root->TryGetNumberField(TEXT("mujoco_dt"), Out.MujocoDt);
 	Root->TryGetNumberField(TEXT("state_freq"), Out.StateFreq);
@@ -763,6 +817,10 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("version"), In.Version);
+    auto RobotTypesJson=MakeShared<FJsonObject>();
+    for (const auto& Item:In.RobotTypes) RobotTypesJson->SetStringField(Item.Key,Item.Value);
+    Root->SetObjectField(TEXT("robot_types"),RobotTypesJson);
+
 
 	if (In.Field.bIsSet)
 	{
@@ -860,12 +918,32 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		RenderObj->SetNumberField(TEXT("screen_percentage"), In.Render.ScreenPercentage);
 		RenderObj->SetNumberField(TEXT("shadow_quality"), In.Render.ShadowQuality);
 		RenderObj->SetBoolField(TEXT("motion_blur"), In.Render.bMotionBlur);
+  RenderObj->SetNumberField(TEXT("motion_blur_amount"), In.Render.MotionBlurAmount);
+  RenderObj->SetNumberField(TEXT("motion_blur_max_percent"), In.Render.MotionBlurMaxPercent);
+  RenderObj->SetNumberField(TEXT("motion_blur_target_fps"), In.Render.MotionBlurTargetFps);
+  auto Grain = MakeShared<FJsonObject>();
+  Grain->SetNumberField(TEXT("intensity"), In.Render.FilmGrainIntensity);
+  Grain->SetNumberField(TEXT("shadows"), In.Render.FilmGrainShadows);
+  Grain->SetNumberField(TEXT("midtones"), In.Render.FilmGrainMidtones);
+  Grain->SetNumberField(TEXT("highlights"), In.Render.FilmGrainHighlights);
+  Grain->SetNumberField(TEXT("texel_size"), In.Render.FilmGrainTexelSize);
+  RenderObj->SetObjectField(TEXT("film_grain"), Grain);
+
 		RenderObj->SetBoolField(TEXT("auto_exposure"), In.Render.bAutoExposure);
 		RenderObj->SetNumberField(TEXT("exposure_compensation"), In.Render.ExposureCompensation);
 		if (In.Render.ResolutionX.IsSet()) RenderObj->SetNumberField(TEXT("resolution_x"), In.Render.ResolutionX.GetValue());
 		if (In.Render.ResolutionY.IsSet()) RenderObj->SetNumberField(TEXT("resolution_y"), In.Render.ResolutionY.GetValue());
 		Root->SetObjectField(TEXT("render"), RenderObj);
 	}
+
+ if (In.Lighting.bIsSet)
+ {
+  auto Lighting = MakeShared<FJsonObject>();
+  Lighting->SetNumberField(TEXT("lamp_intensity_lumens"), In.Lighting.LampIntensityLumens);
+  Lighting->SetNumberField(TEXT("source_radius_cm"), In.Lighting.SourceRadiusCm);
+  Lighting->SetNumberField(TEXT("specular_scale"), In.Lighting.SpecularScale);
+  Root->SetObjectField(TEXT("lighting"), Lighting);
+ }
 
 	TArray<TSharedPtr<FJsonValue>> RobotsJson;
 	for (const FURSRobotSpawn& Spawn : In.Robots)
@@ -999,6 +1077,7 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 {
 	FURSSceneConfig Config;
+	Config.RobotTypes.Add(TEXT("pi_plus"), TEXT("robots/pi_plus/robot.json"));
 	Config.Field.bIsSet = true;
 	Config.Field.Visual.BaseColorMap = TEXT("field.png");
 	Config.Goals.bIsSet = true;
@@ -1019,6 +1098,19 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfig& Config)
 {
 	FURSSceneConfigValidationResult Result;
+ const auto InRange = [](double Value, double Low, double High) { return FMath::IsFinite(Value) && Value >= Low && Value <= High; };
+ const auto& Render = Config.Render;
+ if (!InRange(Config.Lighting.SourceRadiusCm, 0, 500) || !InRange(Config.Lighting.SpecularScale, 0, 1))
+ { Result.bOk = false; Result.Errors.Add(TEXT("lighting.source_radius_cm [0,500] and specular_scale [0,1] required")); }
+ if (!InRange(Config.Lighting.LampIntensityLumens, 0, 1000000))
+ { Result.bOk = false; Result.Errors.Add(TEXT("lighting.lamp_intensity_lumens must be in [0,1000000]")); }
+ if (!InRange(Render.MotionBlurAmount, 0, 1) || !InRange(Render.MotionBlurMaxPercent, 0, 100)
+     || Render.MotionBlurTargetFps < 0 || Render.MotionBlurTargetFps > 120
+     || !InRange(Render.FilmGrainIntensity, 0, 1) || !InRange(Render.FilmGrainShadows, 0, 1)
+     || !InRange(Render.FilmGrainMidtones, 0, 1) || !InRange(Render.FilmGrainHighlights, 0, 1)
+     || !InRange(Render.FilmGrainTexelSize, 0, 4))
+ { Result.bOk = false; Result.Errors.Add(TEXT("render: motion blur amount [0,1], max percent [0,100], target fps [0,120]; film grain intensity/tones [0,1], texel_size [0,4] required")); }
+
  for (const auto* Stream : {&Config.Vision.Rgb, &Config.GuestInspector.Rgb})
  {
   if (!FMath::IsFinite(Stream->RateHz) || Stream->RateHz < 1 || Stream->RateHz > 120 ||
@@ -1143,10 +1235,10 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 			Result.Errors.Add(FString::Printf(TEXT("robot '%s' has empty type"), *Spawn.ActorId));
 			continue;
 		}
-		if (!FURSRobotTypeRegistry::Get().Find(Spawn.Type))
+		if (!Config.RobotTypes.Contains(Spawn.Type) || Config.RobotTypes.FindChecked(Spawn.Type).IsEmpty())
 		{
 			Result.bOk = false;
-			Result.Errors.Add(FString::Printf(TEXT("robot '%s' references unknown type '%s'"), *Spawn.ActorId, *Spawn.Type));
+			Result.Errors.Add(FString::Printf(TEXT("robot '%s' references unknown type '%s'; declare its external manifest in robot_types"), *Spawn.ActorId, *Spawn.Type));
 		}
 
 		if (Spawn.TranslationMeters.IsSet() && !IsFiniteVec(Spawn.TranslationMeters.GetValue()))
@@ -1216,7 +1308,7 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 		if (Spawn.Type.IsEmpty() || !FURSObjectTypeRegistry::Get().Find(Spawn.Type))
 		{
 			Result.bOk = false;
-			Result.Errors.Add(FString::Printf(TEXT("object '%s' references unknown type '%s'"), *Spawn.ActorId, *Spawn.Type));
+			Result.Errors.Add(FString::Printf(TEXT("object '%s' references unknown type '%s'; declare its external manifest in robot_types"), *Spawn.ActorId, *Spawn.Type));
 		}
 		if (Spawn.TranslationMeters.IsSet() && !IsFiniteVec(Spawn.TranslationMeters.GetValue()))
 		{

@@ -87,7 +87,7 @@ fragmentation/reassembly, loss handling, and reliable control strategy.
 cd py_example
 uv run python examples/inspector/receive.py --host 127.0.0.1 --port 12000 \
   --position -4 0 2 --quaternion 0 0 0 1 --duration 10 \
-  --fps 30 --video out/inspector.mp4
+  --fps 30 --video ../artifacts/outputs/inspector.mp4
 ```
 
 `InspectorClient` exposes only camera pose updates and status/RGB polling. The
@@ -105,7 +105,7 @@ py_example/.venv/bin/python -m unittest discover -s py_example/tests
 
 The rendered test launches the source runtime with nDisplay for JPEG and raw
 streaming. It saves distinct camera views, a changed pose view, receiver MP4/PNG,
-logs, and rate measurements in `Saved/Tests/inspector/{jpeg,raw}/`. Native
+logs, and rate measurements in `artifacts/tests/inspector/{jpeg,raw}/`. Native
 automation under `URSoccerLab.Inspector` validates strict numeric types, normalized
 quaternions, bounds, versioning, and rejection of robot/admin commands. A real
 socket native test also checks pose mailboxes, disconnects, and adapter restart

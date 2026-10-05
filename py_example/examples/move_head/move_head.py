@@ -38,7 +38,7 @@ def main(default_mode: str = "sweep") -> int:
                     help="sweep head joints, or capture with no motor commands")
     ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=30)
-    ap.add_argument("--video", type=Path, default=Path("out/head_demo"),
+    ap.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/head_demo",
                     help="output video path or prefix (.mp4 always applied; _N appended per robot when >1)")
     args = ap.parse_args()
 

@@ -29,7 +29,7 @@ ASSET_PATH_PREFIX = "/Game/URSoccerLab/Scenes/SoccerField/Environment"
 GENERATED_LABEL_PREFIX = "URS_AutoEmissiveLamp_"
 GENERATED_TAG = "URS_AutoEmissiveLamp"
 GENERATED_FOLDER = "URS/GeneratedLights/EmissiveLamps"
-REPORT_PATH = ROOT / "Saved/Diagnostics/emissive_lights.json"
+REPORT_PATH = ROOT / "artifacts/diagnostics/emissive_lights.json"
 
 # These are broad indoor-area-light defaults. They can be tuned in one place
 # and the script rerun without accumulating duplicate actors.
@@ -37,7 +37,7 @@ INTENSITY_LUMENS = 224.0
 EMISSIVE_STRENGTH = 1.0
 EMISSIVE_FACTOR_LEVEL = 10.0
 ATTENUATION_RADIUS_CM = 900.0
-SOURCE_RADIUS_CM = 14.0
+SOURCE_RADIUS_CM = 60.0
 MIN_VOLUME_EXTENT_CM = 2.0
 MAX_VOLUME_EXTENT_CM = 500.0
 CAST_SHADOWS = True
@@ -292,9 +292,9 @@ def configure_light(
         unreal.LinearColor(color[0], color[1], color[2], 1.0), True
     )
     component.set_source_radius(SOURCE_RADIUS_CM)
-    # The visible mesh supplies the fixture's appearance. Prevent the hidden
-    # analytic approximation from producing point/sphere-shaped highlights.
-    component.set_specular_scale(0.0)
+    # Broad, restrained highlights keep black metal readable without strong
+    # point-shaped reflections on the hall walls.
+    component.set_specular_scale(0.1)
     component.set_cast_shadows(CAST_SHADOWS)
     component.set_indirect_lighting_intensity(1.0)
     component.set_volumetric_scattering_intensity(1.0)

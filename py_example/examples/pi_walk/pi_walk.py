@@ -150,8 +150,8 @@ def main() -> int:
     parser.add_argument("--vx", type=float, default=0.35)
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--video-fps", type=int, default=30)
-    parser.add_argument("--video", type=Path, default=Path("out/walker.mp4"))
-    parser.add_argument("--observer-video", type=Path, default=Path("out/observer.mp4"))
+    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/walker.mp4")
+    parser.add_argument("--observer-video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/observer.mp4")
     args = parser.parse_args()
 
     policy = load_policy(args.policy)

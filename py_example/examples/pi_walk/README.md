@@ -36,7 +36,7 @@ cd py_example
 uv sync --extra torch_rocm
 uv run --extra torch_rocm python examples/pi_walk/pi_walk.py \
   --vx 0.35 --duration 15 \
-  --video out/walker.mp4 --observer-video out/observer.mp4
+  --video ../artifacts/outputs/walker.mp4 --observer-video ../artifacts/outputs/observer.mp4
 ```
 
 ## Options
@@ -50,7 +50,7 @@ uv run --extra torch_rocm python examples/pi_walk/pi_walk.py \
 
 ## Output
 
-Walker and observer H.264 MP4s under `out/`.
+Walker and observer H.264 MP4s under `../artifacts/outputs/`.
 
 ## Shared code
 

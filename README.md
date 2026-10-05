@@ -12,7 +12,7 @@ robot.
 Config/URS_scene.json
         |
         v
-GameMode -> robot/object registries -> baked Unreal Blueprints
+GameMode -> external robot packages / baked object registry
         |                                  |
         v                                  v
 URLab MuJoCo physics thread ------> coherent render snapshot ------> Unreal cameras
@@ -41,7 +41,8 @@ for the adapter interface and threading details.
 
 | Path | Purpose |
 | --- | --- |
-| `Assets/` | Authoritative MJCF and GLB source assets |
+| `Assets/` | Object and hall source assets; robot package documentation |
+| `external/robots/` | External robot manifests, MJCF and GLBs (ignored) |
 | `Content/` | Baked Unreal assets and the production `.umap` (Git LFS) |
 | `Config/` | Default and example runtime scene configurations |
 | `Source/URSoccerLab/` | Project runtime, scene, transport, and tests |
@@ -167,7 +168,7 @@ python3 Tools/editor/validate_baked_assets.py
 
 Start with [the documentation index](docs/README.md). Asset-specific
 conventions live beside their sources in
-[Assets/Robots/README.md](Assets/Robots/README.md) and
+[docs/Robot_Packages.md](docs/Robot_Packages.md) and
 [Assets/Objects/README.md](Assets/Objects/README.md).
 
 ## License
@@ -180,3 +181,7 @@ Unreal Engine, the forked UnrealRoboticsLab plugin, bundled libraries, and
 imported assets may have separate terms. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the license files shipped
 with those components.
+
+Generated test reports, debug logs and camera captures are collected under the
+ignored `artifacts/` directory. See [artifact organization](Tools/README.md#generated-artifacts)
+for its layout and the migration command.

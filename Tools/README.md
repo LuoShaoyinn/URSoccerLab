@@ -30,6 +30,11 @@ The visible lamp materials are Unlit; generated point lights default to 224
 lumens each. Separate lamp channels previously produced dark wall and field
 patches in moving camera views.
 
+The current hall preset uses 60 cm light-source radius, specular scale 0.1,
+and fixed exposure compensation +2.5. Reapply it to the existing lights with
+`Tools/editor/configure_hall_lighting.py`; it does not modify field or robot
+materials. These light controls are also available in the scene JSON.
+
 ```bash
 UnrealEditor-Cmd URSoccerLab.uproject \
   -ExecutePythonScript="$PWD/Tools/editor/convert_emissive_lamps.py" \
@@ -48,7 +53,7 @@ UnrealEditor-Cmd URSoccerLab.uproject \
 ```
 
 The cleanup and lamp-conversion operations are idempotent. Their reports are
-written under the ignored `Saved/Diagnostics/` directory. The old
+written under the ignored `artifacts/diagnostics/` directory. The old
 `tune_environment_lighting.py` tool is retained as a historical tuning
 reference. It expects an atmospheric sun to already exist and is not the
 inverse of the indoor cleanup tool.
@@ -67,11 +72,11 @@ quality is configurable; `raw` sends uncompressed BGRA:
 ```bash
 uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
   --camera-compress jpeg --jpeg-quality 85 \
-  --out py_example/out/vision_jpeg_q85
+  --out artifacts/outputs/vision_jpeg_q85
 
 uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
   --camera-compress raw \
-  --out py_example/out/vision_raw
+  --out artifacts/outputs/vision_raw
 ```
 
 While Unreal is serving camera frames, measure message rate, payload bandwidth,
@@ -118,27 +123,19 @@ nDisplay atlas from it, and injects the runtime flags. Full container setup,
 portability notes, and the nDisplay node-resolution gotcha are documented in
 [`packaging/README.md`](packaging/README.md).
 
-## Robot assets
+## External robot packages
 
-The source-of-truth robot layout and MJCF naming rules are documented in
-[`Assets/Robots/README.md`](../Assets/Robots/README.md). A robot consists of one
-MJCF XML plus a sibling `meshes/` directory; Unreal visual meshes are referenced
-by empty `visual__<name>` frames in that XML.
+Robots load directly from external manifests, MJCF and GLBs. No robot editor
+import or cooked Blueprint is needed. See [Robot packages](../docs/Robot_Packages.md).
+The old `editor/import_robot.py`, `import_mos9.py` and `apply_robot_material.py`
+describe the retired cooked workflow.
+`validate_baked_assets.py` checks only the hall, field and objects, and rejects
+a restored cooked robot directory.
 
-Import or refresh the baked Unreal assets with:
-
-```bash
-UnrealEditor-Cmd URSoccerLab.uproject \
-  -ExecutePythonScript="$PWD/Tools/editor/import_robot.py" \
-  -NullRHI -Unattended -NoSplash -DDC-ForceMemoryCache
-```
-
-The importer places the generated Blueprint at
-`/Game/URSoccerLab/Robots/pi_plus/pi_plus` and its visual meshes in the sibling
-`Meshes/` directory. Validate both source and baked assets with:
+Validate the external packages and camera streams with:
 
 ```bash
-python3 Tools/editor/validate_baked_assets.py
+PYTHONPATH=py_example/src py_example/.venv/bin/python Tools/runtime/test_external_robots.py
 ```
 
 ## Dynamic object assets
@@ -167,9 +164,41 @@ py_example/.venv/bin/python Tools/runtime/test_change_map.py
 ```
 
 This runs two external maps and field sizes, captures camera images, and writes
-results under `Saved/Tests/change-map-render/`. It does not package an AppImage.
+results under `artifacts/tests/change-map-render/`. It does not package an AppImage.
 Unreal automation tests under `URSoccerLab.Scene.Config` validate required fields
 and compile a configured ball through the component pipeline to verify its
 radius, mass, inertia, friction, and contact settings. Goal tests additionally
 require two explicit poses, verify the six static cylinders and their transforms,
 and check ball–goalpost contact.
+
+## Generated artifacts
+
+Generated outputs live in the ignored project-root `artifacts/` directory:
+
+| Directory | Contents |
+| --- | --- |
+| `tests/` | Test reports, fixtures, runtime logs and validation captures |
+| `benchmarks/` | Benchmark results |
+| `outputs/` | Example camera videos, images and traces |
+| `runs/` | Local training outputs |
+| `logs/`, `crashes/` | Unreal and launcher diagnostics |
+| `diagnostics/`, `debug/` | Editor reports, shader debug files and material stats |
+| `generated/` | Generated nDisplay layouts |
+| `screenshots/`, `tmp/`, `archive/` | Screenshots, temporary test files and preserved cleanup archives |
+
+Runtime tools and examples default to this tree regardless of their working
+directory. Explicit output arguments still select the path supplied by the user.
+
+For an existing or fresh checkout, run from the project root while the simulator
+and output-producing jobs are stopped:
+
+```sh
+python Tools/runtime/organize_artifacts.py
+```
+
+This moves existing files without deleting them and creates relative compatibility
+links for Unreal's fixed `Saved/` paths, `py_example/out`, and `runs`. Re-running is
+safe; conflicting destinations are rejected rather than overwritten. The links
+also keep older commands and saved absolute references usable. Model weights,
+source assets, cooked distributions, and Unreal build/cache directories retain
+their existing locations.

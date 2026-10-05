@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument("--duration", type=float, default=5.0)
     parser.add_argument("--cmd-hz", type=float, default=60.0)
     parser.add_argument("--video-fps", type=int, default=30)
-    parser.add_argument("--video", type=Path, default=Path("out/standing"),
+    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/standing",
                         help="output video path or prefix (.mp4 always applied; _N appended per robot when >1)")
     args = parser.parse_args()
 
