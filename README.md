@@ -13,8 +13,9 @@ must support AV1 video encoding. The current Docker packaging baseline is
 Ubuntu 24.04; older Linux distributions are not yet validated.
 
 You also need a scene JSON, external robot packages, and a field image. These
-assets are supplied separately; robot models and texture images are not inside
-the AppImage. A typical installation is:
+assets are supplied separately; robot models and field maps are not inside
+the AppImage. The ball's default mesh and skin remain built in; optional external
+PBR maps override its skin. A typical installation is:
 
 ```text
 match/
@@ -37,8 +38,10 @@ chmod +x URSoccerLab.AppImage
 
 Local resource archives are generated separately under `dist/resources/`:
 `robots.7z` contains Pi Plus, MOS9 and Booster K1 packages; `fields.7z` contains
-the example field image and grass PBR maps; `ball.7z` contains sample checkerboard
-PBR maps for testing. Legacy backups are excluded. Extract them from your match
+the example field image and grass PBR maps; `ball.7z` contains the original ball
+GLB/MJCF, extracted PBR textures and sample checkerboard maps for testing.
+The ball archive also includes its attribution and license links.
+Legacy backups are excluded. Extract them from your match
 directory with `7z x robots.7z` (and likewise for the other archives). They restore
 paths under `external/`; point your scene JSON at those paths instead of the
 `assets/` paths in the example. The archives are build outputs and are not in Git.
