@@ -9,7 +9,7 @@
     "shadow_quality": 3,
     "motion_blur": false,
     "auto_exposure": false,
-    "exposure_compensation": 0.0,
+    "exposure_compensation": 2.5,
     "resolution_x": 1280,
     "resolution_y": 720
   },
@@ -88,5 +88,78 @@
   ],
   "mujoco_dt": 0.002,
   "camera_freq": 30,
-  "state_freq": 60
+  "state_freq": 60,
+  "field": {
+    "length_m": 9.0,
+    "width_m": 6.0,
+    "border_x_m": 0.8,
+    "border_y_m": 0.9,
+    "visual": {
+      "base_color_map": "../../../external/field/example.png"
+    },
+    "physics": {
+      "friction": [
+        1.0,
+        0.005,
+        0.0001
+      ],
+      "condim": 3,
+      "solref": [
+        0.02,
+        1.0
+      ],
+      "solimp": [
+        0.9,
+        0.95,
+        0.001,
+        0.5,
+        2.0
+      ]
+    }
+  },
+  "goals": {
+    "width_m": 1.8,
+    "height_m": 1.2,
+    "post_radius_m": 0.05,
+    "poses": [
+      {
+        "translation_m": [
+          -4.5,
+          0,
+          0
+        ],
+        "yaw_deg": 0
+      },
+      {
+        "translation_m": [
+          4.5,
+          0,
+          0
+        ],
+        "yaw_deg": 180
+      }
+    ]
+  },
+  "vision": {
+    "rgb": {
+      "compression": "av1",
+      "bitrate_kbps": 2000,
+      "keyframe_interval_s": 2
+    }
+  },
+  "guest_inspector": {
+    "enabled": true,
+    "port": 12000,
+    "max_guests": 4,
+    "width": 640,
+    "height": 480,
+    "rate_hz": 30,
+    "fov_degrees": 90,
+    "compression": "av1",
+    "bitrate_kbps": 2000,
+    "keyframe_interval_s": 2
+  },
+  "robot_types": {
+    "pi_plus": "../../../external/robots/pi_plus/robot.json"
+  }
 }

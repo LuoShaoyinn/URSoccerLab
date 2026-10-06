@@ -32,7 +32,7 @@ import unreal
 ROOT = Path(__file__).resolve().parents[2]
 
 CHATGPT_PNG = ROOT / "refs" / "ChatGPT Image Aug 2, 2026, 10_04_25 PM.png"
-GRASS_PBR_DIR = ROOT / "refs" / "grass1-ue"
+GRASS_PBR_DIR = ROOT / "external" / "field" / "grass1-ue"
 
 FIELD_TEX_PACKAGE = "/Game/URSoccerLab/Scenes/SoccerField/Field/Textures"
 FIELD_TEX_NAME = "field"

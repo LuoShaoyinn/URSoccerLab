@@ -7,29 +7,39 @@ import math
 from pathlib import Path
 
 
-def write_ndisplay_config(view_count: int, output: Path) -> tuple[int, int]:
-    """Write a tightly packed 640x480 RGB atlas and return its dimensions."""
+def write_ndisplay_config(view_count: int, output: Path, guest_config: dict | None = None) -> tuple[int, int]:
+    """Reserve robot and guest 640x480 nDisplay views; return atlas dimensions."""
+    guest = guest_config or {}
+    guest_count = guest.get("max_guests", 4) if guest.get("enabled", True) else 0
+    guest_width, guest_height = guest.get("width", 640), guest.get("height", 480)
+    if not isinstance(guest_count, int) or isinstance(guest_count, bool) or not 0 <= guest_count <= 4:
+        raise ValueError("guest_inspector.max_guests must be an integer in [1,4]")
+    if any(not isinstance(n, int) or isinstance(n, bool) or n % 2 or n < 64 or n > maximum for n, maximum in ((guest_width, 1920), (guest_height, 1080))):
+        raise ValueError("guest_inspector requires even width [64,1920] and height [64,1080]")
+    cell_width, cell_height = max(640, guest_width), max(480, guest_height)
+    robot_count = view_count
+    view_count += guest_count
     columns = math.ceil(math.sqrt(view_count * 4 / 3))
     rows = math.ceil(view_count / columns)
     viewports = {}
     for index in range(view_count):
-        viewports[f"camera_{index:02d}"] = {
+        viewports[f"camera_{index:02d}" if index < robot_count else f"guest_{index-robot_count:02d}"] = {
             "camera": "DefaultViewPoint",
             "bufferRatio": 1,
             "gPUIndex": -1,
             "allowCrossGPUTransfer": False,
             "isShared": False,
             "region": {
-                "x": (index % columns) * 640,
-                "y": (index // columns) * 480,
-                "w": 640,
-                "h": 480,
+                "x": (index % columns) * cell_width,
+                "y": (index // columns) * cell_height,
+                "w": 640 if index < robot_count else guest_width,
+                "h": 480 if index < robot_count else guest_height,
             },
             "projectionPolicy": {"type": "camera", "parameters": {}},
         }
 
-    width = columns * 640
-    height = rows * 480
+    width = columns * cell_width
+    height = rows * cell_height
     config = {
         "nDisplay": {
             "description": f"URS production {view_count}-camera atlas",

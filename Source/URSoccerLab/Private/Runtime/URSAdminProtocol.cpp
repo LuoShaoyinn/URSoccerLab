@@ -10,7 +10,7 @@ namespace URSoccerLab
 {
 namespace
 {
-bool IsFiniteVec(const FVector& V)
+bool AdminIsFiniteVec(const FVector& V)
 {
 	return FMath::IsFinite(V.X) && FMath::IsFinite(V.Y) && FMath::IsFinite(V.Z);
 }
@@ -21,7 +21,7 @@ bool IsFiniteQuat(const FQuat& Q)
 		&& FMath::IsFinite(Q.Z) && FMath::IsFinite(Q.W);
 }
 
-bool ReadVec3(const TArray<TSharedPtr<FJsonValue>>* Arr, FVector& Out)
+bool AdminReadVec3(const TArray<TSharedPtr<FJsonValue>>* Arr, FVector& Out)
 {
 	if (!Arr || Arr->Num() != 3)
 	{
@@ -30,10 +30,10 @@ bool ReadVec3(const TArray<TSharedPtr<FJsonValue>>* Arr, FVector& Out)
 	Out.X = static_cast<double>((*Arr)[0]->AsNumber());
 	Out.Y = static_cast<double>((*Arr)[1]->AsNumber());
 	Out.Z = static_cast<double>((*Arr)[2]->AsNumber());
-	return IsFiniteVec(Out);
+	return AdminIsFiniteVec(Out);
 }
 
-bool ReadQuatXyzw(const TArray<TSharedPtr<FJsonValue>>* Arr, FQuat& Out)
+bool AdminReadQuatXyzw(const TArray<TSharedPtr<FJsonValue>>* Arr, FQuat& Out)
 {
 	if (!Arr || Arr->Num() != 4)
 	{
@@ -181,7 +181,7 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 	if (Args->TryGetArrayField(TEXT("translation_m"), TransArr))
 	{
 		FVector Trans;
-		if (!ReadVec3(TransArr, Trans))
+		if (!AdminReadVec3(TransArr, Trans))
 		{
 			return EAdminRequestParse::BadTranslation;
 		}
@@ -192,7 +192,7 @@ EAdminRequestParse FAdminProtocol::ParseRequest(const FString& JsonBody, FAdminP
 	if (Args->TryGetArrayField(TEXT("rotation_quat_xyzw"), RotArr))
 	{
 		FQuat Rot;
-		if (!ReadQuatXyzw(RotArr, Rot))
+		if (!AdminReadQuatXyzw(RotArr, Rot))
 		{
 			return EAdminRequestParse::BadRotation;
 		}

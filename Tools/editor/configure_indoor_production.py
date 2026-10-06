@@ -8,7 +8,7 @@ Run inside Unreal Editor:
       -Unattended -NoSplash -DDC-ForceMemoryCache
 
 The indoor Rect Lights, emissive lamp materials, and other scene actors are
-left untouched.  The removed actors are recorded under Saved/Diagnostics so a
+left untouched.  The removed actors are recorded under artifacts/diagnostics so a
 binary level edit can be reviewed without inspecting the umap directly.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ import unreal
 
 ROOT = Path(__file__).resolve().parents[2]
 LEVEL_PATH = "/Game/Levels/URS_SoccerField"
-REPORT_PATH = ROOT / "Saved/Diagnostics/indoor_production.json"
+REPORT_PATH = ROOT / "artifacts/diagnostics/indoor_production.json"
 
 OUTDOOR_COMPONENT_TYPES = (
     unreal.DirectionalLightComponent,

@@ -1,4 +1,7 @@
 #include "URSSoccerGameMode.h"
+#include "Inspector/URSInspectorCameraComponent.h"
+#include "Inspector/URSInspectorTransportComponent.h"
+#include "Vision/URSCameraStreamComponent.h"
 
 #include "EngineUtils.h"
 #include "GameFramework/SpectatorPawn.h"
@@ -71,6 +74,9 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 	if (!SceneComp->ApplyConfig(ApplyError))
 	{
 		UE_LOG(LogTemp, Error, TEXT("URSSoccerGameMode: scene config apply failed: %s"), *ApplyError);
+		ErrorMessage = ApplyError;
+		FPlatformMisc::RequestExitWithStatus(false, 1);
+		return;
 	}
 	else
 	{
@@ -84,9 +90,21 @@ void AURSSoccerGameMode::InitGame(const FString& MapName, const FString& Options
 		UURSRobotCoreComponent* Core = NewObject<UURSRobotCoreComponent>(Manager, TEXT("URSRobotCore"));
 		Core->RegisterComponent();
 	}
+	if (!Manager->FindComponentByClass<UURSCameraStreamComponent>())
+	{
+		auto* Camera = NewObject<UURSCameraStreamComponent>(Manager, TEXT("URSCameraStream"));
+		Camera->RegisterComponent();
+	}
 	if (!Manager->FindComponentByClass<UURSTcpTransportComponent>())
 	{
 		UURSTcpTransportComponent* Transport = NewObject<UURSTcpTransportComponent>(Manager, TEXT("URSTcpTransport"));
+		Transport->RegisterComponent();
+	}
+	if (!Manager->FindComponentByClass<UURSInspectorCameraComponent>())
+	{
+		auto* Inspector = NewObject<UURSInspectorCameraComponent>(Manager, TEXT("URSInspectorCamera"));
+		Inspector->RegisterComponent();
+		auto* Transport = NewObject<UURSInspectorTransportComponent>(Manager, TEXT("URSInspectorTransport"));
 		Transport->RegisterComponent();
 	}
 	if ((FParse::Param(FCommandLine::Get(), TEXT("URSNDisplayCameras"))

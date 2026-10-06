@@ -49,8 +49,9 @@ public:
 		int32 N = 0;
 		if (!Sock->Recv(Buf, BufLen, N))
 		{
-			if (Sock->GetConnectionState() == SCS_ConnectionError) return -1;
-			return 0;
+			// UE stream Recv returns true/zero for would-block and false for EOF
+			// or an error. GetConnectionState can still report connected at EOF.
+			return -1;
 		}
 		return N;
 	}

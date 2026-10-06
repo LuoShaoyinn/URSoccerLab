@@ -37,15 +37,17 @@ for kind, data in client.recv():
 
 - Motor commands: JSON dict of `{actuator_name: float}`
 - State: JSON with `sim_time`, `base`, `joints`, `actuators`, `cameras`
-- RGB: versioned binary image sets with JPEG/raw BGRA pixels
+- RGB: versioned binary image sets with AV1/JPEG/raw RGB
 - Depth: independent versioned messages with float32 metres or
   raw/zlib-compressed uint16 millimetres
 
 Commands, state, RGB, and depth share this one bidirectional TCP connection.
-Their rates are independent: the default publishes state at 60 Hz and two
-JPEG-compressed RGB cameras at 30 Hz. Worker threads encode images, then queue
-completed frames back to the game thread; only the game thread writes the
-socket.
+Their rates are independent: the example scenes publish state at 60 Hz and
+stereo AV1 RGB at 30 Hz. The package decodes AV1 with PyAV and returns separate
+left/right RGB images. RGBD keeps independent lossless depth messages.
+New connections receive state immediately and wait for a periodic video keyframe;
+connections never request or force keyframes. See [AV1 runtime](../docs/AV1_Runtime.md). Worker threads encode images, then hand completed frames through bounded
+mailboxes to the dedicated network worker, which owns socket I/O.
 
 ## Controller Parameters — actuator mode and PD gains
 
@@ -161,7 +163,7 @@ uv run python examples/standing/standing.py --port 10000 10001 --duration 5
 All examples auto-detect the robot type from the first state message and call
 `set_controller_params` with the appropriate PD gains before sending any motor
 commands (see [Controller Parameters](#controller-parameters--actuator-mode-and-pd-gains)
-above). Output videos go under `py_example/out/` (gitignored).
+above). Output videos go under `artifacts/outputs/` (gitignored).
 
 
 ## 1. Head Motion
@@ -187,7 +189,7 @@ uv run --project py_example python Tools/runtime/run_scene.py \
 cd py_example
 uv run python examples/move_head/move_head.py \
   --port 10000 10001 --duration 10 \
-  --video out/head_motion
+  --video ../artifacts/outputs/head_motion
 ```
 
 Scene: `examples/move_head/scene.json` (`two_robots_face_to_face`, pi_plus).
@@ -212,7 +214,7 @@ held at 0 (static capture):
 cd py_example
 uv run python examples/standing/standing.py \
   --port 10000 10001 --duration 5 \
-  --video out/standing
+  --video ../artifacts/outputs/standing
 ```
 
 ## 3. MOS9 Walking
@@ -234,7 +236,7 @@ left-eye camera.
 cd py_example
 uv run python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 --vx 0.4 --duration 15 \
-  --video out/mos9_walker.mp4 --observer-video out/mos9_observer.mp4
+  --video ../artifacts/outputs/mos9_walker.mp4 --observer-video ../artifacts/outputs/mos9_observer.mp4
 ```
 
 Requires `py_example/models/policies/mos9_walk_v11_5500.onnx` (vendored via
@@ -261,8 +263,8 @@ cd py_example
 uv sync --extra vision --extra torch_rocm
 uv run --extra vision --extra torch_rocm python examples/pi_walk/pi_walk.py \
   --vx 0.35 --duration 15 \
-  --video out/walker.mp4 \
-  --observer-video out/observer.mp4
+  --video ../artifacts/outputs/walker.mp4 \
+  --observer-video ../artifacts/outputs/observer.mp4
 ```
 
 Requires `py_example/models/policies/pi_plus_model_40000.pt` (vendored via
@@ -301,7 +303,7 @@ uv run --extra vision --extra torch_rocm \
 At startup the example resets `robot_rp0` and the ball through the admin
 endpoint; pass `--no-reset-at-start` to preserve the live poses. Output (raw
 and annotated videos, observer video, JSON detection trace) goes under
-`out/dribble/`.
+`../artifacts/outputs/dribble/`.
 
 ## Layout
 
@@ -314,7 +316,7 @@ examples/pi_walk/                      Pi Plus walk policy (scene.json)
 examples/dribble/                      look-at-ball + dribble (policy.py + scene.json)
 Config/examples/                       alternative/general scene configs
 tests/                                 protocol and camera parser tests
-out/                                   ignored local captures
+../artifacts/outputs/                   ignored local captures
 ```
 
 Run the unit tests without installing another test framework:
@@ -346,3 +348,20 @@ then, per image:
 Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib. Pixel format: `0x00`
 BGRA8, `0x01` float32 metres, `0x02` uint16 millimetres. Use
 `camera_to_rgb()` and `depth_to_meters()` for decoded NumPy arrays.
+
+## Inspector receiver
+
+The source simulator opens the shared inspector TCP port `12000`.
+Older cooked AppImages do not include this endpoint. See the
+[inspector architecture](../docs/Inspector_Plan.md) for the v1 contract.
+Each guest controls only its own floating camera and receives compressed RGB.
+
+```sh
+uv run python examples/inspector/receive.py --position -4 0 2 \
+  --quaternion 0 0 0 1 --duration 10 --video ../artifacts/outputs/inspector.mp4
+```
+
+The reusable `InspectorClient` provides `set_camera(translation_m,
+rotation_quat_xyzw)`, `recv()`, and `close()`. Poses use MuJoCo world metres and
+xyzw orientation, local +X forward and +Z up. The script writes video incrementally
+and saves a first-frame PNG; `--fps` sets playback timing only.

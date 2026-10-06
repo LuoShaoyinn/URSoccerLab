@@ -1,4 +1,5 @@
 #include "Core/URSRobotCoreComponent.h"
+#include "Scene/URSExternalRobot.h"
 
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSRobotTypeRegistry.h"
@@ -339,6 +340,9 @@ void UURSRobotCoreComponent::RebuildEndpointCache()
 		FRobotEndpoint Ep;
 		Ep.ActorId = ActorId;
 		Ep.Articulation = Articulation;
+
+        if (const auto* External=Cast<AURSExternalRobot>(Articulation))
+            Ep.HeadCameraBodyId=mj_name2id(Model,mjOBJ_BODY,TCHAR_TO_UTF8(*(Articulation->GetName()+TEXT("_")+External->HeadBodyName)));
 
 		// Allocate heap triple buffers (stable across array reallocation)
 		Ep.StateBuffer = MakeShared<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe>();
@@ -1644,15 +1648,6 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 		return Result;
 	}
 
-	URSoccerLab::FURSRobotTypeRegistry& Registry = URSoccerLab::FURSRobotTypeRegistry::Get();
-	Registry.RegisterDefaultTypes();
-	const URSoccerLab::FURSRobotType* RobotType = Registry.Find(Spawn->Type);
-	if (!RobotType)
-	{
-		Result.Error = TEXT("unknown_robot_type");
-		Result.Message = FString::Printf(TEXT("unknown robot type '%s'"), *Spawn->Type);
-		return Result;
-	}
 
 	FVector InitialTrans = FVector::ZeroVector;
 	FQuat InitialRot = FQuat::Identity;
@@ -1700,4 +1695,54 @@ FURSPoseResult UURSRobotCoreComponent::ResetRobot(const FString& ActorId)
 	}
 
 	return SetPose(ActorId, &InitialTrans, &InitialRot, &InitialJointQpos);
+}
+
+TArray<FURSRobotChannel> UURSRobotCoreComponent::GetRobotChannels() const
+{
+	FScopeLock Lock(&EndpointMutex);
+	TArray<FURSRobotChannel> Channels;
+	for (const auto &Ep : Endpoints)
+	{
+		FURSRobotChannel NE;
+		NE.ActorId = Ep.ActorId;
+		NE.StateBuf = Ep.StateBuffer;
+		NE.CmdBuf = Ep.CmdBuffer;
+		NE.GainBuf = Ep.GainBuffer;
+		// Build metadata for JSON
+		for (const auto &Ji : Ep.Joints)
+			if (Ji.JointType != mjJNT_FREE)
+				NE.Meta.JointNames.Add(Ji.Name);
+		for (const auto &Ai : Ep.Actuators)
+			NE.Meta.ActuatorNames.Add(Ai.Name);
+		for (const auto &Ce : Ep.Cameras)
+		{
+			if (auto *Cam = Ce.Camera.Get())
+			{
+				NE.Meta.CameraNames.Add(Ce.Name);
+				NE.Meta.CameraWidths.Add(Cam->resolution.Num() > 0 ? Cam->resolution[0] : 0);
+				NE.Meta.CameraHeights.Add(Cam->resolution.Num() > 1 ? Cam->resolution[1] : 0);
+				NE.Meta.CameraFormats.Add(Cam->CaptureMode == EMjCameraMode::Depth ? TEXT("float32_depth")
+				                                                                   : TEXT("bgra8"));
+			}
+		}
+
+		NE.Meta.bPrivSelfPos = Ep.Privilege.bSelfPos;
+		NE.Meta.bPrivBallPosRelated = Ep.Privilege.bBallPosRelated;
+		NE.Meta.bPrivBallVelRelated = Ep.Privilege.bBallVelRelated;
+		NE.Meta.bPrivAllPos = Ep.Privilege.bAllPos;
+		NE.Meta.Noise = {Ep.Noise.Qpos,
+		                 Ep.Noise.Qvel,
+		                 Ep.Noise.Qtor,
+		                 Ep.Noise.ImuQuat,
+		                 Ep.Noise.ImuAngVel,
+		                 Ep.Noise.CameraImuQuat,
+		                 Ep.Noise.CameraImuAngVel,
+		                 Ep.Noise.SelfPos,
+		                 Ep.Noise.BallPosRelated,
+		                 Ep.Noise.BallVelRelated,
+		                 Ep.Noise.AllPos};
+
+		Channels.Add(MoveTemp(NE));
+	}
+	return Channels;
 }

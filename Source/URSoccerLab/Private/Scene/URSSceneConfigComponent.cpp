@@ -1,4 +1,19 @@
 #include "Scene/URSSceneConfigComponent.h"
+#include "Scene/URSFieldTextures.h"
+#include "MuJoCo/Components/Geometry/Primitives/MjPlane.h"
+#include "Vision/URSCameraStreamComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Engine/StaticMesh.h"
+#include "SceneUtils.h"
+#include "Engine/Texture2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
+#include "MuJoCo/Components/Geometry/Primitives/MjSphere.h"
+#include "MuJoCo/Components/Geometry/Primitives/MjCylinder.h"
+#include "MuJoCo/Components/Bodies/MjWorldBody.h"
+#include "Misc/Paths.h"
 
 #include "MuJoCo/Components/Geometry/MjGeom.h"
 #include "MuJoCo/Components/Sensors/MjCamera.h"
@@ -19,6 +34,16 @@ using namespace URSoccerLab;
 UURSSceneConfigComponent::UURSSceneConfigComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(
+		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/SM_RuntimeField"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(
+		TEXT("/Game/URSoccerLab/Scenes/SoccerField/Runtime/MI_RuntimeField"));
+	RuntimeFieldMesh = Plane.Object;
+	RuntimeFieldMaterial = Material.Object;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> White(TEXT("/Engine/BasicShapes/BasicShapeMaterial"));
+	GoalCylinderMesh = Cylinder.Object;
+	GoalMaterial = White.Object;
 }
 
 void UURSSceneConfigComponent::BeginPlay()
@@ -65,7 +90,23 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		return false;
 	}
 
+    // Validate all packages before changing the active scene.
+    TMap<FString,TSharedPtr<FExternalRobotPackage>> Packages;
+    for (const auto& Spawn:Config.Robots)
+    {
+        if (Packages.Contains(Spawn.Type)) continue;
+        const FString& Path=Config.RobotTypes.FindChecked(Spawn.Type);
+        FString Absolute=FPaths::ConvertRelativePathToFull(FPaths::IsRelative(Path)?FPaths::Combine(Config.SourceDirectory,Path):Path);
+        auto Package=FExternalRobotLoader::Load(Absolute,OutError);
+        if (!Package) return false;
+        if (Package->Id!=Spawn.Type) { OutError=TEXT("robot manifest id must match scene type: ")+Spawn.Type; return false; }
+        for (const auto& Warning:Package->Warnings) UE_LOG(LogTemp,Warning,TEXT("Robot package %s: %s"),*Spawn.Type,*Warning);
+        Packages.Add(Spawn.Type,Package);
+    }
+    RobotPackages=MoveTemp(Packages);
 	ActiveConfig = Config;
+	if (!ApplyFieldConfig(OutError))
+		return false;
 
 	AActor* Owner = GetOwner();
 	UWorld* World = Owner ? Owner->GetWorld() : nullptr;
@@ -85,6 +126,10 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 		Manager->NetworkManager->bEnableCameraBroadcast = false;
 	}
 
+	if (!ApplyFieldPhysicsConfig(OutError))
+		return false;
+	if (!ApplyGoalsConfig(OutError))
+		return false;
 	DestroyConfiguredArticulations();
 
 	TSet<FString> NewActorIds;
@@ -159,6 +204,7 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
 	UE_LOG(LogTemp, Log, TEXT("URSoccerLab scene config applied: %d robot(s), %d object(s)."),
 		SpawnedRobots.Num(), SpawnedObjects.Num());
 	ApplyRenderConfig();
+	ApplyLightingConfig();
 	ApplyPhysicsConfig();
 	OnSceneConfigApplied.Broadcast();
 	return true;
@@ -204,7 +250,7 @@ bool UURSSceneConfigComponent::SpawnOneObject(
 	}
 
 	const FVector TranslationMeters = Spawn.TranslationMeters.Get(
-		FVector(0.0, 0.0, Type->DefaultBaseHeightM));
+		FVector(0.0, 0.0, Spawn.Physics.bIsSet ? Spawn.Physics.RadiusM : Type->DefaultBaseHeightM));
 	const FQuat RotationXyzw = Spawn.RotationQuatXyzw.Get(FQuat::Identity);
 	double MjPos[3] = {TranslationMeters.X, TranslationMeters.Y, TranslationMeters.Z};
 	const FVector UELocation = MjUtils::MjToUEPosition(MjPos);
@@ -222,6 +268,68 @@ bool UURSSceneConfigComponent::SpawnOneObject(
 		return false;
 	}
 
+	if (Spawn.Physics.bIsSet)
+	{
+		TArray<UMjSphere *> Spheres;
+		Articulation->GetComponents(Spheres);
+		if (Spheres.Num() != 1)
+		{
+			Articulation->Destroy();
+			OutError = TEXT("soccer_ball requires exactly one sphere");
+			return false;
+		}
+		auto *Sphere = Spheres[0];
+		const auto &P = Spawn.Physics;
+		Sphere->bOverride_size = true;
+		Sphere->SetRelativeScale3D(FVector(2.0 * P.RadiusM));
+		Sphere->mass = P.MassKg;
+		Sphere->bOverride_mass = true;
+		Sphere->friction = P.Friction;
+		Sphere->bOverride_friction = true;
+		Sphere->solref = P.Solref;
+		Sphere->bOverride_solref = true;
+		TArray<UStaticMeshComponent *> Meshes;
+		Articulation->GetComponents(Meshes);
+		for (auto *Mesh : Meshes)
+			if (Mesh->GetStaticMesh() &&
+				Mesh->GetStaticMesh()->GetPathName().StartsWith(TEXT("/Game/URSoccerLab/Objects/soccer_ball/")))
+				Mesh->SetRelativeScale3D(Mesh->GetRelativeScale3D() * (P.RadiusM / 0.075));
+		UE_LOG(LogTemp, Log, TEXT("URS ball '%s': radius=%g m mass=%g kg friction=%g,%g,%g solref=%g,%g"),
+			   *Spawn.ActorId, P.RadiusM, P.MassKg, P.Friction[0], P.Friction[1], P.Friction[2], P.Solref[0],
+			   P.Solref[1]);
+	}
+	if (Spawn.Visual.IsSet())
+	{
+		FFieldTextures Textures;
+		if (!RuntimeFieldMaterial || !FFieldTextures::Load(Spawn.Visual.GetValue(), ActiveConfig.SourceDirectory, Textures, OutError, false))
+		{
+			if (!RuntimeFieldMaterial) OutError = TEXT("missing generic runtime PBR material");
+			Articulation->Destroy();
+			return false;
+		}
+		TArray<UStaticMeshComponent*> Meshes;
+		Articulation->GetComponents(Meshes);
+		int32 Applied = 0;
+		for (auto* Mesh : Meshes)
+		{
+			if (!Mesh->GetStaticMesh() || !Mesh->GetStaticMesh()->GetPathName().StartsWith(TEXT("/Game/URSoccerLab/Objects/soccer_ball/"))) continue;
+			for (int32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
+			{
+				Mesh->SetMaterial(Slot, RuntimeFieldMaterial);
+				auto* Material = Mesh->CreateDynamicMaterialInstance(Slot);
+				Textures.Apply(Material, Spawn.Visual.GetValue());
+				++Applied;
+			}
+		}
+		if (!Applied)
+		{
+			OutError = TEXT("soccer_ball has no visual mesh material slots");
+			Articulation->Destroy();
+			return false;
+		}
+		UE_LOG(LogTemp, Log, TEXT("URS ball '%s': external PBR applied to %d material slots; base_color=%s"),
+			*Spawn.ActorId, Applied, *Spawn.Visual.GetValue().BaseColorMap);
+	}
 	Articulation->ActorId = Spawn.ActorId;
 #if WITH_EDITOR
 	Articulation->SetActorLabel(Spawn.ActorId);
@@ -270,23 +378,12 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	const URSoccerLab::FURSRobotSpawn& Spawn,
 	FString& OutError)
 {
-	const URSoccerLab::FURSRobotType* Type = URSoccerLab::FURSRobotTypeRegistry::Get().Find(Spawn.Type);
-	if (!Type)
-	{
-		OutError = FString::Printf(TEXT("unknown robot type '%s'"), *Spawn.Type);
-		return false;
-	}
-
-	const FString GeneratedClassPath = Type->BlueprintAssetPath + TEXT("_C");
-	TSubclassOf<AActor> BlueprintClass = LoadClass<AActor>(nullptr, *GeneratedClassPath);
-	if (!BlueprintClass)
-	{
-		OutError = FString::Printf(TEXT("failed to load blueprint class %s"), *GeneratedClassPath);
-		return false;
-	}
+    const auto* PackagePtr=RobotPackages.Find(Spawn.Type);
+    if (!PackagePtr) { OutError=TEXT("unloaded robot package: ")+Spawn.Type; return false; }
+    const auto& Package=**PackagePtr;
 
 	const FVector TranslationMeters = Spawn.TranslationMeters.Get(
-		FVector(0.0, 0.0, Type->DefaultBaseHeightM));
+		FVector(0.0, 0.0, Package.DefaultBaseHeightM));
 	const FQuat RotationXyzw = Spawn.RotationQuatXyzw.Get(FQuat::Identity);
 
 	double MjPos[3] = {TranslationMeters.X, TranslationMeters.Y, TranslationMeters.Z};
@@ -299,8 +396,8 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	FActorSpawnParameters Params;
 	Params.Name = FName(*Spawn.ActorId);
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AMjArticulation* Articulation = Manager->GetWorld()->SpawnActor<AMjArticulation>(
-		BlueprintClass, UELocation, UERotator, Params);
+	AMjArticulation* Articulation = Manager->GetWorld()->SpawnActor<AURSExternalRobot>(
+		AURSExternalRobot::StaticClass(), UELocation, UERotator, Params);
 	if (!Articulation)
 	{
 		OutError = FString::Printf(TEXT("SpawnActor returned null for actor_id '%s'"), *Spawn.ActorId);
@@ -320,6 +417,15 @@ bool UURSSceneConfigComponent::SpawnOneRobot(
 	Articulation->SetActorLabel(Spawn.ActorId);
 #endif
 
+    if (!FExternalRobotLoader::Populate(CastChecked<AURSExternalRobot>(Articulation),Package,OutError))
+    { Articulation->Destroy(); return false; }
+    // Keep the configured camera channel names; MJCF binding names remain intact.
+    TArray<UMjCamera*> ExternalCameras; Articulation->GetComponents<UMjCamera>(ExternalCameras);
+    for (UMjCamera* Camera:ExternalCameras)
+    {
+        if (Camera->MjName==Package.LeftCamera) Camera->Rename(*ActiveConfig.Vision.LeftCamera);
+        else if (Camera->MjName==Package.RightCamera) Camera->Rename(*ActiveConfig.Vision.RightCamera);
+    }
 	ConfigureRobotCameras(Articulation, Spawn.ActorId);
 	HideImportedFieldGeoms(Articulation);
 
@@ -347,6 +453,59 @@ bool UURSSceneConfigComponent::GetInitialPose(
 	return true;
 }
 
+void UURSSceneConfigComponent::ConfigureCameraEffects(FPostProcessSettings& Settings, double RateHz) const
+{
+	const auto& R = ActiveConfig.Render;
+	int32 MotionBlurEnabled = R.bIsSet ? int32(R.bMotionBlur) : 1;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlur="), MotionBlurEnabled);
+
+	float MotionBlurAmount = R.MotionBlurAmount;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurAmount="), MotionBlurAmount);
+	MotionBlurAmount = FMath::Clamp(MotionBlurAmount, 0.0f, 1.0f);
+
+	float MotionBlurMax = R.MotionBlurMaxPercent;
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurMax="), MotionBlurMax);
+	MotionBlurMax = FMath::Clamp(MotionBlurMax, 0.0f, 100.0f);
+
+	int32 MotionBlurTargetFps = R.MotionBlurTargetFps > 0 ? R.MotionBlurTargetFps : FMath::Clamp(FMath::RoundToInt(RateHz), 1, 120);
+	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurTargetFPS="), MotionBlurTargetFps);
+	MotionBlurTargetFps = FMath::Clamp(MotionBlurTargetFps, 0, 120);
+
+ if (R.bIsSet && !R.bEnable) MotionBlurEnabled = 0;
+ Settings.bOverride_MotionBlurAmount = true;
+ Settings.MotionBlurAmount = MotionBlurEnabled ? MotionBlurAmount : 0.0f;
+ Settings.bOverride_MotionBlurMax = true;
+ Settings.MotionBlurMax = MotionBlurMax;
+ Settings.bOverride_MotionBlurTargetFPS = true;
+ Settings.MotionBlurTargetFPS = MotionBlurTargetFps;
+ Settings.bOverride_MotionBlurPerObjectSize = true;
+ Settings.MotionBlurPerObjectSize = 0.0f;
+ if (R.bIsSet)
+ {
+  // Captures inherit the hall's volume, which explicitly enables auto exposure.
+  // Override it on every camera so illumination changes remain measurable.
+  Settings.bOverride_AutoExposureMethod = true;
+  Settings.AutoExposureMethod = R.bAutoExposure ? AEM_Histogram : AEM_Manual;
+  Settings.bOverride_AutoExposureBias = true;
+  Settings.AutoExposureBias = R.ExposureCompensation;
+  if (!R.bAutoExposure)
+  {
+   Settings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
+   Settings.AutoExposureApplyPhysicalCameraExposure = false;
+  }
+  Settings.bOverride_FilmGrainIntensity = true;
+  Settings.FilmGrainIntensity = R.bEnable ? R.FilmGrainIntensity : 0.0f;
+  Settings.bOverride_FilmGrainIntensityShadows = true;
+  Settings.FilmGrainIntensityShadows = R.FilmGrainShadows;
+  Settings.bOverride_FilmGrainIntensityMidtones = true;
+  Settings.FilmGrainIntensityMidtones = R.FilmGrainMidtones;
+  Settings.bOverride_FilmGrainIntensityHighlights = true;
+  Settings.FilmGrainIntensityHighlights = R.FilmGrainHighlights;
+  Settings.bOverride_FilmGrainTexelSize = true;
+  Settings.FilmGrainTexelSize = R.FilmGrainTexelSize;
+ }
+}
+
 void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulation, const FString& ActorId)
 {
 	if (!Articulation)
@@ -354,22 +513,14 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		return;
 	}
 
-	int32 MotionBlurEnabled = 1;
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlur="), MotionBlurEnabled);
-
-	float MotionBlurAmount = 0.5f;
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurAmount="), MotionBlurAmount);
-	MotionBlurAmount = FMath::Clamp(MotionBlurAmount, 0.0f, 1.0f);
-
-	float MotionBlurMax = 5.0f;
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurMax="), MotionBlurMax);
-	MotionBlurMax = FMath::Clamp(MotionBlurMax, 0.0f, 100.0f);
-
-	double CameraRateHz = ActiveConfig.Vision.Rgb.RateHz;
-	FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
-	int32 MotionBlurTargetFps = FMath::Clamp(FMath::RoundToInt(CameraRateHz), 1, 120);
-	FParse::Value(FCommandLine::Get(), TEXT("URSMotionBlurTargetFPS="), MotionBlurTargetFps);
-	MotionBlurTargetFps = FMath::Clamp(MotionBlurTargetFps, 0, 120);
+ double CameraRateHz = ActiveConfig.CameraFreq > 0 ? ActiveConfig.CameraFreq : ActiveConfig.Vision.Rgb.RateHz;
+ FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
+ FPostProcessSettings Effects;
+ ConfigureCameraEffects(Effects, CameraRateHz);
+ const bool MotionBlurEnabled = Effects.MotionBlurAmount > 0;
+ const float MotionBlurAmount = Effects.MotionBlurAmount;
+ const float MotionBlurMax = Effects.MotionBlurMax;
+ const int32 MotionBlurTargetFps = Effects.MotionBlurTargetFPS;
 
 	TArray<UMjCamera*> Cameras;
 	Articulation->GetComponents<UMjCamera>(Cameras);
@@ -452,14 +603,7 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 			Capture->ShowFlags.SetMotionBlur(MotionBlurEnabled != 0);
 
 			FPostProcessSettings& PostProcess = Capture->PostProcessSettings;
-			PostProcess.bOverride_MotionBlurAmount = true;
-			PostProcess.MotionBlurAmount = MotionBlurEnabled != 0 ? MotionBlurAmount : 0.0f;
-			PostProcess.bOverride_MotionBlurMax = true;
-			PostProcess.MotionBlurMax = MotionBlurMax;
-			PostProcess.bOverride_MotionBlurTargetFPS = true;
-			PostProcess.MotionBlurTargetFPS = MotionBlurTargetFps;
-			PostProcess.bOverride_MotionBlurPerObjectSize = true;
-			PostProcess.MotionBlurPerObjectSize = 0.0f;
+			ConfigureCameraEffects(PostProcess, CameraRateHz);
 		}
 		if (Camera->resolution.Num() < 2)
 		{
@@ -537,23 +681,71 @@ void UURSSceneConfigComponent::ApplyPhysicsConfig()
 				break;
 			}
 		}
-		if ((StateHz > 0.0 || CamHz > 0.0) && GetOwner())
+		if (GetOwner())
 		{
-			if (auto* T = GetOwner()->FindComponentByClass<UURSTcpTransportComponent>())
+			if (StateHz > 0.0)
 			{
-				if (StateHz > 0.0)
-				{
-					T->StateRateHz = StateHz;
-					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] state rate = %.0f Hz"), StateHz);
-				}
-				if (CamHz > 0.0)
-				{
-					T->CameraRateHz = CamHz;
-					UE_LOG(LogTemp, Log, TEXT("[URSoccerLab] camera rate = %.0f Hz"), CamHz);
-				}
+				if (auto* Transport = GetOwner()->FindComponentByClass<UURSTcpTransportComponent>())
+					Transport->StateRateHz = StateHz;
+			}
+			if (CamHz > 0.0)
+			{
+				if (auto* Camera = GetOwner()->FindComponentByClass<UURSCameraStreamComponent>())
+					Camera->SetCameraRate(CamHz);
 			}
 		}
 	});
+}
+
+void UURSSceneConfigComponent::ApplyLightingConfig()
+{
+ if (!ActiveConfig.Lighting.bIsSet || !GetWorld()) return;
+ int32 Count = 0;
+ int32 Surfaces = 0;
+ for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+ {
+  if (It->ActorHasTag(TEXT("URS_EmissiveLampSurface")) && ActiveConfig.Lighting.EmissiveIntensity.IsSet())
+  {
+   TArray<UStaticMeshComponent*> Meshes;
+   It->GetComponents(Meshes);
+   for (auto* Mesh : Meshes)
+   {
+    for (int32 Index = 0; Index < Mesh->GetNumMaterials(); ++Index)
+    {
+     auto* Material = Mesh->GetMaterial(Index);
+     FLinearColor Previous;
+     if (!Material || !Material->GetVectorParameterValue(FMaterialParameterInfo(TEXT("EmissiveFactor")), Previous))
+     {
+      UE_LOG(LogTemp, Warning, TEXT("[URS Lighting] %s material %d lacks EmissiveFactor."), *It->GetName(), Index);
+      continue;
+     }
+     auto* Dynamic = Cast<UMaterialInstanceDynamic>(Material);
+     if (!Dynamic) Dynamic = Mesh->CreateDynamicMaterialInstance(Index);
+     if (Dynamic)
+     {
+      const float Intensity = ActiveConfig.Lighting.EmissiveIntensity.GetValue();
+      Dynamic->SetVectorParameterValue(TEXT("EmissiveFactor"), FLinearColor(Intensity, Intensity, Intensity, 1));
+      Dynamic->SetScalarParameterValue(TEXT("EmissiveStrength"), 1.0f);
+      ++Surfaces;
+     }
+    }
+    // Recreate the proxy so config reapplication refreshes Lumen's cached emission.
+    Mesh->MarkRenderStateDirty();
+   }
+  }
+  if (!It->ActorHasTag(TEXT("URS_AutoEmissiveLamp"))) continue;
+  TArray<UPointLightComponent*> Lights;
+  It->GetComponents(Lights);
+  for (auto* Light : Lights)
+  {
+   Light->SetIntensityUnits(ELightUnits::Lumens);
+   Light->SetIntensity(ActiveConfig.Lighting.LampIntensityLumens);
+   Light->SetSourceRadius(ActiveConfig.Lighting.SourceRadiusCm);
+   Light->SetSpecularScale(ActiveConfig.Lighting.SpecularScale);
+   ++Count;
+  }
+ }
+ UE_LOG(LogTemp, Log, TEXT("[URS Lighting] %d auxiliary lamps at %.3f lumens each; %d emissive surfaces configured."), Count, ActiveConfig.Lighting.LampIntensityLumens, Surfaces);
 }
 
 void UURSSceneConfigComponent::ApplyRenderConfig()
@@ -592,15 +784,17 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 	// settable toggle for hardware-accelerated Lumen traces.
 	Exec(R.bHardwareRayTracing ? TEXT("r.Lumen.HardwareRayTracing 1") : TEXT("r.Lumen.HardwareRayTracing 0"));
 
-	int32 AAMethod = 3; // tsr
-	if (R.AntiAliasing == TEXT("none")) AAMethod = 0;
-	else if (R.AntiAliasing == TEXT("fxaa")) AAMethod = 1;
-	else if (R.AntiAliasing == TEXT("taa")) AAMethod = 2;
+	int32 AAMethod = AAM_TSR;
+	if (R.AntiAliasing == TEXT("none")) AAMethod = AAM_None;
+	else if (R.AntiAliasing == TEXT("fxaa")) AAMethod = AAM_FXAA;
+	else if (R.AntiAliasing == TEXT("taa")) AAMethod = AAM_TemporalAA;
 	Exec(*FString::Printf(TEXT("r.AntiAliasingMethod %d"), AAMethod));
 
 	Exec(*FString::Printf(TEXT("r.ScreenPercentage %g"), R.ScreenPercentage));
 	Exec(*FString::Printf(TEXT("r.ShadowQuality %d"), R.ShadowQuality));
-	Exec(R.bMotionBlur ? TEXT("r.MotionBlurQuality 4") : TEXT("r.MotionBlurQuality 0"));
+	FPostProcessSettings Effects;
+	ConfigureCameraEffects(Effects, ActiveConfig.Vision.Rgb.RateHz);
+	Exec(Effects.MotionBlurAmount > 0 ? TEXT("r.MotionBlurQuality 4") : TEXT("r.MotionBlurQuality 0"));
 	Exec(R.bAutoExposure ? TEXT("r.DefaultFeature.AutoExposure 1") : TEXT("r.DefaultFeature.AutoExposure 0"));
 	Exec(*FString::Printf(TEXT("r.EyeAdaptationExposureCompensation %g"), R.ExposureCompensation));
 
@@ -621,4 +815,182 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 		(!bNDisplayOwnsResolution && R.ResolutionX.IsSet() && R.ResolutionY.IsSet())
 			? *FString::Printf(TEXT("%dx%d"), R.ResolutionX.GetValue(), R.ResolutionY.GetValue())
 			: (bNDisplayOwnsResolution ? TEXT("nDisplay atlas") : TEXT("unchanged")));
+}
+
+// Preserve the original static Nanite surface; the pitch image stays external.
+bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
+{
+	const auto &F = ActiveConfig.Field;
+	UWorld *World = GetWorld();
+	if (!World || !RuntimeFieldMesh || !RuntimeFieldMaterial)
+	{
+		OutError = TEXT("runtime field mesh/material is missing");
+		return false;
+	}
+	FFieldTextures Textures;
+	if (!FFieldTextures::Load(F.Visual, ActiveConfig.SourceDirectory, Textures, OutError))
+		return false;
+	const FVector MeshSize = RuntimeFieldMesh->GetBoundingBox().GetSize();
+	if (MeshSize.X <= 0 || MeshSize.Y <= 0)
+	{
+		OutError = TEXT("runtime field mesh has invalid bounds");
+		return false;
+	}
+	if (!RuntimeFieldSurface)
+	{
+		RuntimeFieldSurface = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("URSRuntimeField"));
+		GetOwner()->AddInstanceComponent(RuntimeFieldSurface);
+	}
+	// Configure while unregistered, including on reload: changing a registered
+	// static primitive's transform is unsupported and can leave stale render data.
+	if (RuntimeFieldSurface->IsRegistered())
+		RuntimeFieldSurface->UnregisterComponent();
+	RuntimeFieldSurface->SetMobility(EComponentMobility::Static);
+	RuntimeFieldSurface->SetStaticMesh(RuntimeFieldMesh);
+	RuntimeFieldSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	RuntimeFieldSurface->SetWorldLocation(FVector::ZeroVector);
+	RuntimeFieldSurface->SetWorldRotation(FRotator::ZeroRotator);
+	RuntimeFieldSurface->SetWorldScale3D(
+		FVector((F.LengthM + 2 * F.BorderXM) * 100 / MeshSize.X,
+				(F.WidthM + 2 * F.BorderYM) * 100 / MeshSize.Y, 1));
+	RuntimeFieldSurface->SetMaterial(0, RuntimeFieldMaterial);
+	auto *Material = RuntimeFieldSurface->CreateAndSetMaterialInstanceDynamic(0);
+	// Preserve the existing glTF shader and field detail tiling.
+	Textures.Apply(Material, F.Visual, FLinearColor(0, 0,
+		(F.LengthM + 2 * F.BorderXM) / F.Visual.DetailTileSizeM,
+		(F.WidthM + 2 * F.BorderYM) / F.Visual.DetailTileSizeM));
+	RuntimeFieldSurface->RegisterComponent();
+	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g base_color=%s detail_tile=%g m"),
+		F.LengthM, F.WidthM, F.BorderXM, F.BorderYM, *F.Visual.BaseColorMap, F.Visual.DetailTileSizeM);
+	return true;
+}
+
+// Configure the existing hall ground before model compilation; create one only
+// for worlds that lack the hall's ground actor (e.g. standalone scene tests).
+bool UURSSceneConfigComponent::ApplyFieldPhysicsConfig(FString& OutError)
+{
+	UMjPlane* Ground = nullptr;
+	for (TActorIterator<AMjArticulation> It(GetWorld()); It; ++It)
+	{
+		TArray<UMjPlane*> Planes;
+		It->GetComponents(Planes);
+		for (UMjPlane* Plane : Planes)
+			if (Plane->MjName == TEXT("field_ground"))
+			{
+				if (Ground) { OutError = TEXT("multiple field_ground planes found"); return false; }
+				Ground = Plane;
+			}
+	}
+	if (!Ground)
+	{
+		RuntimeGround = GetWorld()->SpawnActor<AMjArticulation>();
+		if (!RuntimeGround) { OutError = TEXT("could not spawn field ground"); return false; }
+		RuntimeGround->ActorId = TEXT("__urs_ground");
+		auto* Root = NewObject<UMjWorldBody>(RuntimeGround, TEXT("FieldWorldBody"));
+		RuntimeGround->AddInstanceComponent(Root);
+		RuntimeGround->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Ground = NewObject<UMjPlane>(RuntimeGround, TEXT("field_ground"));
+		RuntimeGround->AddInstanceComponent(Ground);
+		Ground->SetupAttachment(Root);
+		Ground->MjName = TEXT("field_ground");
+		Ground->bOverride_Type = true; Ground->Type = EMjGeomType::Plane;
+		Ground->bOverride_Pos = true; Ground->Pos = FVector::ZeroVector;
+		Ground->bOverride_Quat = true; Ground->Quat = FQuat::Identity;
+		Ground->bOverride_contype = true; Ground->contype = 1;
+		Ground->bOverride_conaffinity = true; Ground->conaffinity = 1;
+		Ground->bOverride_group = true; Ground->group = 3;
+		Ground->RegisterComponent();
+	}
+	const auto& P = ActiveConfig.Field.Physics;
+	Ground->bOverride_friction = true; Ground->friction = P.Friction;
+	Ground->bOverride_condim = true; Ground->condim = P.Condim;
+	Ground->bOverride_solref = true; Ground->solref = P.Solref;
+	Ground->bOverride_solimp = true; Ground->solimp = P.Solimp;
+	// MuJoCo planes are infinite; size controls only their debug visualization.
+	Ground->bOverride_size = true;
+	Ground->size = {float((ActiveConfig.Field.LengthM + 2 * ActiveConfig.Field.BorderXM) / 2),
+		float((ActiveConfig.Field.WidthM + 2 * ActiveConfig.Field.BorderYM) / 2), 0.1f};
+	Ground->SetGeomVisibility(false);
+	UE_LOG(LogTemp, Log, TEXT("URS field physics: friction=%g,%g,%g condim=%d solref=%g,%g"),
+		P.Friction[0], P.Friction[1], P.Friction[2], P.Condim, P.Solref[0], P.Solref[1]);
+	return true;
+}
+
+// Static worldbody geoms participate in the same MuJoCo model as robots and ball.
+bool UURSSceneConfigComponent::ApplyGoalsConfig(FString &OutError)
+{
+	if (!GoalCylinderMesh || !GoalMaterial)
+	{
+		OutError = TEXT("goal cylinder mesh/material is missing");
+		return false;
+	}
+	if (RuntimeGoals)
+		RuntimeGoals->Destroy();
+	RuntimeGoals = GetWorld()->SpawnActor<AMjArticulation>();
+	if (!RuntimeGoals)
+	{
+		OutError = TEXT("could not spawn goals");
+		return false;
+	}
+	RuntimeGoals->ActorId = TEXT("__urs_goals");
+	auto *Root = NewObject<UMjWorldBody>(RuntimeGoals, TEXT("GoalWorldBody"));
+	RuntimeGoals->AddInstanceComponent(Root);
+	RuntimeGoals->SetRootComponent(Root);
+	Root->RegisterComponent();
+	const auto &G = ActiveConfig.Goals;
+	const double PostHeight = G.HeightM + 2 * G.PostRadiusM;
+	for (int32 GoalIndex = 0; GoalIndex < 2; ++GoalIndex)
+	{
+		const auto &Pose = G.Poses[GoalIndex];
+		double Position[3] = {Pose.TranslationMeters.X, Pose.TranslationMeters.Y, Pose.TranslationMeters.Z};
+		const FQuat Yaw(FVector::UpVector, FMath::DegreesToRadians(Pose.YawDeg));
+		double Quaternion[4] = {Yaw.W, Yaw.X, Yaw.Y, Yaw.Z};
+		const FTransform GoalTransform(MjUtils::MjToUERotation(Quaternion), MjUtils::MjToUEPosition(Position));
+		for (int32 Part = 0; Part < 3; ++Part)
+		{
+			const bool Crossbar = Part == 2;
+			const double Length = Crossbar ? G.WidthM + 4 * G.PostRadiusM : PostHeight;
+			const FVector LocalCenter(0, Crossbar ? 0 : (Part == 0 ? -1 : 1) * (G.WidthM / 2 + G.PostRadiusM) * 100,
+									  (Crossbar ? G.HeightM + G.PostRadiusM : PostHeight / 2) * 100);
+			const FQuat Rotation =
+				GoalTransform.GetRotation() * (Crossbar ? FQuat(FVector::ForwardVector, PI / 2) : FQuat::Identity);
+			const FVector Center = GoalTransform.TransformPosition(LocalCenter);
+			const FVector Scale(2 * G.PostRadiusM, 2 * G.PostRadiusM, Length);
+			const FString Name = FString::Printf(TEXT("goal_%d_%s"), GoalIndex,
+												 Crossbar	 ? TEXT("crossbar")
+												 : Part == 0 ? TEXT("left_post")
+															 : TEXT("right_post"));
+			auto *Geom = NewObject<UMjCylinder>(RuntimeGoals, *Name);
+			RuntimeGoals->AddInstanceComponent(Geom);
+			Geom->SetupAttachment(Root);
+			Geom->MjName = Name;
+			Geom->SetRelativeTransform(FTransform(Rotation, Center, Scale));
+			Geom->Pos = Center;
+			Geom->bOverride_Pos = true;
+			Geom->Quat = Rotation;
+			Geom->bOverride_Quat = true;
+			Geom->bOverride_size = true;
+			Geom->contype = 1;
+			Geom->bOverride_contype = true;
+			Geom->conaffinity = 1;
+			Geom->bOverride_conaffinity = true;
+			Geom->group = 3;
+			Geom->bOverride_group = true;
+			Geom->RegisterComponent();
+			Geom->SetGeomVisibility(false);
+			// Keep visuals independent of hidden MuJoCo debug primitives.
+			auto *Visual = NewObject<UStaticMeshComponent>(RuntimeGoals, *(Name + TEXT("_visual")));
+			RuntimeGoals->AddInstanceComponent(Visual);
+			Visual->SetupAttachment(Root);
+			Visual->SetStaticMesh(GoalCylinderMesh);
+			Visual->SetMaterial(0, GoalMaterial);
+			Visual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Visual->SetRelativeTransform(FTransform(Rotation, Center, Scale));
+			Visual->RegisterComponent();
+		}
+	}
+	UE_LOG(LogTemp, Log, TEXT("URS goals: two goals, six collision cylinders; clear width=%g height=%g radius=%g"),
+		   G.WidthM, G.HeightM, G.PostRadiusM);
+	return true;
 }

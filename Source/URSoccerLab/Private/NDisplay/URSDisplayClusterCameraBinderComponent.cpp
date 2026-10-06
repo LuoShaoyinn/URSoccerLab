@@ -235,6 +235,39 @@ bool UURSDisplayClusterCameraBinderComponent::TryBindCameras()
 			*ViewportId, *Owner->GetName(), *Source->MjName);
 	}
 
+	// Guest slots use the same camera policy, post-process settings and atlas.
+	// Older external layouts remain valid for robots, but cannot admit guests.
+	const auto* SceneConfig = GetOwner()->FindComponentByClass<UURSSceneConfigComponent>();
+	const auto Guest = SceneConfig ? SceneConfig->GetActiveConfig().GuestInspector : URSoccerLab::FURSGuestInspectorConfig();
+	for (int32 Index = 0; Guest.bEnabled && Index < Guest.MaxGuests; ++Index)
+	{
+		const FString ViewportId = FString::Printf(TEXT("guest_%02d"), Index);
+		auto* Viewport = RenderManager->GetViewportManager()->FindViewport(ViewportId);
+		if (!Viewport) break;
+		auto* Proxy = NewObject<UCameraComponent>(GetOwner());
+		GetOwner()->AddInstanceComponent(Proxy);
+		Proxy->FieldOfView = Guest.FovDegrees;
+		Proxy->AspectRatio = float(Guest.Width) / Guest.Height;
+		Proxy->PostProcessSettings = CameraProxies[0]->PostProcessSettings;
+		if (SceneConfig) SceneConfig->ConfigureCameraEffects(Proxy->PostProcessSettings, Guest.Rgb.RateHz);
+		Proxy->PostProcessBlendWeight = CameraProxies[0]->PostProcessBlendWeight;
+		Proxy->SetWorldLocation(FVector(0, 0, 100000));
+		Proxy->RegisterComponent();
+		FDisplayClusterProjectionCameraPolicySettings Settings;
+		Settings.FOVMultiplier = 1.0f;
+		Settings.bCameraOverrideDefaults = true;
+		if (!IDisplayClusterProjection::Get().CameraPolicySetCamera(
+			Viewport->GetProjectionPolicy(), Proxy, Settings))
+		{
+			Proxy->DestroyComponent();
+			break;
+		}
+		GuestProxies.Add(Proxy);
+		CameraRects.Add(CameraKey(TEXT("guest"), FString::FromInt(Index)),
+			Viewport->GetRenderSettings().Rect);
+	}
+	UE_LOG(LogTemp, Display, TEXT("[URS nDisplay] reserved %d guest camera slots."), GuestProxies.Num());
+
 	// ALL cameras bound successfully — NOW safe to disable the duplicate
 	// SceneCaptures so nDisplay owns rendering exclusively.
 	for (UMjCamera* Camera : AllCameras)
@@ -446,4 +479,40 @@ void UURSDisplayClusterCameraBinderComponent::OnDisplayClusterBackBufferReady_Re
 	FreeSlot->Size = Extent;
 	FreeSlot->bInFlight = true;
 	++OutstandingReadbacks;
+}
+
+bool UURSDisplayClusterCameraBinderComponent::SetGuestPose(
+	uint64 Session, const FVector& Position, const FQuat& Rotation)
+{
+	if (!bBound) return false;
+	int32* Slot = GuestSlots.Find(Session);
+	if (!Slot)
+	{
+		for (int32 Index = 0; Index < GuestProxies.Num(); ++Index)
+		{
+			bool Used = false;
+			for (const auto& Pair : GuestSlots) Used |= Pair.Value == Index;
+			if (!Used) { GuestSlots.Add(Session, Index); break; }
+		}
+		Slot = GuestSlots.Find(Session);
+	}
+	if (!Slot) return false;
+	GuestProxies[*Slot]->SetWorldLocationAndRotation(Position, Rotation);
+	return true;
+}
+
+void UURSDisplayClusterCameraBinderComponent::RemoveGuest(uint64 Session)
+{
+	if (const int32* Slot = GuestSlots.Find(Session))
+		GuestProxies[*Slot]->SetWorldLocation(FVector(0, 0, 100000));
+	GuestSlots.Remove(Session);
+}
+
+bool UURSDisplayClusterCameraBinderComponent::CopyGuestFrame(uint64 Session,
+	uint64 MinimumSequence, TArray<FColor>& Pixels, int32& Width, int32& Height,
+	uint64& Sequence) const
+{
+	const int32* Slot = GuestSlots.Find(Session);
+	return Slot && CopyRgbFrame(TEXT("guest"), FString::FromInt(*Slot),
+		MinimumSequence, Pixels, Width, Height, Sequence);
 }

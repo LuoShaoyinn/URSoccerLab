@@ -9,9 +9,9 @@ class FRHICommandListImmediate;
 class FViewport;
 
 /**
- * Production adapter that binds URLab MuJoCo cameras to nDisplay camera-policy
+ * Production adapter that binds robot and floating guest cameras to nDisplay camera-policy
  * viewports and asynchronously reads the composited atlas back once per sensor
- * sample. The TCP transport then slices named camera images from that atlas.
+ * sample. Camera streams slice named images and submit them to the shared encoder.
  */
 UCLASS(ClassGroup = (URS), meta = (BlueprintSpawnableComponent))
 class URSOCCERLAB_API UURSDisplayClusterCameraBinderComponent : public UActorComponent
@@ -24,6 +24,10 @@ public:
 
 	bool IsReady() const { return bBound; }
 	bool RequestRgbFrame();
+	bool SetGuestPose(uint64 Session, const FVector& Position, const FQuat& Rotation);
+	void RemoveGuest(uint64 Session);
+	bool CopyGuestFrame(uint64 Session, uint64 MinimumSequence, TArray<FColor>& Pixels,
+		int32& Width, int32& Height, uint64& Sequence) const;
 	uint64 GetLatestRgbFrameSequence() const { return LatestAtlasSequence; }
 	bool CopyRgbFrame(
 		const FString& ActorId,
@@ -59,6 +63,10 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UCameraComponent>> CameraProxies;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UCameraComponent>> GuestProxies;
+	TMap<uint64, int32> GuestSlots;
 
 	TArray<TSharedPtr<FReadbackSlot, ESPMode::ThreadSafe>> ReadbackSlots;
 	TQueue<FCompletedAtlas, EQueueMode::Mpsc> CompletedAtlases;

@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -10,6 +11,128 @@ namespace URSoccerLab
 {
 namespace
 {
+bool ReadPBRVisual(const TSharedPtr<FJsonObject>& Visual, FURSPBRVisualConfig& V, FString& Error)
+{
+	if (!Visual->HasField(TEXT("base_color_map")))
+	{ Error = TEXT("visual.base_color_map is required"); return false; }
+	for (const auto& Item : {TPair<const TCHAR*, FString*>(TEXT("base_color_map"), &V.BaseColorMap),
+		{TEXT("normal_map"), &V.NormalMap}, {TEXT("roughness_map"), &V.RoughnessMap},
+		{TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
+	{
+		if (Visual->HasField(Item.Key) &&
+			(Visual->TryGetField(Item.Key)->Type != EJson::String || !Visual->TryGetStringField(Item.Key, *Item.Value) || Item.Value->IsEmpty()))
+		{
+			Error = FString::Printf(TEXT("visual.%s must be a nonempty path string"), Item.Key);
+			return false;
+		}
+	}
+	for (const auto& Item : {TPair<const TCHAR*, double*>(TEXT("normal_strength"), &V.NormalStrength), {TEXT("roughness"), &V.Roughness}, {TEXT("metallic"), &V.Metallic}})
+	{
+		if (Visual->HasField(Item.Key) &&
+			(Visual->TryGetField(Item.Key)->Type != EJson::Number || !Visual->TryGetNumberField(Item.Key, *Item.Value)))
+		{
+			Error = FString::Printf(TEXT("visual.%s must be numeric"), Item.Key);
+			return false;
+		}
+	}
+	if (Visual->HasField(TEXT("normal_format")))
+	{
+		FString Format;
+		if (!Visual->TryGetStringField(TEXT("normal_format"), Format) || (Format != TEXT("directx") && Format != TEXT("opengl")))
+		{
+			Error = TEXT("visual.normal_format must be directx or opengl");
+			return false;
+		}
+		V.bNormalOpenGL = Format == TEXT("opengl");
+	}
+	return true;
+}
+
+bool ValidPBRVisual(const FURSPBRVisualConfig& V)
+{
+	return !V.BaseColorMap.IsEmpty() && FMath::IsFinite(V.NormalStrength) && V.NormalStrength >= 0 && V.NormalStrength <= 10 &&
+		FMath::IsFinite(V.Roughness) && V.Roughness >= 0 && V.Roughness <= 1 &&
+		FMath::IsFinite(V.Metallic) && V.Metallic >= 0 && V.Metallic <= 1;
+}
+
+TSharedPtr<FJsonObject> WritePBRVisual(const FURSPBRVisualConfig& V)
+{
+	auto Visual = MakeShared<FJsonObject>();
+	Visual->SetStringField(TEXT("base_color_map"), V.BaseColorMap);
+	for (const auto& Item : {TPair<const TCHAR*, const FString*>(TEXT("normal_map"), &V.NormalMap),
+		{TEXT("roughness_map"), &V.RoughnessMap}, {TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
+		if (!Item.Value->IsEmpty()) Visual->SetStringField(Item.Key, *Item.Value);
+	Visual->SetNumberField(TEXT("normal_strength"), V.NormalStrength);
+	Visual->SetNumberField(TEXT("roughness"), V.Roughness);
+	Visual->SetNumberField(TEXT("metallic"), V.Metallic);
+	Visual->SetStringField(TEXT("normal_format"), V.bNormalOpenGL ? TEXT("opengl") : TEXT("directx"));
+	return Visual;
+}
+
+bool ReadFieldSettings(const TSharedPtr<FJsonObject>& Field, FURSFieldConfig& Out, FString& Error)
+{
+	if (Field->HasField(TEXT("map_image")))
+	{
+		Error = TEXT("field.map_image has moved to field.visual.base_color_map");
+		return false;
+	}
+	const TSharedPtr<FJsonObject>* Visual;
+	if (!Field->TryGetObjectField(TEXT("visual"), Visual) || !(*Visual)->HasField(TEXT("base_color_map")))
+	{
+		Error = TEXT("field.visual with base_color_map is required");
+		return false;
+	}
+	if (!ReadPBRVisual(*Visual, Out.Visual, Error)) return false;
+	if ((*Visual)->HasField(TEXT("detail_tile_size_m")) &&
+		((*Visual)->TryGetField(TEXT("detail_tile_size_m"))->Type != EJson::Number ||
+		 !(*Visual)->TryGetNumberField(TEXT("detail_tile_size_m"), Out.Visual.DetailTileSizeM)))
+	{ Error = TEXT("field.visual.detail_tile_size_m must be numeric"); return false; }
+	if (!Field->HasField(TEXT("physics"))) return true;
+	const TSharedPtr<FJsonObject>* Physics;
+	if (!Field->TryGetObjectField(TEXT("physics"), Physics))
+	{
+		Error = TEXT("field.physics must be an object");
+		return false;
+	}
+	auto& P = Out.Physics;
+	if ((*Physics)->HasField(TEXT("condim")))
+	{
+		double Number;
+		if ((*Physics)->TryGetField(TEXT("condim"))->Type != EJson::Number ||
+			!(*Physics)->TryGetNumberField(TEXT("condim"), Number) ||
+			!(Number == 1 || Number == 3 || Number == 4 || Number == 6))
+		{
+			Error = TEXT("field.physics.condim must be 1, 3, 4 or 6");
+			return false;
+		}
+		P.Condim = int32(Number);
+	}
+	for (const auto& Item : {TPair<const TCHAR*, TArray<float>*>(TEXT("friction"), &P.Friction),
+		{TEXT("solref"), &P.Solref}, {TEXT("solimp"), &P.Solimp}})
+	{
+		if (!(*Physics)->HasField(Item.Key)) continue;
+		const TArray<TSharedPtr<FJsonValue>>* Values;
+		const int32 Count = FCString::Strcmp(Item.Key, TEXT("friction")) == 0 ? 3 : FCString::Strcmp(Item.Key, TEXT("solref")) == 0 ? 2 : 5;
+		if (!(*Physics)->TryGetArrayField(Item.Key, Values) || Values->Num() != Count)
+		{
+			Error = FString::Printf(TEXT("field.physics.%s requires %d numbers"), Item.Key, Count);
+			return false;
+		}
+		Item.Value->Reset();
+		for (const auto& Value : *Values)
+		{
+			double Number;
+			if (Value->Type != EJson::Number || !Value->TryGetNumber(Number) || !FMath::IsFinite(float(Number)))
+			{
+				Error = FString::Printf(TEXT("field.physics.%s requires finite numbers"), Item.Key);
+				return false;
+			}
+			Item.Value->Add(float(Number));
+		}
+	}
+	return true;
+}
+
 bool IsFiniteVec(const FVector& V)
 {
 	return FMath::IsFinite(V.X) && FMath::IsFinite(V.Y) && FMath::IsFinite(V.Z);
@@ -64,6 +187,7 @@ bool ParseVisionMode(const FString& Value, EURSVisionMode& Out)
 
 bool ParseRgbCompression(const FString& Value, EURSRgbCompression& Out)
 {
+	if (Value == TEXT("av1")) { Out = EURSRgbCompression::Av1; return true; }
 	if (Value == TEXT("raw"))
 	{
 		Out = EURSRgbCompression::Raw;
@@ -104,7 +228,7 @@ const TCHAR* VisionModeString(const EURSVisionMode Value)
 
 const TCHAR* RgbCompressionString(const EURSRgbCompression Value)
 {
-	return Value == EURSRgbCompression::Raw ? TEXT("raw") : TEXT("jpeg");
+	return Value == EURSRgbCompression::Av1 ? TEXT("av1") : Value == EURSRgbCompression::Raw ? TEXT("raw") : TEXT("jpeg");
 }
 
 const TCHAR* DepthCompressionString(const EURSDepthCompression Value)
@@ -119,6 +243,64 @@ const TCHAR* DepthCompressionString(const EURSDepthCompression Value)
 	default:
 		return TEXT("zlib_u16_mm");
 	}
+}
+
+bool ReadStreamOptions(const TSharedPtr<FJsonObject>& Obj, FURSRgbStreamConfig& Out, FString& Error)
+{
+ for (const auto& Pair : {TPair<const TCHAR*, double*>(TEXT("rate_hz"), &Out.RateHz),
+                        TPair<const TCHAR*, double*>(TEXT("keyframe_interval_s"), &Out.KeyframeIntervalSeconds)})
+ {
+  if (!Obj->HasField(Pair.Key)) continue;
+  const auto V = Obj->TryGetField(Pair.Key);
+  if (V->Type != EJson::Number || !V->TryGetNumber(*Pair.Value)) { Error = FString(Pair.Key) + TEXT(" must be numeric"); return false; }
+ }
+ if (Obj->HasField(TEXT("bitrate_kbps")))
+ {
+  double N = 0; const auto V = Obj->TryGetField(TEXT("bitrate_kbps"));
+  if (V->Type != EJson::Number || !V->TryGetNumber(N) || !FMath::IsFinite(N) || N < 64 || N > 100000 || N != FMath::TruncToDouble(N))
+  { Error = TEXT("bitrate_kbps must be an integer in [64,100000]"); return false; }
+  Out.BitrateKbps = int32(N);
+ }
+ if (!FMath::IsFinite(Out.RateHz) || Out.RateHz < 1 || Out.RateHz > 120 ||
+     !FMath::IsFinite(Out.KeyframeIntervalSeconds) || Out.KeyframeIntervalSeconds < 0.1 || Out.KeyframeIntervalSeconds > 60)
+ { Error = TEXT("rate_hz must be in [1,120] and keyframe_interval_s in [0.1,60]"); return false; }
+ if (Obj->HasField(TEXT("vulkan_device")) && !Obj->TryGetStringField(TEXT("vulkan_device"), Out.VulkanDevice))
+ { Error = TEXT("vulkan_device must be a string"); return false; }
+ return true;
+}
+
+bool ReadGuestInspector(const TSharedPtr<FJsonObject>& Root, FURSGuestInspectorConfig& Out, FString& Error)
+{
+ if (!Root->HasField(TEXT("guest_inspector"))) return true;
+ const TSharedPtr<FJsonObject>* Ptr = nullptr;
+ if (!Root->TryGetObjectField(TEXT("guest_inspector"), Ptr)) { Error = TEXT("guest_inspector must be an object"); return false; }
+ const auto& Obj = *Ptr;
+ if (Obj->HasField(TEXT("enabled")) && !Obj->TryGetBoolField(TEXT("enabled"), Out.bEnabled))
+ { Error = TEXT("guest_inspector.enabled must be boolean"); return false; }
+ for (const auto& Pair : {TPair<const TCHAR*, int32*>(TEXT("port"), &Out.Port),
+                        TPair<const TCHAR*, int32*>(TEXT("max_guests"), &Out.MaxGuests),
+                        TPair<const TCHAR*, int32*>(TEXT("width"), &Out.Width),
+                        TPair<const TCHAR*, int32*>(TEXT("height"), &Out.Height),
+                        TPair<const TCHAR*, int32*>(TEXT("jpeg_quality"), &Out.Rgb.JpegQuality)})
+ {
+  if (!Obj->HasField(Pair.Key)) continue;
+  double N = 0; const auto V = Obj->TryGetField(Pair.Key);
+  if (V->Type != EJson::Number || !V->TryGetNumber(N) || !FMath::IsFinite(N) || N < 0 || N > 65535 || N != FMath::TruncToDouble(N))
+  { Error = FString(TEXT("guest_inspector.")) + Pair.Key + TEXT(" must be an integer"); return false; }
+  *Pair.Value = int32(N);
+ }
+ if (Obj->HasField(TEXT("fov_degrees")))
+ {
+  const auto V = Obj->TryGetField(TEXT("fov_degrees"));
+  if (V->Type != EJson::Number || !V->TryGetNumber(Out.FovDegrees)) { Error = TEXT("fov_degrees must be numeric"); return false; }
+ }
+ if (Obj->HasField(TEXT("compression")))
+ {
+  FString Codec;
+  if (!Obj->TryGetStringField(TEXT("compression"), Codec) || !ParseRgbCompression(Codec, Out.Rgb.Compression))
+  { Error = TEXT("guest_inspector.compression must be raw, jpeg, or av1"); return false; }
+ }
+ return ReadStreamOptions(Obj, Out.Rgb, Error);
 }
 
 bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out, FString& OutError)
@@ -163,11 +345,12 @@ bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out
 			return false;
 		}
 		const TSharedPtr<FJsonObject>& RgbObj = *RgbObjPtr;
+		if (!ReadStreamOptions(RgbObj, Out.Rgb, OutError)) return false;
 		RgbObj->TryGetNumberField(TEXT("rate_hz"), Out.Rgb.RateHz);
 		if (RgbObj->TryGetStringField(TEXT("compression"), StringValue)
 			&& !ParseRgbCompression(StringValue, Out.Rgb.Compression))
 		{
-			OutError = TEXT("scene config: vision.rgb.compression must be 'raw' or 'jpeg'");
+			OutError = TEXT("scene config: vision.rgb.compression must be 'raw', 'jpeg', or 'av1'");
 			return false;
 		}
 		double Quality = static_cast<double>(Out.Rgb.JpegQuality);
@@ -204,6 +387,17 @@ bool ReadVisionConfig(const TSharedPtr<FJsonObject>& Root, FURSVisionConfig& Out
 	return true;
 }
 
+bool ReadEffectNumber(const TSharedPtr<FJsonObject>& Object, const TCHAR* Key, double& Value,
+                      const TCHAR* Prefix, FString& OutError)
+{
+ if (Object->HasField(Key) && (!Object->TryGetNumberField(Key, Value) || !FMath::IsFinite(Value)))
+ {
+  OutError = FString::Printf(TEXT("scene config: %s.%s must be a finite number"), Prefix, Key);
+  return false;
+ }
+ return true;
+}
+
 bool ReadRenderConfig(const TSharedPtr<FJsonObject>& Root, FURSRenderConfig& Out, FString& OutError)
 {
 	const TSharedPtr<FJsonObject>* RenderObjPtr = nullptr;
@@ -219,6 +413,25 @@ bool ReadRenderConfig(const TSharedPtr<FJsonObject>& Root, FURSRenderConfig& Out
 	}
 	Out.bIsSet = true;
 	const TSharedPtr<FJsonObject>& R = *RenderObjPtr;
+ if (!ReadEffectNumber(R, TEXT("motion_blur_amount"), Out.MotionBlurAmount, TEXT("render"), OutError)
+     || !ReadEffectNumber(R, TEXT("motion_blur_max_percent"), Out.MotionBlurMaxPercent, TEXT("render"), OutError)) return false;
+ double TargetFps = Out.MotionBlurTargetFps;
+ if (!ReadEffectNumber(R, TEXT("motion_blur_target_fps"), TargetFps, TEXT("render"), OutError)) return false;
+ if (TargetFps != FMath::TruncToDouble(TargetFps) || TargetFps < 0 || TargetFps > 120)
+ { OutError = TEXT("render.motion_blur_target_fps must be an integer in [0,120]"); return false; }
+ Out.MotionBlurTargetFps = int32(TargetFps);
+ if (R->HasField(TEXT("film_grain")))
+ {
+  const TSharedPtr<FJsonObject>* Grain = nullptr;
+  if (!R->TryGetObjectField(TEXT("film_grain"), Grain) || !Grain || !Grain->IsValid())
+  { OutError = TEXT("render.film_grain must be an object"); return false; }
+  if (!ReadEffectNumber(*Grain, TEXT("intensity"), Out.FilmGrainIntensity, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("shadows"), Out.FilmGrainShadows, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("midtones"), Out.FilmGrainMidtones, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("highlights"), Out.FilmGrainHighlights, TEXT("render.film_grain"), OutError)
+      || !ReadEffectNumber(*Grain, TEXT("texel_size"), Out.FilmGrainTexelSize, TEXT("render.film_grain"), OutError)) return false;
+ }
+
 
 	bool bValue = false;
 	if (R->TryGetBoolField(TEXT("enable"), bValue)) Out.bEnable = bValue;
@@ -290,15 +503,134 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 		return false;
 	}
 
+	Out.SourceDirectory = FPaths::GetPath(FPaths::ConvertRelativePathToFull(AbsPath));
+    if (Root->HasField(TEXT("robot_types")))
+    {
+        const TSharedPtr<FJsonObject>* Types=nullptr;
+        if (!Root->TryGetObjectField(TEXT("robot_types"),Types)) { OutError=TEXT("robot_types must map type names to external manifest paths"); return false; }
+        for (const auto& Item:(*Types)->Values)
+        {
+            FString Path;
+            if (Item.Key.IsEmpty()||!Item.Value->TryGetString(Path)||Path.IsEmpty()) { OutError=TEXT("robot_types entries require nonempty names and manifest paths"); return false; }
+            Out.RobotTypes.Add(Item.Key,Path);
+        }
+    }
+
+	const TSharedPtr<FJsonObject> *Field = nullptr;
+	if (!Root->HasField(TEXT("field")))
+	{
+		OutError = TEXT("scene config requires field with length_m, width_m and visual.base_color_map");
+		return false;
+	}
+	{
+		if (!Root->TryGetObjectField(TEXT("field"), Field))
+		{
+			OutError = TEXT("field must be an object");
+			return false;
+		}
+		Out.Field.bIsSet = true;
+		for (const TCHAR *Key : {TEXT("length_m"), TEXT("width_m")})
+			if (!(*Field)->HasField(Key))
+			{
+				OutError = FString::Printf(TEXT("field.%s is required"), Key);
+				return false;
+			}
+		const TPair<const TCHAR *, double *> Numbers[] = {{TEXT("length_m"), &Out.Field.LengthM},
+														  {TEXT("width_m"), &Out.Field.WidthM},
+														  {TEXT("border_x_m"), &Out.Field.BorderXM},
+														  {TEXT("border_y_m"), &Out.Field.BorderYM}};
+		for (const auto &N : Numbers)
+			if ((*Field)->HasField(N.Key) &&
+				((*Field)->TryGetField(N.Key)->Type != EJson::Number || !(*Field)->TryGetNumberField(N.Key, *N.Value)))
+			{
+				OutError = FString::Printf(TEXT("field.%s must be numeric"), N.Key);
+				return false;
+			}
+		if (!ReadFieldSettings(*Field, Out.Field, OutError)) return false;
+	}
+
+	const TSharedPtr<FJsonObject> *Goals = nullptr;
+	if (!Root->TryGetObjectField(TEXT("goals"), Goals))
+	{
+		OutError = TEXT("scene config requires goals with width_m, height_m, post_radius_m and exactly two poses");
+		return false;
+	}
+	Out.Goals.bIsSet = true;
+	for (const auto &N : {TPair<const TCHAR *, double *>(TEXT("width_m"), &Out.Goals.WidthM),
+						  TPair<const TCHAR *, double *>(TEXT("height_m"), &Out.Goals.HeightM),
+						  TPair<const TCHAR *, double *>(TEXT("post_radius_m"), &Out.Goals.PostRadiusM)})
+	{
+		const auto Value = (*Goals)->TryGetField(N.Key);
+		if (!Value.IsValid() || Value->Type != EJson::Number || !Value->TryGetNumber(*N.Value))
+		{
+			OutError = FString::Printf(TEXT("goals.%s must be a number"), N.Key);
+			return false;
+		}
+	}
+	const TArray<TSharedPtr<FJsonValue>> *Poses = nullptr;
+	if (!(*Goals)->TryGetArrayField(TEXT("poses"), Poses) || Poses->Num() != 2)
+	{
+		OutError = TEXT("goals.poses must contain exactly two poses");
+		return false;
+	}
+	for (const auto &Value : *Poses)
+	{
+		const TSharedPtr<FJsonObject> *Pose = nullptr;
+		const TArray<TSharedPtr<FJsonValue>> *Translation = nullptr;
+		FURSGoalPose Parsed;
+		if (!Value.IsValid() || !Value->TryGetObject(Pose) ||
+			!(*Pose)->TryGetArrayField(TEXT("translation_m"), Translation) ||
+			Translation->Num() != 3)
+		{
+			OutError = TEXT("each goal pose requires translation_m with three finite numbers");
+			return false;
+		}
+		for (const auto &Coordinate : *Translation)
+			if (Coordinate->Type != EJson::Number)
+			{
+				OutError = TEXT("goal translation_m must contain numbers");
+				return false;
+			}
+		if (!ReadVec3(Translation, Parsed.TranslationMeters)) { OutError = TEXT("goal translation_m must be finite"); return false; }
+		const auto Yaw = (*Pose)->TryGetField(TEXT("yaw_deg"));
+		if (!Yaw.IsValid() || Yaw->Type != EJson::Number || !Yaw->TryGetNumber(Parsed.YawDeg) ||
+			!FMath::IsFinite(Parsed.YawDeg))
+		{
+			OutError = TEXT("each goal pose requires finite numeric yaw_deg");
+			return false;
+		}
+		Out.Goals.Poses.Add(Parsed);
+	}
+
 	if (!ReadVisionConfig(Root, Out.Vision, OutError))
 	{
 		return false;
 	}
 
+	if (!ReadGuestInspector(Root, Out.GuestInspector, OutError)) return false;
+
 	if (!ReadRenderConfig(Root, Out.Render, OutError))
 	{
 		return false;
 	}
+
+ if (Root->HasField(TEXT("lighting")))
+ {
+  const TSharedPtr<FJsonObject>* Lighting = nullptr;
+  if (!Root->TryGetObjectField(TEXT("lighting"), Lighting) || !Lighting || !Lighting->IsValid())
+  { OutError = TEXT("lighting must be an object"); return false; }
+  Out.Lighting.bIsSet = true;
+  if ((*Lighting)->HasField(TEXT("emissive_intensity")))
+  {
+   double Strength = 1.0;
+   if (!ReadEffectNumber(*Lighting, TEXT("emissive_intensity"), Strength, TEXT("lighting"), OutError)) return false;
+   Out.Lighting.EmissiveIntensity = Strength;
+  }
+  if (!ReadEffectNumber(*Lighting, TEXT("lamp_intensity_lumens"), Out.Lighting.LampIntensityLumens,
+                        TEXT("lighting"), OutError)
+      || !ReadEffectNumber(*Lighting, TEXT("source_radius_cm"), Out.Lighting.SourceRadiusCm, TEXT("lighting"), OutError)
+      || !ReadEffectNumber(*Lighting, TEXT("specular_scale"), Out.Lighting.SpecularScale, TEXT("lighting"), OutError)) return false;
+ }
 
 	Root->TryGetNumberField(TEXT("mujoco_dt"), Out.MujocoDt);
 	Root->TryGetNumberField(TEXT("state_freq"), Out.StateFreq);
@@ -468,6 +800,56 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 				}
 				Spawn.RotationQuatXyzw = Rot;
 			}
+			if ((*ObjectObj)->HasField(TEXT("visual")))
+			{
+				const TSharedPtr<FJsonObject>* Visual = nullptr;
+				FURSPBRVisualConfig Settings;
+				if (!(*ObjectObj)->TryGetObjectField(TEXT("visual"), Visual))
+				{ OutError = TEXT("object.visual must be an object"); return false; }
+				if (!ReadPBRVisual(*Visual, Settings, OutError)) return false;
+				Spawn.Visual = MoveTemp(Settings);
+			}
+			if ((*ObjectObj)->HasField(TEXT("physics")))
+			{
+				const TSharedPtr<FJsonObject> *Physics = nullptr;
+				if (!(*ObjectObj)->TryGetObjectField(TEXT("physics"), Physics))
+				{
+					OutError = TEXT("object.physics must be an object");
+					return false;
+				}
+				Spawn.Physics.bIsSet = true;
+				for (const auto &N : {TPair<const TCHAR *, double *>(TEXT("radius_m"), &Spawn.Physics.RadiusM),
+									  TPair<const TCHAR *, double *>(TEXT("mass_kg"), &Spawn.Physics.MassKg)})
+					if ((*Physics)->HasField(N.Key) && ((*Physics)->TryGetField(N.Key)->Type != EJson::Number ||
+														!(*Physics)->TryGetNumberField(N.Key, *N.Value)))
+					{
+						OutError = FString::Printf(TEXT("physics.%s must be numeric"), N.Key);
+						return false;
+					}
+				for (const auto &A : {TPair<const TCHAR *, TArray<float> *>(TEXT("friction"), &Spawn.Physics.Friction),
+									  TPair<const TCHAR *, TArray<float> *>(TEXT("solref"), &Spawn.Physics.Solref)})
+				{
+					if (!(*Physics)->HasField(A.Key))
+						continue;
+					const TArray<TSharedPtr<FJsonValue>> *Values = nullptr;
+					if (!(*Physics)->TryGetArrayField(A.Key, Values) || Values->Num() != A.Value->Num())
+					{
+						OutError = FString::Printf(TEXT("physics.%s has incorrect array length"), A.Key);
+						return false;
+					}
+					for (int32 I = 0; I < Values->Num(); ++I)
+					{
+						double V;
+						if ((*Values)[I]->Type != EJson::Number || !(*Values)[I]->TryGetNumber(V) ||
+							!FMath::IsFinite(V))
+						{
+							OutError = TEXT("physics arrays require finite numbers");
+							return false;
+						}
+						(*A.Value)[I] = V;
+					}
+				}
+			}
 			Out.Objects.Add(MoveTemp(Spawn));
 		}
 	}
@@ -481,7 +863,67 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("version"), In.Version);
+    auto RobotTypesJson=MakeShared<FJsonObject>();
+    for (const auto& Item:In.RobotTypes) RobotTypesJson->SetStringField(Item.Key,Item.Value);
+    Root->SetObjectField(TEXT("robot_types"),RobotTypesJson);
 
+
+	if (In.Field.bIsSet)
+	{
+		auto F = MakeShared<FJsonObject>();
+		F->SetNumberField(TEXT("length_m"), In.Field.LengthM);
+		F->SetNumberField(TEXT("width_m"), In.Field.WidthM);
+		F->SetNumberField(TEXT("border_x_m"), In.Field.BorderXM);
+		F->SetNumberField(TEXT("border_y_m"), In.Field.BorderYM);
+		auto Visual = WritePBRVisual(In.Field.Visual);
+		Visual->SetNumberField(TEXT("detail_tile_size_m"), In.Field.Visual.DetailTileSizeM);
+		F->SetObjectField(TEXT("visual"), Visual);
+		auto Physics = MakeShared<FJsonObject>();
+		const auto& P = In.Field.Physics;
+		Physics->SetNumberField(TEXT("condim"), P.Condim);
+		for (const auto& Item : {TPair<const TCHAR*, const TArray<float>*>(TEXT("friction"), &P.Friction),
+			{TEXT("solref"), &P.Solref}, {TEXT("solimp"), &P.Solimp}})
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			for (float Value : *Item.Value) Values.Add(MakeShared<FJsonValueNumber>(Value));
+			Physics->SetArrayField(Item.Key, Values);
+		}
+		F->SetObjectField(TEXT("physics"), Physics);
+		Root->SetObjectField(TEXT("field"), F);
+	}
+	if (In.Goals.bIsSet)
+	{
+		auto Goals = MakeShared<FJsonObject>();
+		Goals->SetNumberField(TEXT("width_m"), In.Goals.WidthM);
+		Goals->SetNumberField(TEXT("height_m"), In.Goals.HeightM);
+		Goals->SetNumberField(TEXT("post_radius_m"), In.Goals.PostRadiusM);
+		TArray<TSharedPtr<FJsonValue>> Poses;
+		for (const auto &P : In.Goals.Poses)
+		{
+			auto Pose = MakeShared<FJsonObject>();
+			Pose->SetArrayField(TEXT("translation_m"), {MakeShared<FJsonValueNumber>(P.TranslationMeters.X),
+														MakeShared<FJsonValueNumber>(P.TranslationMeters.Y),
+														MakeShared<FJsonValueNumber>(P.TranslationMeters.Z)});
+			Pose->SetNumberField(TEXT("yaw_deg"), P.YawDeg);
+			Poses.Add(MakeShared<FJsonValueObject>(Pose));
+		}
+		Goals->SetArrayField(TEXT("poses"), Poses);
+		Root->SetObjectField(TEXT("goals"), Goals);
+	}
+ auto Guest = MakeShared<FJsonObject>();
+ Guest->SetBoolField(TEXT("enabled"), In.GuestInspector.bEnabled);
+ Guest->SetNumberField(TEXT("port"), In.GuestInspector.Port);
+ Guest->SetNumberField(TEXT("max_guests"), In.GuestInspector.MaxGuests);
+ Guest->SetNumberField(TEXT("width"), In.GuestInspector.Width);
+ Guest->SetNumberField(TEXT("height"), In.GuestInspector.Height);
+ Guest->SetNumberField(TEXT("fov_degrees"), In.GuestInspector.FovDegrees);
+ Guest->SetNumberField(TEXT("rate_hz"), In.GuestInspector.Rgb.RateHz);
+ Guest->SetStringField(TEXT("compression"), RgbCompressionString(In.GuestInspector.Rgb.Compression));
+ Guest->SetNumberField(TEXT("jpeg_quality"), In.GuestInspector.Rgb.JpegQuality);
+ Guest->SetNumberField(TEXT("bitrate_kbps"), In.GuestInspector.Rgb.BitrateKbps);
+ Guest->SetNumberField(TEXT("keyframe_interval_s"), In.GuestInspector.Rgb.KeyframeIntervalSeconds);
+ Guest->SetStringField(TEXT("vulkan_device"), In.GuestInspector.Rgb.VulkanDevice);
+ Root->SetObjectField(TEXT("guest_inspector"), Guest);
 	TSharedPtr<FJsonObject> VisionObj = MakeShared<FJsonObject>();
 	VisionObj->SetStringField(TEXT("mode"), VisionModeString(In.Vision.Mode));
 	VisionObj->SetStringField(TEXT("left_camera"), In.Vision.LeftCamera);
@@ -491,6 +933,9 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 	RgbObj->SetNumberField(TEXT("rate_hz"), In.Vision.Rgb.RateHz);
 	RgbObj->SetStringField(TEXT("compression"), RgbCompressionString(In.Vision.Rgb.Compression));
 	RgbObj->SetNumberField(TEXT("jpeg_quality"), In.Vision.Rgb.JpegQuality);
+	RgbObj->SetNumberField(TEXT("bitrate_kbps"), In.Vision.Rgb.BitrateKbps);
+	RgbObj->SetNumberField(TEXT("keyframe_interval_s"), In.Vision.Rgb.KeyframeIntervalSeconds);
+	RgbObj->SetStringField(TEXT("vulkan_device"), In.Vision.Rgb.VulkanDevice);
 	VisionObj->SetObjectField(TEXT("rgb"), RgbObj);
 
 	TSharedPtr<FJsonObject> DepthObj = MakeShared<FJsonObject>();
@@ -510,12 +955,33 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		RenderObj->SetNumberField(TEXT("screen_percentage"), In.Render.ScreenPercentage);
 		RenderObj->SetNumberField(TEXT("shadow_quality"), In.Render.ShadowQuality);
 		RenderObj->SetBoolField(TEXT("motion_blur"), In.Render.bMotionBlur);
+  RenderObj->SetNumberField(TEXT("motion_blur_amount"), In.Render.MotionBlurAmount);
+  RenderObj->SetNumberField(TEXT("motion_blur_max_percent"), In.Render.MotionBlurMaxPercent);
+  RenderObj->SetNumberField(TEXT("motion_blur_target_fps"), In.Render.MotionBlurTargetFps);
+  auto Grain = MakeShared<FJsonObject>();
+  Grain->SetNumberField(TEXT("intensity"), In.Render.FilmGrainIntensity);
+  Grain->SetNumberField(TEXT("shadows"), In.Render.FilmGrainShadows);
+  Grain->SetNumberField(TEXT("midtones"), In.Render.FilmGrainMidtones);
+  Grain->SetNumberField(TEXT("highlights"), In.Render.FilmGrainHighlights);
+  Grain->SetNumberField(TEXT("texel_size"), In.Render.FilmGrainTexelSize);
+  RenderObj->SetObjectField(TEXT("film_grain"), Grain);
+
 		RenderObj->SetBoolField(TEXT("auto_exposure"), In.Render.bAutoExposure);
 		RenderObj->SetNumberField(TEXT("exposure_compensation"), In.Render.ExposureCompensation);
 		if (In.Render.ResolutionX.IsSet()) RenderObj->SetNumberField(TEXT("resolution_x"), In.Render.ResolutionX.GetValue());
 		if (In.Render.ResolutionY.IsSet()) RenderObj->SetNumberField(TEXT("resolution_y"), In.Render.ResolutionY.GetValue());
 		Root->SetObjectField(TEXT("render"), RenderObj);
 	}
+
+ if (In.Lighting.bIsSet)
+ {
+  auto Lighting = MakeShared<FJsonObject>();
+  Lighting->SetNumberField(TEXT("lamp_intensity_lumens"), In.Lighting.LampIntensityLumens);
+  if (In.Lighting.EmissiveIntensity.IsSet()) Lighting->SetNumberField(TEXT("emissive_intensity"), In.Lighting.EmissiveIntensity.GetValue());
+  Lighting->SetNumberField(TEXT("source_radius_cm"), In.Lighting.SourceRadiusCm);
+  Lighting->SetNumberField(TEXT("specular_scale"), In.Lighting.SpecularScale);
+  Root->SetObjectField(TEXT("lighting"), Lighting);
+ }
 
 	TArray<TSharedPtr<FJsonValue>> RobotsJson;
 	for (const FURSRobotSpawn& Spawn : In.Robots)
@@ -611,6 +1077,21 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 				MakeShared<FJsonValueNumber>(Quat.Z),
 				MakeShared<FJsonValueNumber>(Quat.W)});
 		}
+		if (Spawn.Physics.bIsSet)
+		{
+			auto P = MakeShared<FJsonObject>();
+			P->SetNumberField(TEXT("radius_m"), Spawn.Physics.RadiusM);
+			P->SetNumberField(TEXT("mass_kg"), Spawn.Physics.MassKg);
+			TArray<TSharedPtr<FJsonValue>> Friction, Solref;
+			for (float V : Spawn.Physics.Friction)
+				Friction.Add(MakeShared<FJsonValueNumber>(V));
+			for (float V : Spawn.Physics.Solref)
+				Solref.Add(MakeShared<FJsonValueNumber>(V));
+			P->SetArrayField(TEXT("friction"), Friction);
+			P->SetArrayField(TEXT("solref"), Solref);
+			ObjectObj->SetObjectField(TEXT("physics"), P);
+		}
+		if (Spawn.Visual.IsSet()) ObjectObj->SetObjectField(TEXT("visual"), WritePBRVisual(Spawn.Visual.GetValue()));
 		ObjectsJson.Add(MakeShared<FJsonValueObject>(ObjectObj));
 	}
 	Root->SetArrayField(TEXT("objects"), ObjectsJson);
@@ -635,6 +1116,11 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 {
 	FURSSceneConfig Config;
+	Config.RobotTypes.Add(TEXT("pi_plus"), TEXT("robots/pi_plus/robot.json"));
+	Config.Field.bIsSet = true;
+	Config.Field.Visual.BaseColorMap = TEXT("field.png");
+	Config.Goals.bIsSet = true;
+	Config.Goals.Poses = {{FVector(-4.5, 0, 0), 0}, {FVector(4.5, 0, 0), 180}};
 	FURSRobotSpawn& Robot = Config.Robots.AddDefaulted_GetRef();
 	Robot.ActorId = TEXT("robot_rp0");
 	Robot.Type = TEXT("pi_plus");
@@ -651,7 +1137,82 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfig& Config)
 {
 	FURSSceneConfigValidationResult Result;
+ const auto InRange = [](double Value, double Low, double High) { return FMath::IsFinite(Value) && Value >= Low && Value <= High; };
+ const auto& Render = Config.Render;
+ if (!InRange(Config.Lighting.SourceRadiusCm, 0, 500) || !InRange(Config.Lighting.SpecularScale, 0, 1))
+ { Result.bOk = false; Result.Errors.Add(TEXT("lighting.source_radius_cm [0,500] and specular_scale [0,1] required")); }
+ if (Config.Lighting.EmissiveIntensity.IsSet() && !InRange(Config.Lighting.EmissiveIntensity.GetValue(), 0, 1000))
+ { Result.bOk = false; Result.Errors.Add(TEXT("lighting.emissive_intensity must be in [0,1000]")); }
+ if (!InRange(Config.Lighting.LampIntensityLumens, 0, 1000000))
+ { Result.bOk = false; Result.Errors.Add(TEXT("lighting.lamp_intensity_lumens must be in [0,1000000]")); }
+ if (!InRange(Render.MotionBlurAmount, 0, 1) || !InRange(Render.MotionBlurMaxPercent, 0, 100)
+     || Render.MotionBlurTargetFps < 0 || Render.MotionBlurTargetFps > 120
+     || !InRange(Render.FilmGrainIntensity, 0, 1) || !InRange(Render.FilmGrainShadows, 0, 1)
+     || !InRange(Render.FilmGrainMidtones, 0, 1) || !InRange(Render.FilmGrainHighlights, 0, 1)
+     || !InRange(Render.FilmGrainTexelSize, 0, 4))
+ { Result.bOk = false; Result.Errors.Add(TEXT("render: motion blur amount [0,1], max percent [0,100], target fps [0,120]; film grain intensity/tones [0,1], texel_size [0,4] required")); }
+
+ for (const auto* Stream : {&Config.Vision.Rgb, &Config.GuestInspector.Rgb})
+ {
+  if (!FMath::IsFinite(Stream->RateHz) || Stream->RateHz < 1 || Stream->RateHz > 120 ||
+      !FMath::IsFinite(Stream->KeyframeIntervalSeconds) || Stream->KeyframeIntervalSeconds < 0.1 || Stream->KeyframeIntervalSeconds > 60 ||
+      Stream->BitrateKbps < 64 || Stream->BitrateKbps > 100000 || Stream->JpegQuality < 1 || Stream->JpegQuality > 100)
+  { Result.bOk = false; Result.Errors.Add(TEXT("RGB/guest rate_hz [1,120], keyframe_interval_s [0.1,60], bitrate_kbps [64,100000], jpeg_quality [1,100] required")); }
+ }
+ const auto& Guest = Config.GuestInspector;
+ if (Guest.Port < 1 || Guest.Port > 65535 || Guest.MaxGuests < 1 || Guest.MaxGuests > 4 ||
+     Guest.Width < 64 || Guest.Width > 1920 || Guest.Height < 64 || Guest.Height > 1080 ||
+     Guest.Width % 2 || Guest.Height % 2 || !FMath::IsFinite(Guest.FovDegrees) || Guest.FovDegrees < 10 || Guest.FovDegrees > 150)
+ { Result.bOk = false; Result.Errors.Add(TEXT("guest_inspector requires valid port, max_guests [1,4], even width [64,1920]/height [64,1080], fov_degrees [10,150]")); }
 	TSet<FString> SeenActorIds;
+	SeenActorIds.Add(TEXT("__urs_goals"));
+	SeenActorIds.Add(TEXT("__urs_ground"));
+	const auto &G = Config.Goals;
+	bool GoalsValid = G.bIsSet && G.Poses.Num() == 2;
+	for (double Dimension : {G.WidthM, G.HeightM, G.PostRadiusM})
+		GoalsValid &= FMath::IsFinite(static_cast<float>(Dimension)) && Dimension > 0;
+	for (const auto &Pose : G.Poses)
+		GoalsValid &= IsFiniteVec(Pose.TranslationMeters) && FMath::IsFinite(Pose.YawDeg);
+	if (!GoalsValid)
+	{
+		Result.bOk = false;
+		Result.Errors.Add(
+			TEXT("goals require positive finite width_m, height_m, post_radius_m and exactly two finite poses"));
+	}
+	const auto &F = Config.Field;
+	if (!F.bIsSet || F.Visual.BaseColorMap.IsEmpty())
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("field with dimensions and nonempty visual.base_color_map is required"));
+	}
+	if (F.bIsSet && (!FMath::IsFinite(F.LengthM) || F.LengthM <= 0 || !FMath::IsFinite(F.WidthM) || F.WidthM <= 0 ||
+					 !FMath::IsFinite(F.BorderXM) || F.BorderXM < 0 || !FMath::IsFinite(F.BorderYM) || F.BorderYM < 0))
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("field dimensions must be finite; length/width positive and borders nonnegative"));
+	}
+
+	const auto& FieldVisual = F.Visual;
+	if (!FMath::IsFinite(FieldVisual.DetailTileSizeM) || FieldVisual.DetailTileSizeM <= 0 ||
+		!ValidPBRVisual(FieldVisual))
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("field.visual requires positive finite detail_tile_size_m, normal_strength [0,10], roughness/metallic [0,1]"));
+	}
+	const auto& FieldPhysics = F.Physics;
+	bool PhysicsValid = FieldPhysics.Friction.Num() == 3 && FieldPhysics.Solref.Num() == 2 && FieldPhysics.Solimp.Num() == 5 &&
+		(FieldPhysics.Condim == 1 || FieldPhysics.Condim == 3 || FieldPhysics.Condim == 4 || FieldPhysics.Condim == 6);
+	for (float Value : FieldPhysics.Friction) PhysicsValid &= FMath::IsFinite(Value) && Value >= 0;
+	for (float Value : FieldPhysics.Solref) PhysicsValid &= FMath::IsFinite(Value);
+	for (float Value : FieldPhysics.Solimp) PhysicsValid &= FMath::IsFinite(Value);
+	if (FieldPhysics.Solref.Num() == 2) PhysicsValid &= (FieldPhysics.Solref[0] > 0 && FieldPhysics.Solref[1] > 0) || (FieldPhysics.Solref[0] <= 0 && FieldPhysics.Solref[1] <= 0);
+	if (FieldPhysics.Solimp.Num() == 5) PhysicsValid &= FieldPhysics.Solimp[0] > 0 && FieldPhysics.Solimp[0] < 1 && FieldPhysics.Solimp[1] > 0 && FieldPhysics.Solimp[1] < 1 &&
+		FieldPhysics.Solimp[2] > 0 && FieldPhysics.Solimp[3] > 0 && FieldPhysics.Solimp[3] < 1 && FieldPhysics.Solimp[4] >= 1;
+	if (!PhysicsValid)
+	{
+		Result.bOk = false;
+		Result.Errors.Add(TEXT("invalid field.physics: friction requires three nonnegative finite values, condim 1/3/4/6, solref two same-format finite values, solimp [d0,dwidth,width,midpoint,power] within valid solver ranges"));
+	}
 
 	if (Config.Vision.LeftCamera.IsEmpty())
 	{
@@ -713,10 +1274,10 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 			Result.Errors.Add(FString::Printf(TEXT("robot '%s' has empty type"), *Spawn.ActorId));
 			continue;
 		}
-		if (!FURSRobotTypeRegistry::Get().Find(Spawn.Type))
+		if (!Config.RobotTypes.Contains(Spawn.Type) || Config.RobotTypes.FindChecked(Spawn.Type).IsEmpty())
 		{
 			Result.bOk = false;
-			Result.Errors.Add(FString::Printf(TEXT("robot '%s' references unknown type '%s'"), *Spawn.ActorId, *Spawn.Type));
+			Result.Errors.Add(FString::Printf(TEXT("robot '%s' references unknown type '%s'; declare its external manifest in robot_types"), *Spawn.ActorId, *Spawn.Type));
 		}
 
 		if (Spawn.TranslationMeters.IsSet() && !IsFiniteVec(Spawn.TranslationMeters.GetValue()))
@@ -751,6 +1312,31 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 
 	for (const FURSObjectSpawn& Spawn : Config.Objects)
 	{
+		if (Spawn.Visual.IsSet() && (Spawn.Type != TEXT("soccer_ball") || !ValidPBRVisual(Spawn.Visual.GetValue())))
+		{
+			Result.bOk = false;
+			Result.Errors.Add(TEXT("object.visual requires soccer_ball, base_color_map, normal_strength [0,10] and roughness/metallic [0,1]"));
+		}
+		const auto &P = Spawn.Physics;
+		if (P.bIsSet)
+		{
+			bool Valid = Spawn.Type == TEXT("soccer_ball") && FMath::IsFinite(static_cast<float>(P.RadiusM)) &&
+						 P.RadiusM > 0 && FMath::IsFinite(static_cast<float>(P.MassKg)) && P.MassKg > 0 &&
+						 P.Friction.Num() == 3 && P.Solref.Num() == 2;
+			for (float V : P.Friction)
+				Valid &= FMath::IsFinite(V) && V >= 0;
+			for (float V : P.Solref)
+				Valid &= FMath::IsFinite(V);
+			if (P.Solref.Num() == 2)
+				Valid &= (P.Solref[0] > 0 && P.Solref[1] > 0) || (P.Solref[0] <= 0 && P.Solref[1] <= 0);
+			if (!Valid)
+			{
+				Result.bOk = false;
+				Result.Errors.Add(TEXT("invalid soccer_ball physics: positive radius/mass, three nonnegative friction "
+									   "values and valid solref required"));
+			}
+		}
+
 		if (Spawn.ActorId.IsEmpty())
 		{
 			Result.bOk = false;
@@ -766,7 +1352,7 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 		if (Spawn.Type.IsEmpty() || !FURSObjectTypeRegistry::Get().Find(Spawn.Type))
 		{
 			Result.bOk = false;
-			Result.Errors.Add(FString::Printf(TEXT("object '%s' references unknown type '%s'"), *Spawn.ActorId, *Spawn.Type));
+			Result.Errors.Add(FString::Printf(TEXT("object '%s' references unknown type '%s'; declare its external manifest in robot_types"), *Spawn.ActorId, *Spawn.Type));
 		}
 		if (Spawn.TranslationMeters.IsSet() && !IsFiniteVec(Spawn.TranslationMeters.GetValue()))
 		{

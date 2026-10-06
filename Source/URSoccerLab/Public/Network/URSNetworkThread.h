@@ -1,127 +1,88 @@
 #pragma once
-
-// URSNetworkThread.h — dedicated network thread for TCP send/recv.
-// Decoupled from both the physics thread and the render (game) thread.
-// Runs at a configurable rate (default 60 Hz), independent of render FPS.
-
 #include "CoreMinimal.h"
-#include "Core/URSTripleBuffer.h"
-#include "Core/URSBuffers.h"
-#include "URSSnapshot.h"
-#include "URSJson.h"
+#include "HAL/Runnable.h"
+#include "HAL/RunnableThread.h"
 #include "Network/URSSocket.h"
+#include "Network/URSNetworkService.h"
 #include "Containers/Queue.h"
-
-class URSNetworkThread
+#include "Vision/URSVideoDeliveryGate.h"
+// Owns TCP sockets exclusively. No UObjects or render/MuJoCo APIs.
+class URSNetworkThread : public IURSNetworkService
 {
 public:
-	struct FRobotEndpoint
-	{
-		FRobotEndpoint() = default;
-		FRobotEndpoint(FRobotEndpoint&& Other)
-			: ActorId(MoveTemp(Other.ActorId))
-			, Listener(MoveTemp(Other.Listener))
-			, Clients(MoveTemp(Other.Clients))
-			, StateBuf(MoveTemp(Other.StateBuf))
-			, CmdBuf(MoveTemp(Other.CmdBuf)), GainBuf(MoveTemp(Other.GainBuf))
-			, AccumulatedGains(Other.AccumulatedGains)
-			, Meta(MoveTemp(Other.Meta))
-		{}
-		FRobotEndpoint& operator=(FRobotEndpoint&& Other)
-		{
-			ActorId = MoveTemp(Other.ActorId);
-			Listener = MoveTemp(Other.Listener);
-			Clients = MoveTemp(Other.Clients);
-			StateBuf = MoveTemp(Other.StateBuf);
-			CmdBuf = MoveTemp(Other.CmdBuf);
-			GainBuf = MoveTemp(Other.GainBuf);
-			AccumulatedGains = Other.AccumulatedGains;
-			Meta = MoveTemp(Other.Meta);
-			return *this;
-		}
-		FString ActorId;
-
-		// TCP listener + accepted clients
-		URSNonBlockingSocket Listener;
-		struct FClient
-		{
-			URSNonBlockingSocket Socket;
-			TArray<uint8> ReadBuf;
-			TArray<uint8> WriteBuf;
-			bool bConnected = false;
-		};
-		TArray<FClient> Clients;
-
-		// Triple buffer handles (shared with physics core)
-		TSharedPtr<URSTripleBuffer<FRobotSnapshot>, ESPMode::ThreadSafe> StateBuf; // read
-		TSharedPtr<URSTripleBuffer<FCommandSet>, ESPMode::ThreadSafe> CmdBuf; // write
-		TSharedPtr<URSTripleBuffer<FGainSet>, ESPMode::ThreadSafe> GainBuf; // write
-
-		// Union of all partial gain updates received since the endpoint was
-		// built. Each network-side publish sends this accumulated set so that
-		// the latest-value triple buffer cannot drop an earlier partial update
-		// before the physics thread consumes it.
-		FGainSet AccumulatedGains;
-
-		// Static metadata for JSON building
-		FRobotMetadata Meta;
-
-		// Camera frame queue (fed by game thread)
-		struct FCameraPacket
-		{
-			TArray<uint8> Payload;  // v2 image message, ready to send
-			uint8 FrameType = 0;
-		};
-		TQueue<FCameraPacket, EQueueMode::Mpsc> CameraQueue;
-	};
-
-	// Admin endpoint
-	URSNonBlockingSocket AdminListener;
-	struct FAdminClient {
-		URSNonBlockingSocket Socket;
-		TArray<uint8> ReadBuf;
-		TArray<uint8> WriteBuf;
-		bool bConnected = false;
-	};
-	TArray<FAdminClient> AdminClients;
-
 	URSNetworkThread();
 	~URSNetworkThread();
-
-	void Start(TArray<FRobotEndpoint>&& InEndpoints, int32 AdminPort,
-		double InStateRateHz, double InCameraRateHz);
-	void Stop();
-	bool IsRunning() const { return bRunning.load(); }
-
-	void EnqueueCameraFrame(int32 RobotIdx, uint8 FrameType, const uint8* Data, int32 Len);
+	bool Start(TArray<FURSRobotChannel>&& Channels, const FURSNetworkConfig& InConfig) override;
+	void Stop() override;
+	bool IsRunning() const
+	{
+		return bRunning.load();
+	}
+	void EnqueueCameraFrame(const URSoccerLab::FEncodedCameraFrame& Frame) override;
+	bool DequeueAdminRequest(URSoccerLab::FAdminMessage& Out) override;
+	void EnqueueAdminReply(uint64 ClientId, const FString& Json) override;
+	bool HasCameraSubscribers() const override
+	{
+		return bCameraSubscribers.load();
+	}
 
 private:
+	struct FClient
+	{
+		URSNonBlockingSocket Socket;
+		TArray<uint8> ReadBuf, WriteBuf;
+		TArray<uint8> PendingCameraPayload, PendingDepthPayload;
+		URSoccerLab::FVideoDeliveryGate VideoGate;
+		bool bConnected = true;
+		uint64 ClientId = 0;
+	};
+	struct FRobotEndpoint
+	{
+		FURSRobotChannel Channel;
+		URSNonBlockingSocket Listener;
+		TArray<FClient> Clients;
+		FGainSet AccumulatedGains;
+	};
 	TArray<FRobotEndpoint> Endpoints;
-	double StateRateHz = 60.0;
-	double CameraRateHz = 30.0;
-	double LastStateTime = 0.0;
-
+	URSNonBlockingSocket AdminListener;
+	TArray<FClient> AdminClients;
+	uint64 NextClientId = 1;
+	TQueue<URSoccerLab::FAdminMessage, EQueueMode::Spsc> AdminRequests;
+	TQueue<URSoccerLab::FAdminMessage, EQueueMode::Spsc> AdminReplies;
+	std::atomic<int32> PendingAdminRequests{0};
+	// Latest frame per actor, bounded by endpoint count, independent of TCP framing.
+	FCriticalSection CameraMutex;
+	TMap<FString, URSoccerLab::FEncodedCameraFrame> CameraFrames;
+	double StateRateHz = 60, LastStateTime = 0;
+	FURSNetworkConfig Config;
 	std::atomic<bool> bRunning{false};
+	std::atomic<bool> bCameraSubscribers{false};
 	FRunnableThread* Thread = nullptr;
-
 	class FRunnableImpl : public FRunnable
 	{
 		URSNetworkThread* Owner;
-	public:
-		FRunnableImpl(URSNetworkThread* In) : Owner(In) {}
-		virtual uint32 Run() override;
-		virtual void Stop() override { Owner->bRunning.store(false); }
-		virtual bool Init() override { return true; }
-	} *Runnable = nullptr;
 
-	void Tick();
+	public:
+		explicit FRunnableImpl(URSNetworkThread* In) : Owner(In)
+		{
+		}
+		bool Init() override;
+		uint32 Run() override;
+		void Exit() override;
+		void Stop() override
+		{
+			Owner->bRunning.store(false);
+		}
+	};
+	FRunnableImpl* Runnable = nullptr;
+	bool OpenListeners();
+	void CloseSockets();
 	void AcceptConnections();
 	void ReadFromClients();
-	void ProcessClientData(int32 RobotIdx, const uint8* Data, int32 Len);
+	void ReadClients(TArray<FClient>& Clients, int32 RobotIndex);
 	void PublishStates();
 	void DrainCameraQueues();
+	void DrainAdminReplies();
 	void FlushWrites();
-
-	// Frame protocol helpers
-	static void EnqueueFrame(TArray<uint8>& WriteBuf, uint8 Type, const uint8* Data, int32 Len);
+	void FlushClients(TArray<FClient>& Clients);
 };

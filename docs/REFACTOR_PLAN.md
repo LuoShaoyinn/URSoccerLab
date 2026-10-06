@@ -1,5 +1,8 @@
 # URSoccerLab Lock-Free Refactor Plan
 
+Historical plan. The implemented camera/protocol/transport boundaries and current
+threading and queue contracts are documented in [Runtime Architecture](Runtime_Architecture.md).
+
 ## Architecture: 3 threads, 3 triple buffers, zero locks
 
 ```

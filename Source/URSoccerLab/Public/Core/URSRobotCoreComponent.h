@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "Scene/URSSceneConfig.h"
 #include "URSSnapshot.h"
+#include "Core/URSRobotChannel.h"
 #include "Core/URSTripleBuffer.h"
 #include "Core/URSBuffers.h"
 #include "URSRobotCoreComponent.generated.h"
@@ -13,7 +14,6 @@ class AMjArticulation;
 class UMjActuator;
 class UMjJoint;
 class UMjCamera;
-class UURSTcpTransportComponent;
 
 // Legacy state struct (kept for Blueprint compatibility + camera publish path)
 USTRUCT(BlueprintType)
@@ -75,7 +75,6 @@ UCLASS(ClassGroup = (URSoccerLab), meta = (BlueprintSpawnableComponent))
 class URSOCCERLAB_API UURSRobotCoreComponent : public UActorComponent
 {
 	GENERATED_BODY()
-	friend class UURSTcpTransportComponent;
 
 public:
 	UURSRobotCoreComponent();
@@ -138,8 +137,8 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	// Access for transport to wire triple buffers
-	friend class UURSTcpTransportComponent;
+	// Copies metadata and stable handles under the endpoint lock.
+	TArray<FURSRobotChannel> GetRobotChannels() const;
 
 private:
 	struct FActuatorInfo
@@ -234,7 +233,6 @@ private:
 	};
 
 	TArray<FRobotEndpoint> Endpoints;
-	TArray<FRobotEndpoint>& GetEndpoints() { return Endpoints; }
 	TMap<FString, int32> ActorRootBodyIds;
 	// Buffer payloads are lock-free; this lock protects endpoint metadata and
 	// object lifetime during scene rebuilds.

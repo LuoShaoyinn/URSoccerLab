@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Convert imported emissive cylinder meshes into real Unreal area lights.
 
-The GLB importer preserves emissive materials, but emissive surfaces alone do
-not provide practical direct lighting. This script finds imported mesh actors
+The original combined lamp mesh has no Lumen cards. For emissive-only lighting,
+use split_emissive_lamps.py. This optional analytic-light script finds mesh actors
 whose material has a non-zero ``EmissiveFactor``, welds split render vertices,
 and places one movable, omnidirectional Point Light per disconnected physical
 mesh volume.
@@ -29,15 +29,15 @@ ASSET_PATH_PREFIX = "/Game/URSoccerLab/Scenes/SoccerField/Environment"
 GENERATED_LABEL_PREFIX = "URS_AutoEmissiveLamp_"
 GENERATED_TAG = "URS_AutoEmissiveLamp"
 GENERATED_FOLDER = "URS/GeneratedLights/EmissiveLamps"
-REPORT_PATH = ROOT / "Saved/Diagnostics/emissive_lights.json"
+REPORT_PATH = ROOT / "artifacts/diagnostics/emissive_lights.json"
 
 # These are broad indoor-area-light defaults. They can be tuned in one place
 # and the script rerun without accumulating duplicate actors.
-INTENSITY_LUMENS = 280.0
+INTENSITY_LUMENS = 224.0
 EMISSIVE_STRENGTH = 1.0
 EMISSIVE_FACTOR_LEVEL = 10.0
 ATTENUATION_RADIUS_CM = 900.0
-SOURCE_RADIUS_CM = 14.0
+SOURCE_RADIUS_CM = 60.0
 MIN_VOLUME_EXTENT_CM = 2.0
 MAX_VOLUME_EXTENT_CM = 500.0
 CAST_SHADOWS = True
@@ -292,12 +292,16 @@ def configure_light(
         unreal.LinearColor(color[0], color[1], color[2], 1.0), True
     )
     component.set_source_radius(SOURCE_RADIUS_CM)
-    # The visible mesh supplies the fixture's appearance. Prevent the hidden
-    # analytic approximation from producing point/sphere-shaped highlights.
+    # Suppress spherical direct highlights from the point-light approximation.
+    # Diffuse lighting and soft shadows remain enabled.
     component.set_specular_scale(0.0)
     component.set_cast_shadows(CAST_SHADOWS)
     component.set_indirect_lighting_intensity(1.0)
     component.set_volumetric_scattering_intensity(1.0)
+    component.set_editor_property(
+        "lighting_channels",
+        unreal.LightingChannels(channel0=True, channel1=False, channel2=False),
+    )
 
 
 def main() -> None:
@@ -358,14 +362,13 @@ def main() -> None:
             # high camera-visible emission from becoming an extra Lumen source.
             mesh_component.set_emissive_light_source(False)
             mesh_component.set_affect_dynamic_indirect_lighting(False)
-            # Keep the visible emitter purely emissive. Otherwise its centered
-            # analytic Point Light illuminates the opaque lamp shell itself,
-            # producing a misleading bright dot instead of an even glow.
+            # The Unlit material keeps the visible emitter purely emissive.
+            # Use the same lighting channel as the rest of the scene.
             mesh_component.set_editor_property(
                 "lighting_channels",
                 unreal.LightingChannels(
-                    channel0=False,
-                    channel1=True,
+                    channel0=True,
+                    channel1=False,
                     channel2=False,
                 ),
             )

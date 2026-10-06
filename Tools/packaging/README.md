@@ -1,10 +1,11 @@
 # URSoccerLab AppImage Packaging
 
 Package the URSoccerLab simulator into a portable Linux AppImage. The AppImage
-contains **only** the cooked game binary + all assets (field, ball, pi_plus +
-mos9 robots) + the C++ runtime libs it needs (MuJoCo, ZMQ, CoACD, libstdc++). It
+contains **only** the cooked game binary + assets (hall, generic field/goal primitives, ball and generic external robot loaders) + the C++ runtime libs it needs (MuJoCo, ZMQ, CoACD, libstdc++). It
 excludes UnrealEditor, `py_example/`, and `Tools/`. The user supplies the scene
-config and Python clients externally. Vulkan + GPU drivers come from the host
+config, external robot packages, field textures, and Python clients externally.
+The pitch image and former goal meshes are not cooked into the simulator.
+Both goal poses and dimensions must be supplied in scene JSON. Vulkan + GPU drivers come from the host
 (AMD or NVIDIA); they are intentionally NOT bundled.
 
 ## Usage

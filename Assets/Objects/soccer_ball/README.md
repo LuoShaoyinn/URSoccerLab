@@ -14,3 +14,9 @@ https://creativecommons.org/licenses/by/4.0/
 
 Changes made for this project: the source was resized to 150 mm maximum
 diameter and its skinned geometry was flattened to a static GLB for Unreal.
+
+The source size is a default. A scene object's optional `physics` block overrides
+`radius_m`, `mass_kg`, three-value `friction`, and two-value `solref` at launch.
+Collision and visual sizes follow the same radius; solid sphere inertia is
+recomputed. Omit `translation_m` to spawn its center at the configured radius.
+These overrides do not require rebaking this asset.

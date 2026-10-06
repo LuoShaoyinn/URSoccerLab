@@ -13,6 +13,8 @@ from PIL import Image
 
 def camera_to_rgb(camera: dict) -> np.ndarray:
     """Decode one camera dictionary returned by ``RobotClient``."""
+    if "_rgb" in camera:
+        return camera["_rgb"]
     data = camera["data"]
     if not data:
         raise ValueError("camera frame has no pixel data")
@@ -23,6 +25,8 @@ def camera_to_rgb(camera: dict) -> np.ndarray:
             "RGBA",
             (int(camera["width"]), int(camera["height"])),
             data,
+            "raw",
+            "BGRA" if camera.get("pixel_format") == "bgra8" else "RGBA",
         )
         return np.asarray(image.convert("RGB"))
     raise ValueError(f"unsupported camera codec: {camera['codec']}")

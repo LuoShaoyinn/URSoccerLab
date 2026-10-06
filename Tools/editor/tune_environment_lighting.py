@@ -16,7 +16,7 @@ import unreal
 
 ROOT = Path(__file__).resolve().parents[2]
 LEVEL_PATH = "/Game/Levels/URS_SoccerField"
-REPORT_PATH = ROOT / "Saved/Diagnostics/environment_lighting.json"
+REPORT_PATH = ROOT / "artifacts/diagnostics/environment_lighting.json"
 
 # Dark, drizzly daylight: direct sun is heavily suppressed so the indoor lamps
 # remain visible against the real-time Sky Light's diffuse overcast fill.

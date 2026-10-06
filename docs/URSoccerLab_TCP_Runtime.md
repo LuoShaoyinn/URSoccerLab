@@ -2,32 +2,28 @@
 
 ## Implemented
 
-- **Modular TCP transport**: `UURSTcpTransportComponent` (auto-created by `AURSSoccerGameMode`) owns per-robot listeners and one global admin listener.
+- **Modular TCP transport**: `UURSTcpTransportComponent` coordinates a replaceable `IURSNetworkService`. The TCP socket worker owns per-robot listeners and one global admin listener. See [runtime boundaries](Runtime_Architecture.md).
 - **Per-robot command sockets**: one TCP listener per active robot. Default ports: `robot_rp0` = 10000, `robot_rp1` = 10001, etc.
 - **Admin RPC socket**: one TCP listener on port 11000 (global, shared by all robots).
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
 - **State publishing**: outbound JSON on the robot port at `StateRateHz` (default 60 Hz). Includes `sim_time`, base pose/velocity, joint qpos/qvel, actuator values, and camera metadata.
-- **Vision publishing**: RGB (`0x01`) and depth (`0x02`) are separate,
-  versioned binary messages. Scene config selects stereo RGB or aligned RGBD
-  and gives RGB/depth independent rates and codecs. Packets are emitted only
-  when a new GPU readback is available.
-- **Default camera stream**: stereo 640x480 RGB at 30 Hz, JPEG quality 85.
-- **Bounded asynchronous encoding**: JPEG encoding and depth
-  quantization/compression run on Unreal's worker pool. Each robot permits at
-  most one in-flight RGB job and one in-flight depth job, so slow encoding
-  drops stale opportunities instead of blocking physics or growing a queue.
+- **Vision publishing**: the independent camera component emits versioned RGB (`0x01`) image sets after GPU readback. The protocol also reserves depth (`0x02`); the current capture/encoder path publishes RGB.
+- **Default camera stream**: example scenes use stereo 640x480 per eye at 30 Hz, Vulkan AV1. JPEG/raw remain selectable. See [AV1 runtime](AV1_Runtime.md).
+- **Bounded asynchronous encoding**: `UURSCameraStreamComponent` owns capture scheduling and `FImageEncoder` runs on Unreal's worker pool. Each robot permits at most one in-flight RGB job per scene generation. No socket or packet-framing code runs in the camera component or encoder.
 - **Single network owner**: URSoccerLab leaves URLab camera rendering and
   readback enabled but disables URLab's legacy ZMQ, shared-memory, and RPC
   transports. Project messages are published only through the consolidated
   TCP transport described here.
 - **Physics/render isolation**: MuJoCo steps on URLab's dedicated physics
-  thread. The game/TCP thread reads the latest coherent render snapshot rather
-  than live `mjData`; endpoint and command state is synchronized separately.
+  thread. Unreal reads a coherent render snapshot, while the network worker reads
+  its own state snapshot buffer. Neither hot path reads live `mjData`; endpoint
+  and command state is synchronized separately.
   Rendering and compression can therefore miss camera-rate opportunities
   without stalling or racing the integrator.
 - **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. The default amount is `0.5` (a 180-degree shutter), the maximum streak is 5% of screen width, and velocity scaling follows `CameraRateHz`.
-- **Outbound write queues**: each client has a `WriteBuffer`. Frames are enqueued non-blocking and flushed every transport tick. Clients whose queue exceeds `MaxSendQueueBytes` (default 4 MB) are disconnected (back-pressure).
-- **Command watchdog**: `CommandTimeoutSec` (default 2 s). If no valid command arrives within the timeout, motors are zeroed.
+- **Outbound buffering**: the network worker flushes nonblocking writes. Each client keeps one latest video frame waiting behind any partially sent frame. The byte stream is never truncated mid-frame; clients whose unsent byte buffer exceeds 4 MiB are disconnected.
+- **Admin threading**: socket I/O runs on the network worker. Ordered requests cross a queue to the game-thread admin service, and replies return to the originating connection.
+- **Command watchdog**: `CommandTimeoutSec` (default 0.1 s). If no valid command arrives within the timeout, motors are zeroed.
 
 Motion blur can be tuned per run:
 
@@ -72,7 +68,7 @@ All TCP communication uses length-prefixed frames:
 [sequence LE32] [sim_time LE float64]
   per image:
     [camera_name_length u8] [camera_name UTF-8]
-    [codec u8] [pixel_format u8] [reserved u8]
+    [codec u8] [pixel_format u8] [image_flags u8]
     [width LE16] [height LE16]
     [uncompressed_length LE32] [data_length LE32] [data]
 ```
@@ -195,11 +191,11 @@ py_example/.venv/bin/python Tools/runtime/run_scene.py \
 ```bash
 py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_rgbd.json \
-  --duration-sec 12 --output Saved/Benchmarks/six_rgbd.json
+  --duration-sec 12 --output artifacts/benchmarks/six_rgbd.json
 
 py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json \
-  --duration-sec 12 --output Saved/Benchmarks/six_stereo_rgb.json
+  --duration-sec 12 --output artifacts/benchmarks/six_stereo_rgb.json
 ```
 
 The benchmark uses the production nDisplay atlas by default. Pass

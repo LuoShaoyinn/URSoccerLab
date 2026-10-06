@@ -40,6 +40,10 @@
 				"Linux",
 				"Win64"
 			]
+		},
+		{
+			"Name": "glTFRuntime",
+			"Enabled": true
 		}
 	]
 }

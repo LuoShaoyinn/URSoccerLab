@@ -16,6 +16,7 @@ enum class EURSRgbCompression : uint8
 {
 	Raw,
 	Jpeg,
+	Av1,
 };
 
 enum class EURSDepthCompression : uint8
@@ -30,6 +31,20 @@ struct URSOCCERLAB_API FURSRgbStreamConfig
 	double RateHz = 30.0;
 	EURSRgbCompression Compression = EURSRgbCompression::Jpeg;
 	int32 JpegQuality = 85;
+	int32 BitrateKbps = 2000;
+	double KeyframeIntervalSeconds = 2.0;
+	FString VulkanDevice;
+};
+
+struct URSOCCERLAB_API FURSGuestInspectorConfig
+{
+ FURSGuestInspectorConfig() { Rgb.Compression = EURSRgbCompression::Av1; }
+ bool bEnabled = true;
+ int32 Port = 12000;
+ int32 MaxGuests = 4;
+ int32 Width = 640, Height = 480;
+ double FovDegrees = 90;
+ FURSRgbStreamConfig Rgb;
 };
 
 struct URSOCCERLAB_API FURSDepthStreamConfig
@@ -64,10 +79,28 @@ struct URSOCCERLAB_API FURSRenderConfig
 	double ScreenPercentage = 100.0;  // 10..200
 	int32 ShadowQuality = 3;          // 0..5
 	bool bMotionBlur = false;
+	double MotionBlurAmount = 0.5;
+	double MotionBlurMaxPercent = 5.0;
+	// 0 follows the camera's configured frame rate.
+	int32 MotionBlurTargetFps = 0;
+	double FilmGrainIntensity = 0.0;
+	double FilmGrainShadows = 1.0;
+	double FilmGrainMidtones = 1.0;
+	double FilmGrainHighlights = 1.0;
+	double FilmGrainTexelSize = 1.0;
 	bool bAutoExposure = false;
 	double ExposureCompensation = 0.0;
 	TOptional<int32> ResolutionX;   // e.g. 640
 	TOptional<int32> ResolutionY;   // e.g. 480
+};
+
+struct URSOCCERLAB_API FURSLightingConfig
+{
+	bool bIsSet = false;
+	double LampIntensityLumens = 0.0;
+	TOptional<double> EmissiveIntensity; // Absolute linear emission value; omitted leaves material emission unchanged.
+	double SourceRadiusCm = 60.0;
+	double SpecularScale = 0.0;
 };
 
 struct URSOCCERLAB_API FURSPrivilegeConfig
@@ -112,8 +145,73 @@ struct URSOCCERLAB_API FURSRobotSpawn
 	FURSNoiseConfig Noise;
 };
 
+// External texture paths are relative to the scene JSON. No authored maps are cooked.
+struct URSOCCERLAB_API FURSPBRVisualConfig
+{
+	FString BaseColorMap;
+	FString NormalMap;
+	FString RoughnessMap;
+	FString MetallicMap;
+	FString AoMap;
+	double NormalStrength = 1.0;
+	double Roughness = 0.8;
+	double Metallic = 0.0;
+	// Tangent-space DirectX normals by default; OpenGL flips the green channel.
+	bool bNormalOpenGL = false;
+};
+
+struct URSOCCERLAB_API FURSFieldVisualConfig : FURSPBRVisualConfig
+{
+	double DetailTileSizeM = 0.5;
+};
+
+struct URSOCCERLAB_API FURSFieldPhysicsConfig
+{
+	TArray<float> Friction = {1.0f, 0.005f, 0.0001f};
+	int32 Condim = 3;
+	TArray<float> Solref = {0.02f, 1.0f};
+	TArray<float> Solimp = {0.9f, 0.95f, 0.001f, 0.5f, 2.0f};
+};
+
+struct URSOCCERLAB_API FURSFieldConfig
+{
+	bool bIsSet = false;
+	double LengthM = 9.0;
+	double WidthM = 6.0;
+	double BorderXM = 0.8;
+	double BorderYM = 0.9;
+	FURSFieldVisualConfig Visual;
+	FURSFieldPhysicsConfig Physics;
+};
+
+struct URSOCCERLAB_API FURSGoalPose
+{
+	FVector TranslationMeters = FVector::ZeroVector;
+	double YawDeg = 0.0;
+};
+
+struct URSOCCERLAB_API FURSGoalsConfig
+{
+	bool bIsSet = false;
+	double WidthM = 1.8;
+	double HeightM = 1.2;
+	double PostRadiusM = 0.05;
+	TArray<FURSGoalPose> Poses;
+};
+
+struct URSOCCERLAB_API FURSBallPhysicsConfig
+{
+	bool bIsSet = false;
+	double RadiusM = 0.075;
+	double MassKg = 0.2;
+	TArray<float> Friction = {0.8f, 0.02f, 0.03f};
+	TArray<float> Solref = {-5000.0f, -20.0f};
+};
+
 struct URSOCCERLAB_API FURSObjectSpawn
 {
+	FURSBallPhysicsConfig Physics;
+	TOptional<FURSPBRVisualConfig> Visual;
 	FString ActorId;
 	FString Type;
 	TOptional<FVector> TranslationMeters;
@@ -123,8 +221,13 @@ struct URSOCCERLAB_API FURSObjectSpawn
 struct URSOCCERLAB_API FURSSceneConfig
 {
 	FString Version = TEXT("urs_scene_v1");
+	FURSFieldConfig Field;
+	FURSGoalsConfig Goals;
+	FString SourceDirectory;
 	FURSVisionConfig Vision;
+	FURSGuestInspectorConfig GuestInspector;
 	FURSRenderConfig Render;
+	FURSLightingConfig Lighting;
 
 	// Physics timestep override. 0 = use MJCF default.
 	double MujocoDt = 0.0;
@@ -135,6 +238,8 @@ struct URSOCCERLAB_API FURSSceneConfig
 	// Camera publish rate (Hz). 0 = use vision config default.
 	double CameraFreq = 0.0;
 
+	// External manifests, resolved relative to the scene JSON.
+	TMap<FString, FString> RobotTypes;
 	TArray<FURSRobotSpawn> Robots;
 	TArray<FURSObjectSpawn> Objects;
 };

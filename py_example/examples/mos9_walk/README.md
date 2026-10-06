@@ -30,7 +30,7 @@ cd py_example
 uv run python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 \
   --vx 0.4 --duration 15 \
-  --video out/mos9_walker.mp4 --observer-video out/mos9_observer.mp4
+  --video ../artifacts/outputs/mos9_walker.mp4 --observer-video ../artifacts/outputs/mos9_observer.mp4
 ```
 
 For solo walking (no observer): `--observer-port 0` and launch with
@@ -48,4 +48,4 @@ For solo walking (no observer): `--observer-port 0` and launch with
 
 ## Output
 
-Walker and observer H.264 MP4s under `out/`.
+Walker and observer H.264 MP4s under `../artifacts/outputs/`.
