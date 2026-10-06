@@ -116,4 +116,48 @@ bool FURSFieldPBRConfigTest::RunTest(const FString& Parameters)
 	IFileManager::Get().Delete(*File);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FURSBallPBRConfigTest, "URSoccerLab.Scene.BallPBR.ConfigValidation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FURSBallPBRConfigTest::RunTest(const FString& Parameters)
+{
+    FURSObjectTypeRegistry::Get().RegisterDefaultTypes();
+    FURSRobotTypeRegistry::Get().RegisterDefaultTypes();
+    auto Config = FURSSceneConfigIo::MakeDefault();
+    FURSPBRVisualConfig V;
+    V.BaseColorMap = TEXT("ball.png"); V.NormalMap = TEXT("ball_normal.png");
+    V.AoMap = TEXT("ball_ao.png"); V.RoughnessMap = TEXT("ball_rough.png");
+    V.MetallicMap = TEXT("ball_metal.png"); V.bNormalOpenGL = true;
+    V.NormalStrength = 0.6; V.Roughness = 0.4; V.Metallic = 0.2;
+    Config.Objects[0].Visual = V;
+    const FString File = FPaths::CreateTempFilename(*FPaths::ProjectSavedDir(), TEXT("BallPBR"), TEXT(".json"));
+    FString Error; FURSSceneConfig Loaded;
+    TestTrue(TEXT("ball PBR writes"), FURSSceneConfigIo::WriteToFile(File, Config, Error));
+    TestTrue(TEXT("ball PBR reads"), FURSSceneConfigIo::LoadFromFile(File, Loaded, Error));
+    TestTrue(TEXT("ball PBR validates"), FURSSceneConfigIo::Validate(Loaded).bOk);
+    if (TestTrue(TEXT("ball visual survives roundtrip"), Loaded.Objects[0].Visual.IsSet()))
+    {
+        const auto& Read = Loaded.Objects[0].Visual.GetValue();
+        TestEqual(TEXT("base path"), Read.BaseColorMap, V.BaseColorMap);
+        TestEqual(TEXT("normal path"), Read.NormalMap, V.NormalMap);
+        TestEqual(TEXT("AO path"), Read.AoMap, V.AoMap);
+        TestEqual(TEXT("roughness path"), Read.RoughnessMap, V.RoughnessMap);
+        TestEqual(TEXT("metallic path"), Read.MetallicMap, V.MetallicMap);
+        TestTrue(TEXT("OpenGL convention"), Read.bNormalOpenGL);
+        TestEqual(TEXT("normal strength"), Read.NormalStrength, V.NormalStrength);
+    }
+    Loaded = Config; Loaded.Objects[0].Visual.GetValue().Roughness = -0.1;
+    TestFalse(TEXT("invalid ball roughness rejected"), FURSSceneConfigIo::Validate(Loaded).bOk);
+    Loaded = Config; Loaded.Objects[0].Visual.GetValue().BaseColorMap.Empty();
+    TestFalse(TEXT("ball base map required when visual specified"), FURSSceneConfigIo::Validate(Loaded).bOk);
+    FString Json; FFileHelper::LoadFileToString(Json, *File);
+    FFileHelper::SaveStringToFile(Json.Replace(TEXT("\"base_color_map\":\"ball.png\""), TEXT("\"base_color_map\":5")), *File);
+    TestFalse(TEXT("numeric ball texture path rejected"), FURSSceneConfigIo::LoadFromFile(File, Loaded, Error));
+    Config.Objects[0].Visual.Reset();
+    TestTrue(TEXT("old ball configs still write"), FURSSceneConfigIo::WriteToFile(File, Config, Error));
+    TestTrue(TEXT("old ball configs still read"), FURSSceneConfigIo::LoadFromFile(File, Loaded, Error));
+    TestFalse(TEXT("omitted visual remains omitted"), Loaded.Objects[0].Visual.IsSet());
+    IFileManager::Get().Delete(*File);
+    return true;
+}
 #endif

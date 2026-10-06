@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Convert imported emissive cylinder meshes into real Unreal area lights.
 
-The GLB importer preserves emissive materials, but emissive surfaces alone do
-not provide practical direct lighting. This script finds imported mesh actors
+The original combined lamp mesh has no Lumen cards. For emissive-only lighting,
+use split_emissive_lamps.py. This optional analytic-light script finds mesh actors
 whose material has a non-zero ``EmissiveFactor``, welds split render vertices,
 and places one movable, omnidirectional Point Light per disconnected physical
 mesh volume.
@@ -292,9 +292,9 @@ def configure_light(
         unreal.LinearColor(color[0], color[1], color[2], 1.0), True
     )
     component.set_source_radius(SOURCE_RADIUS_CM)
-    # Broad, restrained highlights keep black metal readable without strong
-    # point-shaped reflections on the hall walls.
-    component.set_specular_scale(0.1)
+    # Suppress spherical direct highlights from the point-light approximation.
+    # Diffuse lighting and soft shadows remain enabled.
+    component.set_specular_scale(0.0)
     component.set_cast_shadows(CAST_SHADOWS)
     component.set_indirect_lighting_intensity(1.0)
     component.set_volumetric_scattering_intensity(1.0)

@@ -1,5 +1,6 @@
 #include "Scene/URSFieldTextures.h"
 #include "Engine/Texture2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "ImageCore.h"
 #include "ImageUtils.h"
 #include "Misc/FileHelper.h"
@@ -17,12 +18,12 @@ bool ReadImage(const FString& Path, const FString& Directory, bool Srgb, FImage&
 	FImage Decoded;
 	if (!FFileHelper::LoadFileToArray(Bytes, *Absolute) || !FImageUtils::DecompressImage(Bytes.GetData(), Bytes.Num(), Decoded))
 	{
-		Error = FString::Printf(TEXT("cannot decode external field texture: %s"), *Absolute);
+		Error = FString::Printf(TEXT("cannot decode external texture: %s"), *Absolute);
 		return false;
 	}
 	if (Decoded.NumSlices != 1 || Decoded.SizeX < 1 || Decoded.SizeY < 1 || Decoded.SizeX > 8192 || Decoded.SizeY > 8192)
 	{
-		Error = FString::Printf(TEXT("field texture must be a 2D image at most 8192x8192: %s"), *Absolute);
+		Error = FString::Printf(TEXT("texture must be a 2D image at most 8192x8192: %s"), *Absolute);
 		return false;
 	}
 	// Image decoders often tag PNG data as sRGB. Data maps carry numerical values;
@@ -70,7 +71,7 @@ FImage Solid(FColor Color)
 }
 }
 
-bool FFieldTextures::Load(const FURSFieldVisualConfig& V, const FString& Directory, FFieldTextures& Out, FString& Error)
+bool FFieldTextures::Load(const FURSPBRVisualConfig& V, const FString& Directory, FFieldTextures& Out, FString& Error, bool bClampBaseColor)
 {
 	check(IsInGameThread());
 	FImage Base, Normal, Roughness, Metallic, Ao;
@@ -95,15 +96,31 @@ bool FFieldTextures::Load(const FURSFieldVisualConfig& V, const FString& Directo
 	for (int64 I = 0; I < Packed.AsBGRA8().Num(); ++I)
 		Packed.AsBGRA8()[I] = FColor(255, V.RoughnessMap.IsEmpty() ? 255 : RoughResized.AsBGRA8()[I].R,
 			V.MetallicMap.IsEmpty() ? 255 : MetalResized.AsBGRA8()[I].R, 255);
-	Out.BaseColor = MakeTexture(MoveTemp(Base), true, false, true);
+	Out.BaseColor = MakeTexture(MoveTemp(Base), true, false, bClampBaseColor);
 	Out.Normal = MakeTexture(MoveTemp(Normal), false, true, false);
 	Out.MetallicRoughness = MakeTexture(MoveTemp(Packed), false, false, false);
 	Out.Ao = MakeTexture(MoveTemp(Ao), false, false, false);
 	if (!Out.BaseColor || !Out.Normal || !Out.MetallicRoughness || !Out.Ao)
 	{
-		Error = TEXT("could not allocate runtime field textures");
+		Error = TEXT("could not allocate runtime textures");
 		return false;
 	}
 	return true;
 }
+void FFieldTextures::Apply(UMaterialInstanceDynamic* Material, const FURSPBRVisualConfig& V,
+    const FLinearColor& DetailTransform) const
+{
+    check(Material);
+    Material->SetTextureParameterValue(TEXT("BaseColorTexture"), BaseColor);
+    Material->SetTextureParameterValue(TEXT("NormalTexture"), Normal);
+    Material->SetTextureParameterValue(TEXT("MetallicRoughnessTexture"), MetallicRoughness);
+    Material->SetTextureParameterValue(TEXT("OcclusionTexture"), Ao);
+    Material->SetScalarParameterValue(TEXT("NormalScale"), V.NormalMap.IsEmpty() ? 0 : V.NormalStrength);
+    Material->SetScalarParameterValue(TEXT("RoughnessFactor"), V.RoughnessMap.IsEmpty() ? V.Roughness : 1);
+    Material->SetScalarParameterValue(TEXT("MetallicFactor"), V.MetallicMap.IsEmpty() ? V.Metallic : 1);
+    Material->SetVectorParameterValue(TEXT("BaseColorTexture_OffsetScale"), FLinearColor(0, 0, 1, 1));
+    for (const TCHAR* Name : {TEXT("NormalTexture_OffsetScale"), TEXT("MetallicRoughnessTexture_OffsetScale"), TEXT("OcclusionTexture_OffsetScale")})
+        Material->SetVectorParameterValue(Name, DetailTransform);
+}
+
 }

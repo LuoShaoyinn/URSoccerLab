@@ -149,8 +149,9 @@
     "pi_plus": "../../../external/robots/pi_plus/robot.json"
   },
   "lighting": {
-    "lamp_intensity_lumens": 224,
+    "lamp_intensity_lumens": 0,
+    "emissive_intensity": 10.0,
     "source_radius_cm": 60,
-    "specular_scale": 0.1
+    "specular_scale": 0.0
   }
 }

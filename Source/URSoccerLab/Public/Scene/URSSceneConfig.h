@@ -97,9 +97,10 @@ struct URSOCCERLAB_API FURSRenderConfig
 struct URSOCCERLAB_API FURSLightingConfig
 {
 	bool bIsSet = false;
-	double LampIntensityLumens = 224.0;
+	double LampIntensityLumens = 0.0;
+	TOptional<double> EmissiveIntensity; // Absolute linear emission value; omitted leaves material emission unchanged.
 	double SourceRadiusCm = 60.0;
-	double SpecularScale = 0.1;
+	double SpecularScale = 0.0;
 };
 
 struct URSOCCERLAB_API FURSPrivilegeConfig
@@ -145,19 +146,23 @@ struct URSOCCERLAB_API FURSRobotSpawn
 };
 
 // External texture paths are relative to the scene JSON. No authored maps are cooked.
-struct URSOCCERLAB_API FURSFieldVisualConfig
+struct URSOCCERLAB_API FURSPBRVisualConfig
 {
 	FString BaseColorMap;
 	FString NormalMap;
 	FString RoughnessMap;
 	FString MetallicMap;
 	FString AoMap;
-	double DetailTileSizeM = 0.5;
 	double NormalStrength = 1.0;
 	double Roughness = 0.8;
 	double Metallic = 0.0;
 	// Tangent-space DirectX normals by default; OpenGL flips the green channel.
 	bool bNormalOpenGL = false;
+};
+
+struct URSOCCERLAB_API FURSFieldVisualConfig : FURSPBRVisualConfig
+{
+	double DetailTileSizeM = 0.5;
 };
 
 struct URSOCCERLAB_API FURSFieldPhysicsConfig
@@ -206,6 +211,7 @@ struct URSOCCERLAB_API FURSBallPhysicsConfig
 struct URSOCCERLAB_API FURSObjectSpawn
 {
 	FURSBallPhysicsConfig Physics;
+	TOptional<FURSPBRVisualConfig> Visual;
 	FString ActorId;
 	FString Type;
 	TOptional<FVector> TranslationMeters;

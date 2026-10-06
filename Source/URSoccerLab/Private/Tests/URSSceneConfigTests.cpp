@@ -296,6 +296,7 @@ bool FURSSceneLightingEffectsTest::RunTest(const FString& Parameters)
      FPaths::Combine(FPaths::ProjectDir(), TEXT("Config/URS_scene.json")), Config, Error))) return false;
  Config.Lighting.bIsSet = true;
  Config.Lighting.LampIntensityLumens = 112;
+ Config.Lighting.EmissiveIntensity = 0.25;
  Config.Lighting.SourceRadiusCm = 60;
  Config.Lighting.SpecularScale = 0.1;
  Config.Render.bIsSet = true;
@@ -312,6 +313,10 @@ bool FURSSceneLightingEffectsTest::RunTest(const FString& Parameters)
  FURSSceneConfig Loaded;
  if (!TestTrue(TEXT("round trip"), FURSSceneConfigIo::LoadFromFile(Path, Loaded, Error))) return false;
  TestEqual(TEXT("lumens"), Loaded.Lighting.LampIntensityLumens, 112.0);
+ TestTrue(TEXT("emission roundtrip"), Loaded.Lighting.EmissiveIntensity.IsSet() && Loaded.Lighting.EmissiveIntensity.GetValue() == 0.25);
+ Config.Lighting.EmissiveIntensity = -1;
+ TestFalse(TEXT("negative emission rejected"), FURSSceneConfigIo::Validate(Config).bOk);
+ Config.Lighting.EmissiveIntensity = 0.25;
  TestEqual(TEXT("source radius"), Loaded.Lighting.SourceRadiusCm, 60.0);
  TestEqual(TEXT("specular scale"), Loaded.Lighting.SpecularScale, 0.1);
  TestEqual(TEXT("blur amount"), Loaded.Render.MotionBlurAmount, 0.3);

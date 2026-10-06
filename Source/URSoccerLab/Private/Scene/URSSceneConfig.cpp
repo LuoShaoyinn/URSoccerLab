@@ -11,6 +11,64 @@ namespace URSoccerLab
 {
 namespace
 {
+bool ReadPBRVisual(const TSharedPtr<FJsonObject>& Visual, FURSPBRVisualConfig& V, FString& Error)
+{
+	if (!Visual->HasField(TEXT("base_color_map")))
+	{ Error = TEXT("visual.base_color_map is required"); return false; }
+	for (const auto& Item : {TPair<const TCHAR*, FString*>(TEXT("base_color_map"), &V.BaseColorMap),
+		{TEXT("normal_map"), &V.NormalMap}, {TEXT("roughness_map"), &V.RoughnessMap},
+		{TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
+	{
+		if (Visual->HasField(Item.Key) &&
+			(Visual->TryGetField(Item.Key)->Type != EJson::String || !Visual->TryGetStringField(Item.Key, *Item.Value) || Item.Value->IsEmpty()))
+		{
+			Error = FString::Printf(TEXT("visual.%s must be a nonempty path string"), Item.Key);
+			return false;
+		}
+	}
+	for (const auto& Item : {TPair<const TCHAR*, double*>(TEXT("normal_strength"), &V.NormalStrength), {TEXT("roughness"), &V.Roughness}, {TEXT("metallic"), &V.Metallic}})
+	{
+		if (Visual->HasField(Item.Key) &&
+			(Visual->TryGetField(Item.Key)->Type != EJson::Number || !Visual->TryGetNumberField(Item.Key, *Item.Value)))
+		{
+			Error = FString::Printf(TEXT("visual.%s must be numeric"), Item.Key);
+			return false;
+		}
+	}
+	if (Visual->HasField(TEXT("normal_format")))
+	{
+		FString Format;
+		if (!Visual->TryGetStringField(TEXT("normal_format"), Format) || (Format != TEXT("directx") && Format != TEXT("opengl")))
+		{
+			Error = TEXT("visual.normal_format must be directx or opengl");
+			return false;
+		}
+		V.bNormalOpenGL = Format == TEXT("opengl");
+	}
+	return true;
+}
+
+bool ValidPBRVisual(const FURSPBRVisualConfig& V)
+{
+	return !V.BaseColorMap.IsEmpty() && FMath::IsFinite(V.NormalStrength) && V.NormalStrength >= 0 && V.NormalStrength <= 10 &&
+		FMath::IsFinite(V.Roughness) && V.Roughness >= 0 && V.Roughness <= 1 &&
+		FMath::IsFinite(V.Metallic) && V.Metallic >= 0 && V.Metallic <= 1;
+}
+
+TSharedPtr<FJsonObject> WritePBRVisual(const FURSPBRVisualConfig& V)
+{
+	auto Visual = MakeShared<FJsonObject>();
+	Visual->SetStringField(TEXT("base_color_map"), V.BaseColorMap);
+	for (const auto& Item : {TPair<const TCHAR*, const FString*>(TEXT("normal_map"), &V.NormalMap),
+		{TEXT("roughness_map"), &V.RoughnessMap}, {TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
+		if (!Item.Value->IsEmpty()) Visual->SetStringField(Item.Key, *Item.Value);
+	Visual->SetNumberField(TEXT("normal_strength"), V.NormalStrength);
+	Visual->SetNumberField(TEXT("roughness"), V.Roughness);
+	Visual->SetNumberField(TEXT("metallic"), V.Metallic);
+	Visual->SetStringField(TEXT("normal_format"), V.bNormalOpenGL ? TEXT("opengl") : TEXT("directx"));
+	return Visual;
+}
+
 bool ReadFieldSettings(const TSharedPtr<FJsonObject>& Field, FURSFieldConfig& Out, FString& Error)
 {
 	if (Field->HasField(TEXT("map_image")))
@@ -24,38 +82,11 @@ bool ReadFieldSettings(const TSharedPtr<FJsonObject>& Field, FURSFieldConfig& Ou
 		Error = TEXT("field.visual with base_color_map is required");
 		return false;
 	}
-	auto& V = Out.Visual;
-	for (const auto& Item : {TPair<const TCHAR*, FString*>(TEXT("base_color_map"), &V.BaseColorMap),
-		{TEXT("normal_map"), &V.NormalMap}, {TEXT("roughness_map"), &V.RoughnessMap},
-		{TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
-	{
-		if ((*Visual)->HasField(Item.Key) &&
-			((*Visual)->TryGetField(Item.Key)->Type != EJson::String || !(*Visual)->TryGetStringField(Item.Key, *Item.Value) || Item.Value->IsEmpty()))
-		{
-			Error = FString::Printf(TEXT("field.visual.%s must be a nonempty path string"), Item.Key);
-			return false;
-		}
-	}
-	for (const auto& Item : {TPair<const TCHAR*, double*>(TEXT("detail_tile_size_m"), &V.DetailTileSizeM),
-		{TEXT("normal_strength"), &V.NormalStrength}, {TEXT("roughness"), &V.Roughness}, {TEXT("metallic"), &V.Metallic}})
-	{
-		if ((*Visual)->HasField(Item.Key) &&
-			((*Visual)->TryGetField(Item.Key)->Type != EJson::Number || !(*Visual)->TryGetNumberField(Item.Key, *Item.Value)))
-		{
-			Error = FString::Printf(TEXT("field.visual.%s must be numeric"), Item.Key);
-			return false;
-		}
-	}
-	if ((*Visual)->HasField(TEXT("normal_format")))
-	{
-		FString Format;
-		if (!(*Visual)->TryGetStringField(TEXT("normal_format"), Format) || (Format != TEXT("directx") && Format != TEXT("opengl")))
-		{
-			Error = TEXT("field.visual.normal_format must be directx or opengl");
-			return false;
-		}
-		V.bNormalOpenGL = Format == TEXT("opengl");
-	}
+	if (!ReadPBRVisual(*Visual, Out.Visual, Error)) return false;
+	if ((*Visual)->HasField(TEXT("detail_tile_size_m")) &&
+		((*Visual)->TryGetField(TEXT("detail_tile_size_m"))->Type != EJson::Number ||
+		 !(*Visual)->TryGetNumberField(TEXT("detail_tile_size_m"), Out.Visual.DetailTileSizeM)))
+	{ Error = TEXT("field.visual.detail_tile_size_m must be numeric"); return false; }
 	if (!Field->HasField(TEXT("physics"))) return true;
 	const TSharedPtr<FJsonObject>* Physics;
 	if (!Field->TryGetObjectField(TEXT("physics"), Physics))
@@ -589,6 +620,12 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
   if (!Root->TryGetObjectField(TEXT("lighting"), Lighting) || !Lighting || !Lighting->IsValid())
   { OutError = TEXT("lighting must be an object"); return false; }
   Out.Lighting.bIsSet = true;
+  if ((*Lighting)->HasField(TEXT("emissive_intensity")))
+  {
+   double Strength = 1.0;
+   if (!ReadEffectNumber(*Lighting, TEXT("emissive_intensity"), Strength, TEXT("lighting"), OutError)) return false;
+   Out.Lighting.EmissiveIntensity = Strength;
+  }
   if (!ReadEffectNumber(*Lighting, TEXT("lamp_intensity_lumens"), Out.Lighting.LampIntensityLumens,
                         TEXT("lighting"), OutError)
       || !ReadEffectNumber(*Lighting, TEXT("source_radius_cm"), Out.Lighting.SourceRadiusCm, TEXT("lighting"), OutError)
@@ -763,6 +800,15 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 				}
 				Spawn.RotationQuatXyzw = Rot;
 			}
+			if ((*ObjectObj)->HasField(TEXT("visual")))
+			{
+				const TSharedPtr<FJsonObject>* Visual = nullptr;
+				FURSPBRVisualConfig Settings;
+				if (!(*ObjectObj)->TryGetObjectField(TEXT("visual"), Visual))
+				{ OutError = TEXT("object.visual must be an object"); return false; }
+				if (!ReadPBRVisual(*Visual, Settings, OutError)) return false;
+				Spawn.Visual = MoveTemp(Settings);
+			}
 			if ((*ObjectObj)->HasField(TEXT("physics")))
 			{
 				const TSharedPtr<FJsonObject> *Physics = nullptr;
@@ -829,17 +875,8 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		F->SetNumberField(TEXT("width_m"), In.Field.WidthM);
 		F->SetNumberField(TEXT("border_x_m"), In.Field.BorderXM);
 		F->SetNumberField(TEXT("border_y_m"), In.Field.BorderYM);
-		auto Visual = MakeShared<FJsonObject>();
-		const auto& V = In.Field.Visual;
-		Visual->SetStringField(TEXT("base_color_map"), V.BaseColorMap);
-		for (const auto& Item : {TPair<const TCHAR*, const FString*>(TEXT("normal_map"), &V.NormalMap),
-			{TEXT("roughness_map"), &V.RoughnessMap}, {TEXT("metallic_map"), &V.MetallicMap}, {TEXT("ao_map"), &V.AoMap}})
-			if (!Item.Value->IsEmpty()) Visual->SetStringField(Item.Key, *Item.Value);
-		Visual->SetNumberField(TEXT("detail_tile_size_m"), V.DetailTileSizeM);
-		Visual->SetNumberField(TEXT("normal_strength"), V.NormalStrength);
-		Visual->SetNumberField(TEXT("roughness"), V.Roughness);
-		Visual->SetNumberField(TEXT("metallic"), V.Metallic);
-		Visual->SetStringField(TEXT("normal_format"), V.bNormalOpenGL ? TEXT("opengl") : TEXT("directx"));
+		auto Visual = WritePBRVisual(In.Field.Visual);
+		Visual->SetNumberField(TEXT("detail_tile_size_m"), In.Field.Visual.DetailTileSizeM);
 		F->SetObjectField(TEXT("visual"), Visual);
 		auto Physics = MakeShared<FJsonObject>();
 		const auto& P = In.Field.Physics;
@@ -940,6 +977,7 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
  {
   auto Lighting = MakeShared<FJsonObject>();
   Lighting->SetNumberField(TEXT("lamp_intensity_lumens"), In.Lighting.LampIntensityLumens);
+  if (In.Lighting.EmissiveIntensity.IsSet()) Lighting->SetNumberField(TEXT("emissive_intensity"), In.Lighting.EmissiveIntensity.GetValue());
   Lighting->SetNumberField(TEXT("source_radius_cm"), In.Lighting.SourceRadiusCm);
   Lighting->SetNumberField(TEXT("specular_scale"), In.Lighting.SpecularScale);
   Root->SetObjectField(TEXT("lighting"), Lighting);
@@ -1053,6 +1091,7 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 			P->SetArrayField(TEXT("solref"), Solref);
 			ObjectObj->SetObjectField(TEXT("physics"), P);
 		}
+		if (Spawn.Visual.IsSet()) ObjectObj->SetObjectField(TEXT("visual"), WritePBRVisual(Spawn.Visual.GetValue()));
 		ObjectsJson.Add(MakeShared<FJsonValueObject>(ObjectObj));
 	}
 	Root->SetArrayField(TEXT("objects"), ObjectsJson);
@@ -1102,6 +1141,8 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
  const auto& Render = Config.Render;
  if (!InRange(Config.Lighting.SourceRadiusCm, 0, 500) || !InRange(Config.Lighting.SpecularScale, 0, 1))
  { Result.bOk = false; Result.Errors.Add(TEXT("lighting.source_radius_cm [0,500] and specular_scale [0,1] required")); }
+ if (Config.Lighting.EmissiveIntensity.IsSet() && !InRange(Config.Lighting.EmissiveIntensity.GetValue(), 0, 1000))
+ { Result.bOk = false; Result.Errors.Add(TEXT("lighting.emissive_intensity must be in [0,1000]")); }
  if (!InRange(Config.Lighting.LampIntensityLumens, 0, 1000000))
  { Result.bOk = false; Result.Errors.Add(TEXT("lighting.lamp_intensity_lumens must be in [0,1000000]")); }
  if (!InRange(Render.MotionBlurAmount, 0, 1) || !InRange(Render.MotionBlurMaxPercent, 0, 100)
@@ -1153,9 +1194,7 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 
 	const auto& FieldVisual = F.Visual;
 	if (!FMath::IsFinite(FieldVisual.DetailTileSizeM) || FieldVisual.DetailTileSizeM <= 0 ||
-		!FMath::IsFinite(FieldVisual.NormalStrength) || FieldVisual.NormalStrength < 0 || FieldVisual.NormalStrength > 10 ||
-		!FMath::IsFinite(FieldVisual.Roughness) || FieldVisual.Roughness < 0 || FieldVisual.Roughness > 1 ||
-		!FMath::IsFinite(FieldVisual.Metallic) || FieldVisual.Metallic < 0 || FieldVisual.Metallic > 1)
+		!ValidPBRVisual(FieldVisual))
 	{
 		Result.bOk = false;
 		Result.Errors.Add(TEXT("field.visual requires positive finite detail_tile_size_m, normal_strength [0,10], roughness/metallic [0,1]"));
@@ -1273,6 +1312,11 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
 
 	for (const FURSObjectSpawn& Spawn : Config.Objects)
 	{
+		if (Spawn.Visual.IsSet() && (Spawn.Type != TEXT("soccer_ball") || !ValidPBRVisual(Spawn.Visual.GetValue())))
+		{
+			Result.bOk = false;
+			Result.Errors.Add(TEXT("object.visual requires soccer_ball, base_color_map, normal_strength [0,10] and roughness/metallic [0,1]"));
+		}
 		const auto &P = Spawn.Physics;
 		if (P.bIsSet)
 		{

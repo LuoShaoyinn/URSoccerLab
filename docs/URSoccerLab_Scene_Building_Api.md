@@ -7,20 +7,26 @@ and camera transport settings for each run.
 
 ## Illumination and camera effects
 
-Scene JSON can adjust the existing hall lamps without changing the level or
-external robot packages:
+The hall uses 21 separate emissive lamp surfaces with Lumen. Scene JSON can
+adjust the auxiliary point lights without changing external robot packages:
 
 ```json
 "lighting": {
-  "lamp_intensity_lumens": 224,
+  "lamp_intensity_lumens": 0,
+  "emissive_intensity": 10.0,
   "source_radius_cm": 60,
-  "specular_scale": 0.1
+  "specular_scale": 0.0
 }
 ```
 
 Source radius controls soft shadow/highlight size (0..500 cm); specular scale
-controls reflected light intensity (0..1). The hall preset uses broad sources
-and restrained highlights to keep black metal readable.
+controls reflected light intensity (0..1). These parameters affect the auxiliary point lights. The emissive-only hall
+preset keeps those lights at zero; `emissive_intensity` sets the absolute white emission value in Unreal's linear
+material color: 10 is the authored hall value, 0 disables emission, and 2.5 or
+20 provide lower or higher emission. It is not a multiplier or a lumen value.
+Allowed range is [0,1000]. Omission leaves material emission unchanged. The auxiliary
+lights default to zero when `lighting` is present. Settings apply when the scene
+JSON is loaded/applied; editing the file alone does not trigger a live reload.
 
 The intensity value sets each of the 21 generated point lights (`URS_AutoEmissiveLamp`
 actor tag). Zero turns their illumination off. Omitting `lighting` preserves
@@ -324,3 +330,44 @@ uv run --project py_example python Tools/runtime/run_scene.py \
 
 Maintained match configurations include six-robot stereo RGB, six-robot RGBD,
 and ten-robot/twenty-camera stereo RGB under `Config/examples/`.
+
+## External ball PBR maps
+
+A `soccer_ball` object supports an optional `visual` alongside `physics`:
+
+```json
+{
+  "actor_id": "ball",
+  "type": "soccer_ball",
+  "visual": {
+    "base_color_map": "../external/ball/albedo.png",
+    "normal_map": "../external/ball/normal.png",
+    "roughness_map": "../external/ball/roughness.png",
+    "metallic_map": "../external/ball/metallic.png",
+    "ao_map": "../external/ball/ao.png",
+    "normal_format": "directx",
+    "normal_strength": 1.0,
+    "roughness": 0.8,
+    "metallic": 0.0
+  },
+  "physics": {"radius_m": 0.11, "mass_kg": 0.43}
+}
+```
+
+Paths are relative to the scene JSON; absolute paths also work. All images stay
+external to the application. `base_color_map` is required when `visual` is
+present; the other maps are optional. Omitting `visual` retains the authored
+ball material. A specified missing or undecodable map fails scene loading.
+Images must be single 2D images no larger than 8192x8192.
+
+The ball uses its mesh UV0 for every map, with wrapping and no field detail
+tiling. Base color is sRGB; normal and scalar maps are linear. Scalar maps use
+the red channel. Roughness and metallic are packed internally for the shared
+PBR shader. `normal_format` accepts `directx` (default) or `opengl` (green channel
+flipped). `normal_strength` is in [0,10]. Missing normal/AO maps are neutral;
+missing roughness/metallic maps use scalar values in [0,1], defaulting to 0.8/0.
+External textures receive mip chains. Ball radius changes geometry size without
+changing the texture layout.
+
+Edit JSON and relaunch or reapply the scene configuration. There is no file
+watcher. This source implementation has not been cooked into an AppImage.

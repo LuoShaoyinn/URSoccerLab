@@ -9,9 +9,9 @@ import unreal
 
 ROOT = Path(__file__).resolve().parents[2]
 LEVEL_PATH = '/Game/Levels/URS_SoccerField'
-LUMENS = 224.0
+LUMENS = 0.0
 SOURCE_RADIUS_CM = 60.0
-SPECULAR_SCALE = 0.1
+SPECULAR_SCALE = 0.0
 EXPOSURE_COMPENSATION = 2.5
 
 
@@ -24,6 +24,8 @@ def main():
     for actor in editor.get_all_level_actors():
         if 'URS_AutoEmissiveLamp' in [str(tag) for tag in actor.tags]:
             for light in actor.get_components_by_class(unreal.PointLightComponent):
+                actor.modify()
+                light.modify()
                 light.set_intensity_units(unreal.LightUnits.LUMENS)
                 light.set_intensity(LUMENS)
                 light.set_source_radius(SOURCE_RADIUS_CM)

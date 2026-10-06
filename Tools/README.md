@@ -25,15 +25,21 @@ After importing an environment GLB whose lamp meshes use a non-zero glTF
 `EmissiveFactor`, create one movable point light per disconnected physical lamp
 volume and save the field level:
 
-Lamp meshes and lights use lighting channel 0, matching the rest of the hall.
-The visible lamp materials are Unlit; generated point lights default to 224
-lumens each. Separate lamp channels previously produced dark wall and field
-patches in moving camera views.
+The hall uses 21 separate emissive lamp meshes on lighting channel 0. Each
+has six generated Lumen surface-cache cards; the original combined lamp mesh
+had none. The original mesh asset is retained and its actor is hidden.
+`Tools/editor/split_emissive_lamps.py` reproduces the split with native Geometry
+Scripting (enable the plugin for the editor run). It bakes placement into
+recentered meshes, preserves the lamp material, and disables the auxiliary
+point lights. Geometry Scripting is only needed for this editor operation.
 
-The current hall preset uses 60 cm light-source radius, specular scale 0.1,
-and fixed exposure compensation +2.5. Reapply it to the existing lights with
-`Tools/editor/configure_hall_lighting.py`; it does not modify field or robot
-materials. These light controls are also available in the scene JSON.
+The current preset uses emissive lighting and fixed exposure compensation +2.5.
+`Tools/editor/configure_hall_lighting.py` keeps the 21 auxiliary lights at zero.
+The JSON `lamp_intensity_lumens` setting controls those auxiliary point lights,
+not the emissive material. Set JSON `emissive_intensity` to the absolute linear
+emission value (10 = authored hall value, 0 = off). `convert_emissive_lamps.py` is the older point-light
+alternative, using 224 lumens per lamp. Separate lamp channels previously
+produced dark patches; all lighting stays on channel 0.
 
 ```bash
 UnrealEditor-Cmd URSoccerLab.uproject \

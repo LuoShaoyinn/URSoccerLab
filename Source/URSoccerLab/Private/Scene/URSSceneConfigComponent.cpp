@@ -298,6 +298,38 @@ bool UURSSceneConfigComponent::SpawnOneObject(
 			   *Spawn.ActorId, P.RadiusM, P.MassKg, P.Friction[0], P.Friction[1], P.Friction[2], P.Solref[0],
 			   P.Solref[1]);
 	}
+	if (Spawn.Visual.IsSet())
+	{
+		FFieldTextures Textures;
+		if (!RuntimeFieldMaterial || !FFieldTextures::Load(Spawn.Visual.GetValue(), ActiveConfig.SourceDirectory, Textures, OutError, false))
+		{
+			if (!RuntimeFieldMaterial) OutError = TEXT("missing generic runtime PBR material");
+			Articulation->Destroy();
+			return false;
+		}
+		TArray<UStaticMeshComponent*> Meshes;
+		Articulation->GetComponents(Meshes);
+		int32 Applied = 0;
+		for (auto* Mesh : Meshes)
+		{
+			if (!Mesh->GetStaticMesh() || !Mesh->GetStaticMesh()->GetPathName().StartsWith(TEXT("/Game/URSoccerLab/Objects/soccer_ball/"))) continue;
+			for (int32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
+			{
+				Mesh->SetMaterial(Slot, RuntimeFieldMaterial);
+				auto* Material = Mesh->CreateDynamicMaterialInstance(Slot);
+				Textures.Apply(Material, Spawn.Visual.GetValue());
+				++Applied;
+			}
+		}
+		if (!Applied)
+		{
+			OutError = TEXT("soccer_ball has no visual mesh material slots");
+			Articulation->Destroy();
+			return false;
+		}
+		UE_LOG(LogTemp, Log, TEXT("URS ball '%s': external PBR applied to %d material slots; base_color=%s"),
+			*Spawn.ActorId, Applied, *Spawn.Visual.GetValue().BaseColorMap);
+	}
 	Articulation->ActorId = Spawn.ActorId;
 #if WITH_EDITOR
 	Articulation->SetActorLabel(Spawn.ActorId);
@@ -669,8 +701,38 @@ void UURSSceneConfigComponent::ApplyLightingConfig()
 {
  if (!ActiveConfig.Lighting.bIsSet || !GetWorld()) return;
  int32 Count = 0;
+ int32 Surfaces = 0;
  for (TActorIterator<AActor> It(GetWorld()); It; ++It)
  {
+  if (It->ActorHasTag(TEXT("URS_EmissiveLampSurface")) && ActiveConfig.Lighting.EmissiveIntensity.IsSet())
+  {
+   TArray<UStaticMeshComponent*> Meshes;
+   It->GetComponents(Meshes);
+   for (auto* Mesh : Meshes)
+   {
+    for (int32 Index = 0; Index < Mesh->GetNumMaterials(); ++Index)
+    {
+     auto* Material = Mesh->GetMaterial(Index);
+     FLinearColor Previous;
+     if (!Material || !Material->GetVectorParameterValue(FMaterialParameterInfo(TEXT("EmissiveFactor")), Previous))
+     {
+      UE_LOG(LogTemp, Warning, TEXT("[URS Lighting] %s material %d lacks EmissiveFactor."), *It->GetName(), Index);
+      continue;
+     }
+     auto* Dynamic = Cast<UMaterialInstanceDynamic>(Material);
+     if (!Dynamic) Dynamic = Mesh->CreateDynamicMaterialInstance(Index);
+     if (Dynamic)
+     {
+      const float Intensity = ActiveConfig.Lighting.EmissiveIntensity.GetValue();
+      Dynamic->SetVectorParameterValue(TEXT("EmissiveFactor"), FLinearColor(Intensity, Intensity, Intensity, 1));
+      Dynamic->SetScalarParameterValue(TEXT("EmissiveStrength"), 1.0f);
+      ++Surfaces;
+     }
+    }
+    // Recreate the proxy so config reapplication refreshes Lumen's cached emission.
+    Mesh->MarkRenderStateDirty();
+   }
+  }
   if (!It->ActorHasTag(TEXT("URS_AutoEmissiveLamp"))) continue;
   TArray<UPointLightComponent*> Lights;
   It->GetComponents(Lights);
@@ -683,7 +745,7 @@ void UURSSceneConfigComponent::ApplyLightingConfig()
    ++Count;
   }
  }
- UE_LOG(LogTemp, Log, TEXT("[URS Lighting] %d lamps at %.3f lumens each."), Count, ActiveConfig.Lighting.LampIntensityLumens);
+ UE_LOG(LogTemp, Log, TEXT("[URS Lighting] %d auxiliary lamps at %.3f lumens each; %d emissive surfaces configured."), Count, ActiveConfig.Lighting.LampIntensityLumens, Surfaces);
 }
 
 void UURSSceneConfigComponent::ApplyRenderConfig()
@@ -793,21 +855,10 @@ bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 				(F.WidthM + 2 * F.BorderYM) * 100 / MeshSize.Y, 1));
 	RuntimeFieldSurface->SetMaterial(0, RuntimeFieldMaterial);
 	auto *Material = RuntimeFieldSurface->CreateAndSetMaterialInstanceDynamic(0);
-	// Preserve the original glTF/Nanite shader, including its UV derivative path.
-	Material->SetTextureParameterValue(TEXT("BaseColorTexture"), Textures.BaseColor);
-	Material->SetTextureParameterValue(TEXT("NormalTexture"), Textures.Normal);
-	Material->SetTextureParameterValue(TEXT("MetallicRoughnessTexture"), Textures.MetallicRoughness);
-	Material->SetTextureParameterValue(TEXT("OcclusionTexture"), Textures.Ao);
-	Material->SetScalarParameterValue(TEXT("NormalScale"), F.Visual.NormalMap.IsEmpty() ? 0 : F.Visual.NormalStrength);
-	Material->SetScalarParameterValue(TEXT("RoughnessFactor"), F.Visual.RoughnessMap.IsEmpty() ? F.Visual.Roughness : 1);
-	Material->SetScalarParameterValue(TEXT("MetallicFactor"), F.Visual.MetallicMap.IsEmpty() ? F.Visual.Metallic : 1);
-	// Base color covers the full surface including borders. Detail maps tile in
-	// metres, using the same UV0 orientation as that authored field mesh.
-	Material->SetVectorParameterValue(TEXT("BaseColorTexture_OffsetScale"), FLinearColor(0, 0, 1, 1));
-	const FLinearColor DetailTransform(0, 0, (F.LengthM + 2 * F.BorderXM) / F.Visual.DetailTileSizeM,
-		(F.WidthM + 2 * F.BorderYM) / F.Visual.DetailTileSizeM);
-	for (const TCHAR* Name : {TEXT("NormalTexture_OffsetScale"), TEXT("MetallicRoughnessTexture_OffsetScale"), TEXT("OcclusionTexture_OffsetScale")})
-		Material->SetVectorParameterValue(Name, DetailTransform);
+	// Preserve the existing glTF shader and field detail tiling.
+	Textures.Apply(Material, F.Visual, FLinearColor(0, 0,
+		(F.LengthM + 2 * F.BorderXM) / F.Visual.DetailTileSizeM,
+		(F.WidthM + 2 * F.BorderYM) / F.Visual.DetailTileSizeM));
 	RuntimeFieldSurface->RegisterComponent();
 	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g base_color=%s detail_tile=%g m"),
 		F.LengthM, F.WidthM, F.BorderXM, F.BorderYM, *F.Visual.BaseColorMap, F.Visual.DetailTileSizeM);

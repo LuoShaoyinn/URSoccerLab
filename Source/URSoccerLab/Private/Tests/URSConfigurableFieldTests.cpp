@@ -2,6 +2,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -96,6 +97,15 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 	FImageUtils::PNGCompressImageArray(8, 8, MapPixels, MapBytes);
 	TestTrue(TEXT("temporary field map written"), FFileHelper::SaveArrayToFile(MapBytes, *MapFixture));
 	Config.Field.Visual.BaseColorMap = MapFixture;
+	FURSPBRVisualConfig BallVisual;
+	BallVisual.BaseColorMap = MapFixture;
+	BallVisual.NormalMap = MapFixture;
+	BallVisual.RoughnessMap = MapFixture;
+	BallVisual.MetallicMap = MapFixture;
+	BallVisual.AoMap = MapFixture;
+	BallVisual.NormalStrength = 0.4;
+	Config.Objects[0].Visual = BallVisual;
+
 	Config.Field.Physics.Friction = {0.35f, 0.007f, 0.002f};
 	Config.Field.Physics.Condim = 4;
 	Config.Field.Physics.Solref = {0.01f, 0.8f};
@@ -153,8 +163,26 @@ bool FURSRuntimeFieldBallTest::RunTest(const FString &Parameters)
 		}
 		for (TActorIterator<AMjArticulation> It(World); It; ++It)
 			if (It->ActorId == TEXT("ball"))
-				TestTrue(TEXT("default ball center follows radius"),
-						 FMath::IsNearlyEqual(It->GetActorLocation().Z, 11.0));
+			{
+				TestTrue(TEXT("default ball center follows radius"), FMath::IsNearlyEqual(It->GetActorLocation().Z, 11.0));
+				TArray<UStaticMeshComponent*> BallMeshes; It->GetComponents(BallMeshes);
+				bool FoundBallMaterial = false;
+				for (auto* Mesh : BallMeshes)
+				{
+					if (!Mesh->GetStaticMesh() || !Mesh->GetStaticMesh()->GetPathName().StartsWith(TEXT("/Game/URSoccerLab/Objects/soccer_ball/"))) continue;
+					auto* Material = Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(0));
+					if (!TestNotNull(TEXT("ball runtime PBR material"), Material)) continue;
+					FoundBallMaterial = true;
+					TestTrue(TEXT("ball detail maps use mesh UV without field tiling"),
+						Material->K2_GetVectorParameterValue(TEXT("NormalTexture_OffsetScale")).Equals(FLinearColor(0, 0, 1, 1)));
+					TestEqual(TEXT("ball normal strength"), Material->K2_GetScalarParameterValue(TEXT("NormalScale")), 0.4f);
+					for (const TCHAR* Parameter : {TEXT("BaseColorTexture"), TEXT("NormalTexture"), TEXT("MetallicRoughnessTexture"), TEXT("OcclusionTexture")})
+						TestNotNull(FString(TEXT("bound ball map: ")) + Parameter, Material->K2_GetTextureParameterValue(Parameter));
+					auto* Base = Cast<UTexture2D>(Material->K2_GetTextureParameterValue(TEXT("BaseColorTexture")));
+					if (TestNotNull(TEXT("ball base texture"), Base)) TestEqual(TEXT("ball seam wraps"), Base->AddressX.GetValue(), TA_Wrap);
+				}
+				TestTrue(TEXT("ball visual found after config reload"), FoundBallMaterial);
+			}
 		Manager->Compile();
 		mjModel *Model = Manager->PhysicsEngine->m_model;
 		if (TestNotNull(TEXT("MuJoCo compiles configured ball"), Model))
