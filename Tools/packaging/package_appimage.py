@@ -10,11 +10,11 @@ they are intentionally NOT bundled.
 Phases (each resumable; run with no subcommand to do all)::
 
     python Tools/packaging/package_appimage.py cook    # UAT BuildCookRun
-    python Tools/packaging/package_appimage.py appdir  # assemble build/AppDir
+    python Tools/packaging/package_appimage.py appdir  # assemble dist/AppDir
     python Tools/packaging/package_appimage.py image   # appimagetool -> .AppImage
 
 Cook output, AppDir, and the final AppImage all land under the gitignored
-``build/`` directory.
+``dist/`` directory.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ THIRD_PARTY = {
 INSTALL_ROOT = ROOT / "Plugins/UnrealRoboticsLab/third_party/install"
 
 # Host-provided libs we must NOT bundle (external Vulkan / GPU drivers).
-EXTERNAL_PATTERNS = ("libGL.", "libEGL.", "libglapi", "libnvidia", "libdrm")
+EXTERNAL_PATTERNS = ("libvulkan.", "libGL.", "libEGL.", "libglapi", "libnvidia", "libdrm")
 
 
 def log(msg: str) -> None:
@@ -69,6 +69,8 @@ def phase_cook() -> int:
     if not RUN_UAT.is_file():
         raise FileNotFoundError(f"RunUAT.sh not found at {RUN_UAT} (set URS_UE)")
     BUILD.mkdir(parents=True, exist_ok=True)
+    # Some checkouts redirect diagnostics to ignored artifact directories.
+    (ROOT / "Saved/MaterialStats").resolve().mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, DOTNET_ROLL_FORWARD="Major")
     return run(
         [
@@ -79,6 +81,7 @@ def phase_cook() -> int:
             "-platform=Linux",
             "-clientconfig=Development",
             "-cook",
+            "-iterate",
             "-stage",
             "-pak",
             "-package",
@@ -90,160 +93,7 @@ def phase_cook() -> int:
 
 
 # --------------------------------------------------------------------------- #
-APPRUN = r"""#!/usr/bin/env sh
-# URSoccerLab AppImage launcher.
-# Bundles the UE game + robot/field content + runtime libs (MuJoCo, ZMQ, CoACD).
-# Vulkan + GPU driver are provided by the HOST (AMD or NVIDIA); not bundled.
-set -eu
-HERE="$(dirname "$(readlink -f "$0")")"
-
-# --- Scene config: either an explicit -URSSceneConfig=<path>, or the first
-# positional argument treated as the scene JSON (./URSoccerLab.AppImage scene.json).
-# $SCENE holds the absolute path for the nDisplay auto-setup below.
-SCENE=""
-for arg in "$@"; do
-  case "$arg" in
-    -URSSceneConfig=*) SCENE="${arg#-URSSceneConfig=}" ;;
-  esac
-done
-if [ -z "$SCENE" ]; then
-  if [ "$#" -gt 0 ] && [ -f "$1" ]; then
-    case "$1" in
-      /*) SCENE="$1" ;;
-      *) SCENE="$(readlink -f "$1" 2>/dev/null || echo "$1")" ;;
-    esac
-    [ -z "$SCENE" ] && SCENE="$1"
-    shift
-    set -- "-URSSceneConfig=$SCENE" "$@"
-  else
-    echo "ERROR: scene config is required." >&2
-    echo "Usage: $0 <scene.json> [additional UE args]" >&2
-    echo "       (pass -URSSceneCapture to disable the nDisplay atlas)" >&2
-    exit 1
-  fi
-fi
-
-# --- nDisplay atlas auto-setup (default on) -------------------------------
-# Generate a tightly-packed 640x480 atlas from the scene and enable the
-# high-throughput nDisplay backend, so `AppRun <scene.json>` just works.
-#   * Opt out with -URSSceneCapture / -URSNoNDisplay.
-#   * An explicit -dc_cluster / -dc_cfg is respected as-is.
-#   * If the scene can't be parsed (or awk is absent), we silently fall back
-#     to per-UMjCamera SceneCapture, which is always functional.
-force_sc=0; explicit_cluster=0
-for arg in "$@"; do
-  case "$arg" in
-    -URSSceneCapture|-URSNoNDisplay) force_sc=1 ;;
-    -dc_cluster|-dc_cluster=1|-dc_cluster=0|-dc_cfg=*) explicit_cluster=1 ;;
-  esac
-done
-if [ "$force_sc" -eq 0 ] && [ "$explicit_cluster" -eq 0 ] && [ -n "$SCENE" ] && [ -f "$SCENE" ]; then
-  _robots=$(awk '
-    /"robots"[[:space:]]*:/ { in_r = 1 }
-    /"objects"[[:space:]]*:/ { in_r = 0 }
-    in_r && /"actor_id"[[:space:]]*:/ { c++ }
-    END { print c + 0 }
-  ' "$SCENE" 2>/dev/null || echo 0)
-  if [ "${_robots:-0}" -gt 0 ]; then
-    if grep -q '"mode"[[:space:]]*:[[:space:]]*"rgbd"' "$SCENE" 2>/dev/null; then
-      _per=1
-      _leftcam=$(awk -F'"' '/"left_camera"[[:space:]]*:/ {print $(NF-1)}' "$SCENE" 2>/dev/null)
-      [ -z "$_leftcam" ] && _leftcam=left_eye
-    else
-      _per=2; _leftcam=""
-    fi
-    _views=$((_robots * _per))
-    _cols=$(awk -v n="$_views" 'BEGIN{s=sqrt(n*4/3);c=int(s);if(s>c)c++;if(c<1)c=1;print c}')
-    _rows=$(awk -v n="$_views" -v c="$_cols" 'BEGIN{r=int(n/c);if(n>c*r)r++;print r}')
-    _W=$((_cols * 640)); _H=$((_rows * 480))
-    _cfg="${TMPDIR:-/tmp}/urs_auto_${_views}_$$.ndisplay"
-    {
-      echo '{'
-      echo '  "nDisplay": {'
-      echo "    \"description\": \"URS auto atlas ($_views cameras)\","
-      echo '    "version": "5.00",'
-      echo '    "assetPath": "",'
-      echo '    "misc": { "bFollowLocalPlayerCamera": false, "bExitOnEsc": true, "bOverrideViewportsFromExternalConfig": true, "bOverrideTransformsFromExternalConfig": true },'
-      echo '    "scene": {'
-      echo '      "xforms": {},'
-      echo '      "cameras": { "DefaultViewPoint": { "interpupillaryDistance": 6.4, "swapEyes": false, "stereoOffset": "none", "parentId": "", "location": {"x":0,"y":0,"z":0}, "rotation": {"pitch":0,"yaw":0,"roll":0} } },'
-      echo '      "screens": {}'
-      echo '    },'
-      echo '    "cluster": {'
-      echo '      "primaryNode": { "id": "node_0", "ports": {"ClusterSync":41001,"ClusterEventsJson":41003,"ClusterEventsBinary":41004} },'
-      echo '      "sync": { "renderSyncPolicy": {"type":"none","parameters":{}}, "inputSyncPolicy": {"type":"ReplicatePrimary","parameters":{}} },'
-      echo '      "network": { "ConnectRetriesAmount":"10","ConnectRetryDelay":"100","GameStartBarrierTimeout":"30000","FrameStartBarrierTimeout":"30000","FrameEndBarrierTimeout":"30000","RenderSyncBarrierTimeout":"30000" },'
-      echo '      "nodes": {'
-      echo '        "node_0": {'
-      echo '          "host": "127.0.0.1", "sound": false, "fullScreen": false,'
-      echo "          \"window\": {\"x\":0,\"y\":0,\"w\":$_W,\"h\":$_H},"
-      echo '          "postprocess": {},'
-      echo '          "viewports": {'
-      _i=0
-      while [ "$_i" -lt "$_views" ]; do
-        [ "$_i" -gt 0 ] && echo ','
-        _c=$((_i % _cols)); _r=$((_i / _cols))
-        _x=$((_c * 640)); _y=$((_r * 480))
-        printf '            "camera_%02d": { "camera": "DefaultViewPoint", "bufferRatio": 1, "gPUIndex": -1, "allowCrossGPUTransfer": false, "isShared": false, "region": {"x":%d,"y":%d,"w":640,"h":480}, "projectionPolicy": {"type":"camera","parameters":{}} }' "$_i" "$_x" "$_y"
-        _i=$((_i + 1))
-      done
-      echo ''
-      echo '          },'
-      echo '          "outputRemap": { "bEnable": false, "dataSource": "mesh", "staticMeshAsset": "", "externalFile": "" }'
-      echo '        }'
-      echo '      }'
-      echo '    },'
-      echo '    "customParameters": {},'
-      echo '    "diagnostics": { "simulateLag": false, "minLagTime": 0.01, "maxLagTime": 0.3 }'
-      echo '  }'
-      echo '}'
-    } > "$_cfg"
-    if [ -s "$_cfg" ]; then
-      set -- "$@" -dc_cluster -dc_dev_mono -dc_cfg="$_cfg" -URSNDisplayCameras -URSNDisplayCameraCount="$_views" -ForceRes -ResX="$_W" -ResY="$_H"
-      [ -n "$_leftcam" ] && set -- "$@" "-URSNDisplayCameraName=$_leftcam"
-    fi
-  fi
-fi
-
-# --- nDisplay node resolution: inject -dc_node=node_0 whenever -dc_cluster is
-# present. nDisplay refuses to auto-match a 127.0.0.1/localhost host (UE's
-# GetResolvedNodeId deliberately skips loopback), so without an explicit node
-# the game exits "Couldn't resolve node ID" -> KillImmediately.
-have_dc_cluster=0; have_dc_node=0
-for arg in "$@"; do
-  case "$arg" in
-    -dc_cluster|-dc_cluster=1|-dc_cluster=0) have_dc_cluster=1 ;;
-    -dc_node=*) have_dc_node=1 ;;
-  esac
-done
-if [ "$have_dc_cluster" -eq 1 ] && [ "$have_dc_node" -eq 0 ]; then
-  set -- "$@" "-dc_node=node_0"
-fi
-
-# Gather all bundled lib dirs (bundled runtime first, then game + engine + plugins).
-LIBS="$HERE/usr/lib:$HERE/URSoccerLab/Binaries/Linux:$HERE/Engine/Binaries/Linux"
-for d in \
-  "$HERE"/Engine/Plugins/*/*/Binaries/Linux \
-  "$HERE"/Engine/Plugins/*/Binaries/Linux \
-  "$HERE"/Plugins/*/*/Binaries/Linux \
-  "$HERE"/Plugins/*/Binaries/Linux ; do
-  [ -d "$d" ] && LIBS="$LIBS:$d"
-done
-export LD_LIBRARY_PATH="$LIBS:${LD_LIBRARY_PATH:-}"
-
-# Redirect the writable Saved/ tree.
-SAVE="${URS_SAVE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/URSoccerLab}"
-mkdir -p "$SAVE"
-
-# Launch with baked runtime flags.
-chmod +x "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" 2>/dev/null || true
-exec "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" URSoccerLab \
-  -saved="$SAVE" \
-  -RenderOffscreen \
-  -NoSound \
-  -ExecCmds="DisableAllScreenMessages" \
-  "$@"
-"""
+APPRUN = (Path(__file__).with_name("AppRun")).read_text()
 
 
 def _is_external(libname: str) -> bool:
@@ -306,6 +156,39 @@ def _bundle_runtime(appdir: Path) -> None:
             log(f"WARNING: {soname} not found via ldconfig; not bundled")
 
 
+def _bundle_media_and_launcher(appdir: Path) -> None:
+    """Ship minimal FFmpeg and jq dependencies, never the host GPU driver."""
+    import re
+    ffmpeg = Path(os.environ.get("URS_FFMPEG_ROOT", "/usr"))
+    libraries = [ffmpeg / "lib" / (name + ".so") for name in ("libavcodec", "libavutil", "libswscale")]
+    jq = shutil.which("jq")
+    if not jq:
+        raise RuntimeError("jq is required in the packaging container")
+    bindir = appdir / "usr/bin"; bindir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(jq, bindir / "jq")
+    share = appdir / "usr/share/ursoccerlab"; share.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path(__file__).with_name("atlas.jq"), share / "atlas.jq")
+    libdir = appdir / "usr/lib"; libdir.mkdir(parents=True, exist_ok=True)
+    excluded = ("libc.so", "libm.so", "libdl.so", "libpthread.so", "librt.so", "ld-linux", "libvulkan.so")
+    for source in [Path(jq), *libraries]:
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        if source != Path(jq):
+            real = source.resolve(); shutil.copy2(real, libdir / real.name)
+            for alias in source.parent.glob(source.name + "*"):
+                if alias.is_symlink():
+                    dest = libdir / alias.name
+                    dest.unlink(missing_ok=True); dest.symlink_to(real.name)
+        result = subprocess.run(["ldd", str(source)], check=True, capture_output=True, text=True)
+        if "not found" in result.stdout:
+            raise RuntimeError(result.stdout)
+        for name, path in re.findall(r"(\S+) => (/\S+)", result.stdout):
+            if not name.startswith(excluded) and not _is_external(name):
+                shutil.copy2(path, libdir / name)
+    licenses = ffmpeg / "share/licenses"
+    if licenses.is_dir(): shutil.copytree(licenses, share / "ffmpeg-licenses", dirs_exist_ok=True)
+
+
 def _write_png(path: Path, w: int, h: int, rgb: tuple) -> None:
     import zlib, struct
     raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
@@ -355,6 +238,7 @@ def phase_appdir() -> int:
 
     _stage_third_party(APPDIR)
     _bundle_runtime(APPDIR)
+    _bundle_media_and_launcher(APPDIR)
     _write_desktop_and_icon(APPDIR)
     removed = _strip_external(APPDIR)
     log(f"removed {removed} external (vulkan/gpu) libs from AppDir")
@@ -375,7 +259,11 @@ def phase_image() -> int:
         )
     APPIMAGE.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, ARCH="x86_64")
-    return run([tool, str(APPDIR), str(APPIMAGE)], cwd=ROOT, env=env)
+    temporary = APPIMAGE.with_suffix(".AppImage.tmp")
+    rc = run([tool, str(APPDIR), str(temporary)], cwd=ROOT, env=env)
+    if rc == 0:
+        temporary.replace(APPIMAGE)
+    return rc
 
 
 PHASES = {"cook": phase_cook, "appdir": phase_appdir, "image": phase_image}

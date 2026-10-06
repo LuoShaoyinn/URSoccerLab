@@ -123,7 +123,8 @@ supplied robot packages. These backups are not runtime inputs.
 
 The project's robot Content directory is removed and marked NeverCook. Only
 loader code and generic glTFRuntime material templates belong in the application.
-The actual AppImage has not been cooked or rebuilt as part of this change.
+The Docker packager cooks the generic loader and materials; robot files remain
+external inputs. See [Getting started](Getting_Started.md) for packaged startup.
 
 The third-party runtime loader is vendored from
 https://github.com/rdeioris/glTFRuntime at
@@ -142,12 +143,11 @@ render fixture, and records both robot cameras and a guest view under
 `artifacts/tests/external-robots/`. The second checks stereo, RGBD, periodic
 keyframes and late connections. Neither cooks the application.
 
-### Current render limitation
+### Rendering and calibration
 
-The moving-camera recordings still contain occasional dark blocks on the field.
-These are also reproduced with raw RGB transport and with the saved editor-imported
-robot meshes, so AV1 and the external GLB mesh loader alone do not explain them.
-Restoring the earlier base-color-only field material setup did not eliminate them
-either. The Pi Plus PBR migration fixes the missing black finish; it does not
-establish a fix for the dark-block rendering issue. Diagnostic recordings are
-kept separately under `artifacts/tests/external-robots-*`.
+All robot visuals and hall lights use lighting channel zero. Hall illumination
+uses separate emissive lamp meshes with Lumen surface-cache coverage. Robot
+camera placement and field/robot material settings remain package-specific.
+The normalized Booster K1 cameras and servo gains are provisional and need
+calibration against the real robot; loading/rendering validation does not prove
+stable locomotion.
