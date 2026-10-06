@@ -1,4 +1,10 @@
-# URSoccerLab Python Examples
+# Python clients for URSoccerLab
+
+Start the simulator with `./URSoccerLab.AppImage scene.json` in a separate terminal.
+The application accepts only the JSON path. See [Getting started](../docs/Getting_Started.md)
+for assets, a complete scene and startup troubleshooting. The commands below
+configure client programs, not the simulator's command-line interface.
+
 
 TCP-based clients for the URSoccerLab robot control API.
 
@@ -117,8 +123,8 @@ Python client runs in a second terminal against the TCP ports it opens.
 
 ```bash
 # Terminal 1 — start the simulator (headless, offscreen)
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+./dist/URSoccerLab.AppImage \
+  py_example/examples/standing/scene.json
 ```
 
 The scene JSON path is **required** — the AppImage exits with an error if it is
@@ -127,7 +133,7 @@ readback config) are baked into the AppRun script. Writable data (logs, crash
 reports) goes to `~/.local/share/URSoccerLab/`.
 
 The AppImage needs a Vulkan-capable GPU and FUSE support on the host. If FUSE
-is unavailable, append `--appimage-extract-and-run`.
+is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the launch command.
 
 ### Option B — From source (development, needs Unreal Editor)
 
@@ -150,7 +156,7 @@ Use this path when iterating on C++ or asset changes.
 | admin (set_pose, reset) | 11000 |
 
 Each per-robot port is a single bidirectional TCP connection: commands go in,
-state + camera frames come out (state at 60 Hz, JPEG RGB at 30 Hz).
+state + camera frames come out (state at 60 Hz, AV1 RGB at 30 Hz by default).
 
 ### Running a client
 
@@ -175,8 +181,8 @@ uncommanded. Both left-eye videos are recorded.
 
 ```bash
 # AppImage
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/move_head/scene.json
+./dist/URSoccerLab.AppImage \
+  py_example/examples/move_head/scene.json
 
 # or from source
 uv run --project py_example python Tools/runtime/run_scene.py \
@@ -204,8 +210,8 @@ held at 0 (static capture):
 **Start**:
 
 ```bash
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/standing/scene.json
+./dist/URSoccerLab.AppImage \
+  py_example/examples/standing/scene.json
 ```
 
 **Client**:
@@ -226,8 +232,8 @@ left-eye camera.
 **Start**:
 
 ```bash
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/mos9_walk/scene.json
+./dist/URSoccerLab.AppImage \
+  py_example/examples/mos9_walk/scene.json
 ```
 
 **Client**:
@@ -252,8 +258,8 @@ and records both left-eye cameras:
 **Start**:
 
 ```bash
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/pi_walk/scene.json
+./dist/URSoccerLab.AppImage \
+  py_example/examples/pi_walk/scene.json
 ```
 
 **Client** (requires `torch_rocm` or `torch_cuda` extra):
@@ -286,8 +292,8 @@ sports ball); resize/NMS are handled by Ultralytics, defaulting to the ROCm GPU:
 **Start**:
 
 ```bash
-./dist/URSoccerLab-Linux-x86_64.AppImage \
-  -URSSceneConfig=$PWD/py_example/examples/dribble/scene.json
+./dist/URSoccerLab.AppImage \
+  py_example/examples/dribble/scene.json
 ```
 
 **Client** (requires `vision` + `torch_rocm` extras):

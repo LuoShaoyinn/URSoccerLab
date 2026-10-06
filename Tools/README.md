@@ -113,21 +113,14 @@ uses the same generated nDisplay atlas and connects one client per robot.
 
 ## Packaging (AppImage)
 
-`packaging/package_appimage.py` cooks, stages, and packages the simulator into a
-portable Linux AppImage inside the URSoccerLab build container. It bundles the
-game binary + all content + MuJoCo/ZMQ/CoACD + the C++ runtime, and excludes the
-editor, `py_example/`, and `Tools/`. GPU/Vulkan drivers come from the host.
+Build through Docker with `python3 Tools/packaging/build_docker.py`; set `URS_UE`
+to the Unreal Engine 5.7.4 directory. See [packaging instructions](packaging/README.md).
+The package excludes robot assets, authored field/ball texture inputs, Python
+clients and developer tools. GPU/Vulkan drivers come from the host.
 
-```bash
-python3 Tools/packaging/package_appimage.py cook    # UAT BuildCookRun
-python3 Tools/packaging/package_appimage.py appdir  # assemble dist/AppDir (+ bundle runtime)
-python3 Tools/packaging/package_appimage.py image   # appimagetool -> dist/URSoccerLab.AppImage
-```
-
-The generated AppRun takes a positional `<scene.json>`, auto-generates the
-nDisplay atlas from it, and injects the runtime flags. Full container setup,
-portability notes, and the nDisplay node-resolution gotcha are documented in
-[`packaging/README.md`](packaging/README.md).
+Start with `./dist/URSoccerLab.AppImage scene.json`. The launcher accepts exactly
+one JSON file and creates both robot and guest camera viewports automatically.
+Runtime options belong in JSON. See [Getting started](../docs/Getting_Started.md).
 
 ## External robot packages
 

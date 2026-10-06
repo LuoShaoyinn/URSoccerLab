@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+HERE="$(dirname "$(readlink -f "$0")")"
+if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+  echo "Usage: URSoccerLab.AppImage <scene.json>" >&2
+  echo "Exactly one scene JSON file is required; additional arguments are not accepted." >&2
+  exit 2
+fi
+SCENE="$(readlink -f "$1")"
+LIBS="$HERE/usr/lib:$HERE/URSoccerLab/Binaries/Linux:$HERE/Engine/Binaries/Linux"
+for d in "$HERE"/Engine/Plugins/*/*/Binaries/Linux "$HERE"/Engine/Plugins/*/Binaries/Linux "$HERE"/Plugins/*/*/Binaries/Linux "$HERE"/Plugins/*/Binaries/Linux; do
+  [ ! -d "$d" ] || LIBS="$LIBS:$d"
+done
+export LD_LIBRARY_PATH="$LIBS:${LD_LIBRARY_PATH:-}"
+SAVE="${XDG_DATA_HOME:-$HOME/.local/share}/URSoccerLab"
+mkdir -p "$SAVE/runtime"
+CFG="$(mktemp "$SAVE/runtime/atlas-XXXXXX.ndisplay")"
+JQ="$HERE/usr/bin/jq"
+if ! "$JQ" -e -f "$HERE/usr/share/ursoccerlab/atlas.jq" "$SCENE" > "$CFG"; then
+  rm -f "$CFG"
+  echo "Cannot start: invalid scene JSON or camera layout." >&2
+  exit 2
+fi
+W="$("$JQ" -r '.nDisplay.cluster.nodes.node_0.window.w' "$CFG")"
+H="$("$JQ" -r '.nDisplay.cluster.nodes.node_0.window.h' "$CFG")"
+VIEWS="$("$JQ" -r '.robots|length' "$SCENE")"
+MODE="$("$JQ" -r '.vision.mode // "stereo_rgb"' "$SCENE")"
+if [ "$MODE" = stereo_rgb ]; then VIEWS=$((VIEWS*2)); fi
+set -- URSoccerLab "-URSSceneConfig=$SCENE" "-userdir=$SAVE/" -RenderOffscreen -NoSound \
+  '-ExecCmds=MjCamera.AutoReadback 0,DisableAllScreenMessages' \
+  -dc_cluster -dc_dev_mono -dc_node=node_0 "-dc_cfg=$CFG" \
+  -URSNDisplayCameras "-URSNDisplayCameraCount=$VIEWS" -ForceRes "-ResX=$W" "-ResY=$H"
+if [ "$MODE" = rgbd ]; then
+  LEFT="$("$JQ" -r '.vision.left_camera // "left_eye"' "$SCENE")"
+  set -- "$@" "-URSNDisplayCameraName=$LEFT"
+fi
+exec "$HERE/URSoccerLab/Binaries/Linux/URSoccerLab" "$@"

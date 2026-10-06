@@ -28,10 +28,10 @@ Allowed range is [0,1000]. Omission leaves material emission unchanged. The auxi
 lights default to zero when `lighting` is present. Settings apply when the scene
 JSON is loaded/applied; editing the file alone does not trigger a live reload.
 
-The intensity value sets each of the 21 generated point lights (`URS_AutoEmissiveLamp`
-actor tag). Zero turns their illumination off. Omitting `lighting` preserves
-the authored intensity. Lighting channels stay on channel 0. This changes
-illumination, while the visible Unlit lamp materials keep their authored glow.
+`lamp_intensity_lumens` sets each of the 21 auxiliary point lights. Zero turns
+their illumination off. `emissive_intensity` separately sets visible lamp
+emission and Lumen illumination. Omitting `lighting` preserves the authored
+settings. Lighting channels stay on channel 0.
 Keep `render.auto_exposure` false when comparing illumination settings. This
 now explicitly overrides the hall volume's automatic exposure. Use
 `render.exposure_compensation` to tune fixed camera brightness (each +1 is
@@ -58,15 +58,14 @@ model. Intensity and tone-region multipliers accept 0..1, and texel size accepts
 0..4. Intensity zero disables grain. Motion blur amount accepts 0..1, maximum
 blur accepts 0..100 percent of screen width, and target FPS accepts integers
 0..120. Target FPS zero follows each camera's configured output rate, including
-its guest-inspector rate. Existing `URSMotionBlur*` command-line overrides are
-retained. `render.enable=false` disables both effects.
+its guest-inspector rate. Set these options in JSON; the packaged launcher
+accepts no effect flags. `render.enable=false` disables both effects.
 
 Robot eye views and guests share these post-process controls through the
 existing nDisplay camera pipeline. Raw/JPEG/AV1 receive the processed RGB;
 metric depth remains separate. Settings are applied when the scene config is
 loaded; editing the JSON alone does not automatically reload the application.
-The next cooked application must include this code once, after which these
-JSON values need no rebake.
+These JSON values are applied at startup and need no rebake.
 
 ## Startup flow
 
@@ -143,8 +142,9 @@ baked into the level.
 }
 ```
 
-The runtime accepts `-URSSceneConfig=<path>`. Relative paths are resolved from
-the project directory; absolute paths are useful for generated experiments.
+Start the packaged simulator with `./URSoccerLab.AppImage scene.json`.
+Exactly one JSON file is accepted. Relative asset paths resolve from that
+JSON file's directory; absolute paths also work.
 
 ### Fields and defaults
 
@@ -370,4 +370,4 @@ External textures receive mip chains. Ball radius changes geometry size without
 changing the texture layout.
 
 Edit JSON and relaunch or reapply the scene configuration. There is no file
-watcher. This source implementation has not been cooked into an AppImage.
+watcher. The packaged application loads these external maps at startup.

@@ -65,22 +65,9 @@ def main() -> int:
         extra.append(f"-URSNDisplayCameraName={left_camera}")
 
     if args.appimage:
-        # The AppRun converts the positional scene to -URSSceneConfig=, bakes
-        # -RenderOffscreen/-NoSound/DisableAllScreenMessages, and auto-injects
-        # -dc_node=node_0 (required; nDisplay won't auto-match a 127.0.0.1 host).
-        command = [
-            str(args.appimage),
-            str(scene_path),
-            "-dc_cluster",
-            "-dc_dev_mono",
-            f"-dc_cfg={ndisplay_path}",
-            "-URSNDisplayCameras",
-            f"-URSNDisplayCameraCount={rgb_view_count}",
-            "-ForceRes",
-            f"-ResX={width}",
-            f"-ResY={height}",
-            *extra,
-        ]
+        if args.sim_extra_arg:
+            parser.error("AppImage accepts only the scene JSON; configure settings in JSON")
+        command = [str(args.appimage), str(scene_path)]
     else:
         command = [
             str(args.ue),
