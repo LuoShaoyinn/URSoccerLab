@@ -128,7 +128,9 @@ files. This avoids failing the checkout on unrelated LFS objects such as the
 ball or Unreal environment assets:
 
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone --branch features/simulation_lawn <repo-url> URSoccerLab
+GIT_LFS_SKIP_SMUDGE=1 git clone \
+  --branch features/simulation_lawn \
+  https://github.com/MIng-Diamond/URSoccerLab-features-Lawn.git URSoccerLab
 cd URSoccerLab
 git lfs install
 git lfs pull --include="Assets/Scenes/SoccerField/visual/**,Assets/Scenes/SoccerField/physics/field_physics.xml,external/field/**"
