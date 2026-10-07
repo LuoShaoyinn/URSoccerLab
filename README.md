@@ -100,32 +100,107 @@ external assets and restart the simulator; no rebake is needed for those inputs.
 [Booster conversion](Tools/robots/README.md) explains how to normalize the K1
 archive. Camera calibration and controller tuning remain package-specific.
 
-## Deploy and visualize the 3D soccer turf
+## Use the turf assets
 
-The `features/simulation_lawn` branch includes the dense 3D grass mesh, the
-field image with white markings, PBR detail maps, the default scene settings,
-and the runtime loader. For an existing clone, get the branch and materialize
-its large LFS assets:
+This branch provides two ways to use the work:
+
+1. **Complete turf field:** use the generated field image with its white lines,
+   the repeating PBR detail maps, and optionally the 3D grass overlay. The
+   default scene already combines all of them.
+2. **Grass model only:** add the 3D grass GLB over a field image/material that
+   your project already uses. Keep your existing field appearance and physics.
+
+Both options are visual only. MuJoCo contacts remain on the flat `field_ground`
+plane and use the scene's configured friction.
+
+### Get the branch and field files
+
+After checking out this branch (or the branch containing this change), download
+only its field LFS assets:
 
 ```bash
 git lfs install
-git fetch origin
-git switch --track origin/features/simulation_lawn
-git lfs pull
-git submodule update --init --recursive
+git lfs pull --include="Assets/Scenes/SoccerField/visual/**,Assets/Scenes/SoccerField/physics/field_physics.xml,external/field/**"
 ```
 
-If the local branch already exists, use `git switch features/simulation_lawn`
-before `git pull --ff-only`. Git LFS is required: the grass GLB is about 409 MiB
-and the field/PBR images are stored there too. The default `Config/URS_scene.json`
-already points to these files; its base-color map contains the white field lines,
-and the 3D blades leave those markings clear.
+For a fresh clone, skip automatic downloads first, then pull the same field
+files. This avoids failing the checkout on unrelated LFS objects such as the
+ball or Unreal environment assets:
 
-The runtime loader is part of this branch, so an AppImage built from an older
-branch will not load the 3D overlay. For a source preview, install the Python
-client dependencies, build the updated editor target, and start the scene. The
-source build requires Unreal Engine 5.7.4 and the FFmpeg development headers and
-libraries used by the project:
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone --branch features/simulation_lawn <repo-url> URSoccerLab
+cd URSoccerLab
+git lfs install
+git lfs pull --include="Assets/Scenes/SoccerField/visual/**,Assets/Scenes/SoccerField/physics/field_physics.xml,external/field/**"
+```
+
+The grass GLB is about 409 MiB. The field image and PBR maps are also stored in
+Git LFS. The filtered pull materializes the field assets; a source build still
+needs the Unreal project assets and submodules required by the checkout.
+
+### Option 1: use the complete prepared field
+
+`Config/URS_scene.json` is the ready-to-use example. Its `field.visual` block
+points to `external/field/example.png` (grass base color with the white field
+markings), the normal/roughness/AO detail maps, and
+`Assets/Scenes/SoccerField/visual/grass_blades.glb`. The geometry leaves the
+white marking paths clear. Keep the matching default dimensions: 9 x 6 m of
+playing area with 0.8 m X borders and 0.9 m Y borders. When using a copied scene
+JSON, paths are relative to that JSON file, so preserve the bundle layout or
+adjust the paths.
+
+Run the scene with a packaged build that includes this branch's runtime loader:
+
+```bash
+./dist/URSoccerLab.AppImage Config/URS_scene.json
+```
+
+An AppImage built from an older branch may render the field image but will not
+load the `grass_mesh` overlay. Build the updated source target as described
+below before previewing the 3D fibers.
+
+### Option 2: add only the grass model to an existing field
+
+Copy `Assets/Scenes/SoccerField/visual/grass_blades.glb` into the teammate's
+asset bundle, then add its path to the existing `field.visual` object. Keep the
+existing `base_color_map`, any normal/roughness/AO settings, and the complete
+`field.physics` block unchanged. For example, in a scene JSON stored at the
+project root:
+
+```json
+"visual": {
+  "base_color_map": "assets/my_existing_field.png",
+  "grass_mesh": "assets/grass_blades.glb"
+}
+```
+
+Do not use the GLB as `base_color_map`: it is geometry, not a texture. The
+included mesh has white-line clearance laid out for a 9 x 6 m pitch and the
+default borders above. If the teammate's pitch dimensions or line layout are
+different, regenerate the GLB with matching dimensions and borders so the
+standard soccer-line clearances line up. The generator currently creates this
+standard line plan; adapt its line definitions first if the field uses a custom
+marking layout:
+
+```bash
+python3 Tools/field/generate_grass_assets.py \
+  --length-m 9 --width-m 6 --border-x-m 0.8 --border-y-m 0.9 \
+  --out-dir /tmp/field-assets \
+  --grass-mesh-out /path/to/grass_blades.glb
+```
+
+The generator also writes a field image and PBR maps under `/tmp/field-assets`;
+the grass-only workflow can ignore those outputs. `grass_mesh` is a
+non-colliding visual overlay and does not replace the field image, markings, or
+MuJoCo contact surface.
+
+### Build and visualize the 3D field
+
+The runtime loader is part of this branch. For a source preview, install the
+Python client dependencies, build the updated editor target, and start either
+the complete example or the teammate's edited scene. The source build requires
+Unreal Engine 5.7.4 and the FFmpeg development headers and libraries used by the
+project:
 
 ```bash
 uv sync --project py_example
@@ -144,13 +219,11 @@ uv run --project py_example python Tools/field/capture_field_view.py \
   --out artifacts/outputs/field_preview.png
 ```
 
-Open `artifacts/outputs/field_preview.png` to inspect the rendered field. The
-scene must be running, and its `guest_inspector.enabled` setting must be true.
-To use the packaged runtime instead, build the AppImage from this branch as
-described in [AppImage packaging](Tools/packaging/README.md), then launch it
-with `./dist/URSoccerLab.AppImage Config/URS_scene.json` before running the
-capture command. Grass fibers are visual-only; MuJoCo contacts still use the
-flat `field_ground` plane and the configured friction.
+Open `artifacts/outputs/field_preview.png`. The scene must be running, and its
+`guest_inspector.enabled` setting must be true. To use the packaged runtime,
+build the AppImage from this branch as described in
+[AppImage packaging](Tools/packaging/README.md), launch it with the selected
+scene JSON, then run the capture command.
 
 ## Build from source
 

@@ -13,6 +13,43 @@ repeats the tracked, photo-like turf tile with restrained mowing bands and
 field-scale color mottling. The default output uses deterministic seed
 `20261007`.
 
+## Choose what to deploy
+
+The field bundle supports two use cases:
+
+- **Complete prepared turf field:** use `external/field/example.png` for the
+  complete ground appearance and painted white lines, add the optional normal,
+  roughness and AO maps from `external/field/grass1-ue/`, and use the 3D blade
+  mesh at `Assets/Scenes/SoccerField/visual/grass_blades.glb`. The default
+  `Config/URS_scene.json` already references this combination.
+- **Grass model only:** copy `grass_blades.glb` into the target project's asset
+  bundle and add its path as `field.visual.grass_mesh`. Keep that project's
+  existing `field.visual.base_color_map`, other material maps, and `field.physics`
+  values. The GLB is geometry, not a ground texture, and does not contain the
+  white lines.
+
+For either mode, materialize the field's LFS assets after checking out this
+branch:
+
+```bash
+git lfs install
+git lfs pull --include="Assets/Scenes/SoccerField/visual/**,Assets/Scenes/SoccerField/physics/field_physics.xml,external/field/**"
+```
+
+If cloning a branch where unrelated LFS objects are unavailable, use
+`GIT_LFS_SKIP_SMUDGE=1` for `git clone`, then run the filtered `git lfs pull`
+above. That obtains the grass/field bundle without downloading the ball or
+unrelated Unreal environment assets. A source build still needs the Unreal
+project's own level, plugin and other required content assets.
+
+The standard GLB leaves clearance along white markings for a 9 x 6 m pitch
+with 0.8 m X and 0.9 m Y borders. The runtime scales the mesh to the dimensions
+in the scene JSON, but that does not move its cutouts. If the existing field
+uses different dimensions, regenerate with matching `--length-m`, `--width-m`,
+`--border-x-m`, and `--border-y-m` values. Those options retain the standard
+soccer-marking pattern; edit the generator's line definitions first if the
+field uses a custom marking layout.
+
 `external/field/grass1-ue/` contains seamless 0.5 m normal, roughness, and AO
 tiles with 180,000 fiber strokes per square metre. `grass1-height.png` is an
 authoring source only; runtime displacement is not supported. The
