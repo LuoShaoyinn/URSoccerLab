@@ -83,6 +83,9 @@ bool ReadFieldSettings(const TSharedPtr<FJsonObject>& Field, FURSFieldConfig& Ou
 		return false;
 	}
 	if (!ReadPBRVisual(*Visual, Out.Visual, Error)) return false;
+	if ((*Visual)->HasField(TEXT("grass_mesh")) &&
+		(!(*Visual)->TryGetStringField(TEXT("grass_mesh"), Out.Visual.GrassMesh) || Out.Visual.GrassMesh.IsEmpty()))
+	{ Error = TEXT("field.visual.grass_mesh must be a nonempty path string"); return false; }
 	if ((*Visual)->HasField(TEXT("detail_tile_size_m")) &&
 		((*Visual)->TryGetField(TEXT("detail_tile_size_m"))->Type != EJson::Number ||
 		 !(*Visual)->TryGetNumberField(TEXT("detail_tile_size_m"), Out.Visual.DetailTileSizeM)))
@@ -877,6 +880,7 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		F->SetNumberField(TEXT("border_y_m"), In.Field.BorderYM);
 		auto Visual = WritePBRVisual(In.Field.Visual);
 		Visual->SetNumberField(TEXT("detail_tile_size_m"), In.Field.Visual.DetailTileSizeM);
+		if (!In.Field.Visual.GrassMesh.IsEmpty()) Visual->SetStringField(TEXT("grass_mesh"), In.Field.Visual.GrassMesh);
 		F->SetObjectField(TEXT("visual"), Visual);
 		auto Physics = MakeShared<FJsonObject>();
 		const auto& P = In.Field.Physics;

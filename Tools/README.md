@@ -6,6 +6,14 @@ diagnostics; runtime tools do not modify Unreal assets.
 
 ## Field assets
 
+Generate the pitch image and tileable grass PBR maps, and rebuild the
+3D grass-blade GLB with
+`python3 Tools/field/generate_grass_assets.py`. The default outputs match the
+9 x 6 m example scenes. The deployable field textures are tracked under
+`external/field/`; the albedo source tile and mesh are tracked under
+`Assets/Scenes/SoccerField/visual/`. Large PNG/GLB files use Git LFS. See
+[Field assets](../docs/Field_Assets.md) for dimension options and runtime use.
+
 The authoritative visual scene is the tracked Unreal level
 `Content/Levels/URS_SoccerField.umap` together with its assets under
 `Content/URSoccerLab/Scenes/SoccerField/`. Edit and save these through Unreal

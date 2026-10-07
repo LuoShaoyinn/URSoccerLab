@@ -77,7 +77,14 @@
     "border_x_m": 0.8,
     "border_y_m": 0.9,
     "visual": {
-      "base_color_map": "../../../external/field/example.png"
+      "base_color_map": "../../../external/field/example.png",
+      "normal_map": "../../../external/field/grass1-ue/grass1-normal1-dx.png",
+      "normal_format": "directx",
+      "roughness_map": "../../../external/field/grass1-ue/grass1-rough.png",
+      "ao_map": "../../../external/field/grass1-ue/grass1-ao.png",
+      "detail_tile_size_m": 0.5,
+      "normal_strength": 1.0,
+      "grass_mesh": "../../../Assets/Scenes/SoccerField/visual/grass_blades.glb"
     },
     "physics": {
       "friction": [

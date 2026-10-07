@@ -122,5 +122,8 @@ refs/
 /artifacts/
 /runs
 
-# User-supplied runtime field maps and PBR textures
-/external/
+# Keep the default field assets available to every checkout; other external
+# robot/object packages remain local and ignored.
+/external/*
+!/external/field/
+!/external/field/**

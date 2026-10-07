@@ -163,6 +163,7 @@ struct URSOCCERLAB_API FURSPBRVisualConfig
 struct URSOCCERLAB_API FURSFieldVisualConfig : FURSPBRVisualConfig
 {
 	double DetailTileSizeM = 0.5;
+	FString GrassMesh;
 };
 
 struct URSOCCERLAB_API FURSFieldPhysicsConfig

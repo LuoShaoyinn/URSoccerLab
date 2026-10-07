@@ -1,0 +1,38 @@
+{
+  "field_length_m": 9.0,
+  "field_width_m": 6.0,
+  "border_x_m": 0.8,
+  "border_y_m": 0.9,
+  "base_color_map": "example.png",
+  "turf_albedo_tile": "Assets/Scenes/SoccerField/visual/grass_albedo_tile.png",
+  "detail_tile_size_m": 0.5,
+  "line_width_m": 0.05,
+  "turf_fibers_per_m2": 180000,
+  "grass_fibers_per_m2": 180000,
+  "fiber_tip_height_range_m": [
+    0.005,
+    0.011
+  ],
+  "fiber_lean_length_range_m": [
+    0.018,
+    0.025
+  ],
+  "fiber_root_width_range_m": [
+    0.0018,
+    0.0024
+  ],
+  "pixels_per_m": 512,
+  "seed": 20261007,
+  "normal_map": "grass1-ue/grass1-normal1-dx.png",
+  "roughness_map": "grass1-ue/grass1-rough.png",
+  "ao_map": "grass1-ue/grass1-ao.png",
+  "height_source": "grass1-ue/grass1-height.png",
+  "grass_mesh": "Assets/Scenes/SoccerField/visual/grass_blades.glb",
+  "grass_mesh_vertices": 42815313,
+  "grass_mesh_triangles": 14271771,
+  "grass_mesh_bytes": 428154552,
+  "grass_mesh_fibers": 14271771,
+  "grass_mesh_note": "Dense, low 3D synthetic-turf fibers for rendering; collision remains the flat MuJoCo plane.",
+  "height_source_note": "Authoring aid only; URSoccerLab runtime does not load height maps.",
+  "physics_note": "Flat MuJoCo plane; configure contact friction in scene.json."
+}
