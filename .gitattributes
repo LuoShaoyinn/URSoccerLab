@@ -4,6 +4,10 @@ Assets/Robots/**/*.glb filter=lfs diff=lfs merge=lfs -text
 Assets/Objects/**/*.xml filter=lfs diff=lfs merge=lfs -text
 Assets/Objects/**/*.glb filter=lfs diff=lfs merge=lfs -text
 Assets/Scenes/SoccerField/physics/*.xml filter=lfs diff=lfs merge=lfs -text
+Assets/Scenes/SoccerField/visual/*.glb filter=lfs diff=lfs merge=lfs -text
+Assets/Scenes/SoccerField/visual/*.png filter=lfs diff=lfs merge=lfs -text
+external/field/*.png filter=lfs diff=lfs merge=lfs -text
+external/field/grass1-ue/*.png filter=lfs diff=lfs merge=lfs -text
 Content/URSoccerLab/Robots/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 Content/URSoccerLab/Objects/**/*.uasset filter=lfs diff=lfs merge=lfs -text
 Content/Levels/URS_SoccerField.umap filter=lfs diff=lfs merge=lfs -text

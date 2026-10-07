@@ -116,4 +116,5 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMesh> RuntimeFieldMesh;
 	UPROPERTY() TObjectPtr<UMaterialInterface> RuntimeFieldMaterial;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> RuntimeFieldSurface;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> RuntimeGrassSurface;
 };

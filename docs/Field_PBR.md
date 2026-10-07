@@ -8,6 +8,7 @@
   "border_y_m": 0.9,
   "visual": {
     "base_color_map": "textures/field.png",
+    "grass_mesh": "../Assets/Scenes/SoccerField/visual/grass_blades.glb",
     "normal_map": "textures/grass_normal.png",
     "normal_format": "directx",
     "roughness_map": "textures/grass_roughness.png",
@@ -34,9 +35,13 @@ except no detail maps are supplied by default. Border defaults remain unchanged.
 
 ## Files and sampling
 
-Local field files live under `external/field/` (`example.png` and `grass1-ue/`).
-The entire `external/` directory is Git-ignored. Example scenes point there;
-a fresh checkout needs your separately supplied maps.
+The example field images and PBR detail tiles live under `external/field/`;
+the 3D mesh and its source albedo tile live under
+`Assets/Scenes/SoccerField/visual/`. These field assets are tracked with Git
+LFS. A fresh checkout can restore them with `git lfs pull`. Regenerate the
+example set with `python3 Tools/field/generate_grass_assets.py`; the generator
+needs Pillow and NumPy. Other directories under `external/` remain local and
+ignored.
 
 All paths are external files relative to the scene JSON directory, or absolute
 paths. Moving the JSON requires moving its textures with it or adjusting paths.
@@ -49,6 +54,7 @@ base color also accepts JPEG. Images must be single 2D images at most 8192x8192.
 | Input | Meaning | Sampling |
 |---|---|---|
 | `base_color_map` | RGB bird-view field with markings and borders | sRGB; UV0 covers the entire surface once |
+| `grass_mesh` | Optional dense, low synthetic-turf fiber geometry in a GLB file | Loaded as a visual-only overlay; no collision |
 | `normal_map` | Tangent-space RGB normal vectors | Linear; DirectX by default, `opengl` flips green |
 | `roughness_map` | 0 smooth, 1 rough, from red channel | Linear; replaces scalar `roughness` when present |
 | `metallic_map` | 0 dielectric, 1 metal, from red channel | Linear; replaces scalar `metallic` when present |
@@ -59,7 +65,9 @@ repeat size of `detail_tile_size_m`. Their tiling follows field plus border
 extents, so resizing does not stretch the detail. Scalars `roughness` and
 `metallic` are fallback values in [0,1]; normal strength is [0,10], and repeat
 size must be positive and finite. Absent normals are flat. No height/displacement
-map is supported: geometry stays the original static Nanite surface.
+map is supported. The flat Nanite surface remains the visual underlay; an
+optional `grass_mesh` GLB adds dense, laid-over 3D turf fibers above it. That
+mesh has no collision, so robot and ball contacts remain on the MuJoCo plane.
 
 Separate roughness and metallic maps are resampled into one transient G/B-packed
 texture for the existing glTF shader; they can have different resolutions. Every

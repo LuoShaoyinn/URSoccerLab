@@ -1,5 +1,8 @@
 #include "Scene/URSSceneConfigComponent.h"
 #include "Scene/URSFieldTextures.h"
+#include "glTFRuntimeAsset.h"
+#include "glTFRuntimeFunctionLibrary.h"
+#include "glTFRuntimeParser.h"
 #include "MuJoCo/Components/Geometry/Primitives/MjPlane.h"
 #include "Vision/URSCameraStreamComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -817,7 +820,7 @@ void UURSSceneConfigComponent::ApplyRenderConfig()
 			: (bNDisplayOwnsResolution ? TEXT("nDisplay atlas") : TEXT("unchanged")));
 }
 
-// Preserve the original static Nanite surface; the pitch image stays external.
+// Keep the flat field surface as the substrate; optional 3D grass blades overlay it.
 bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 {
 	const auto &F = ActiveConfig.Field;
@@ -860,8 +863,63 @@ bool UURSSceneConfigComponent::ApplyFieldConfig(FString &OutError)
 		(F.LengthM + 2 * F.BorderXM) / F.Visual.DetailTileSizeM,
 		(F.WidthM + 2 * F.BorderYM) / F.Visual.DetailTileSizeM));
 	RuntimeFieldSurface->RegisterComponent();
-	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g base_color=%s detail_tile=%g m"),
-		F.LengthM, F.WidthM, F.BorderXM, F.BorderYM, *F.Visual.BaseColorMap, F.Visual.DetailTileSizeM);
+
+	if (!F.Visual.GrassMesh.IsEmpty())
+	{
+		const FString GrassPath = FPaths::ConvertRelativePathToFull(
+			FPaths::IsRelative(F.Visual.GrassMesh)
+				? FPaths::Combine(ActiveConfig.SourceDirectory, F.Visual.GrassMesh)
+				: F.Visual.GrassMesh);
+		FglTFRuntimeConfig LoaderConfig;
+		LoaderConfig.TransformBaseType = EglTFRuntimeTransformBaseType::YForward;
+		UglTFRuntimeAsset* GrassAsset = UglTFRuntimeFunctionLibrary::glTFLoadAssetFromFilename(
+			GrassPath, false, LoaderConfig);
+		if (!GrassAsset)
+		{
+			OutError = TEXT("failed to load field grass GLB: ") + GrassPath;
+			return false;
+		}
+		FglTFRuntimeStaticMeshConfig MeshConfig;
+		MeshConfig.Outer = GetTransientPackage();
+		UStaticMesh* GrassMesh = GrassAsset->LoadStaticMeshRecursive(TEXT(""), {}, MeshConfig);
+		if (!GrassMesh || !GrassAsset->GetErrors().IsEmpty())
+		{
+			OutError = TEXT("failed to build field grass mesh: ") + GrassPath;
+			if (!GrassAsset->GetErrors().IsEmpty())
+				OutError += TEXT(": ") + FString::Join(GrassAsset->GetErrors(), TEXT("; "));
+			return false;
+		}
+		const FVector GrassBounds = GrassMesh->GetBoundingBox().GetSize();
+		if (GrassBounds.X <= 0 || GrassBounds.Y <= 0)
+		{
+			OutError = TEXT("field grass mesh has invalid pitch bounds");
+			return false;
+		}
+		if (!RuntimeGrassSurface)
+		{
+			RuntimeGrassSurface = NewObject<UStaticMeshComponent>(GetOwner(), TEXT("URSRuntimeGrass"));
+			GetOwner()->AddInstanceComponent(RuntimeGrassSurface);
+		}
+		if (RuntimeGrassSurface->IsRegistered())
+			RuntimeGrassSurface->UnregisterComponent();
+		RuntimeGrassSurface->SetMobility(EComponentMobility::Static);
+		RuntimeGrassSurface->SetStaticMesh(GrassMesh);
+		RuntimeGrassSurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		RuntimeGrassSurface->SetCastShadow(false);
+		RuntimeGrassSurface->SetWorldLocation(FVector::ZeroVector);
+		RuntimeGrassSurface->SetWorldRotation(FRotator::ZeroRotator);
+		RuntimeGrassSurface->SetWorldScale3D(
+			FVector((F.LengthM + 2 * F.BorderXM) * 100 / GrassBounds.X,
+					(F.WidthM + 2 * F.BorderYM) * 100 / GrassBounds.Y, 1));
+		RuntimeGrassSurface->RegisterComponent();
+	}
+	else if (RuntimeGrassSurface)
+	{
+		RuntimeGrassSurface->DestroyComponent();
+		RuntimeGrassSurface = nullptr;
+	}
+	UE_LOG(LogTemp, Log, TEXT("URS field: length=%g width=%g borders=%g,%g base_color=%s grass_mesh=%s detail_tile=%g m"),
+		F.LengthM, F.WidthM, F.BorderXM, F.BorderYM, *F.Visual.BaseColorMap, *F.Visual.GrassMesh, F.Visual.DetailTileSizeM);
 	return true;
 }
 

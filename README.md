@@ -12,10 +12,10 @@ You need Linux x86-64, a Vulkan-capable GPU with current drivers, and the
 must support AV1 video encoding. The current Docker packaging baseline is
 Ubuntu 24.04; older Linux distributions are not yet validated.
 
-You also need a scene JSON, external robot packages, and a field image. These
-assets are supplied separately; robot models and field maps are not inside
-the AppImage. The ball's default mesh and skin remain built in; optional external
-PBR maps override its skin. A typical installation is:
+You also need a scene JSON, robot packages, and field assets. They are separate
+from the AppImage; this branch includes the default field bundle in the Git
+checkout, while robot models and optional ball PBR maps are supplied separately.
+The ball's default mesh and skin remain built in. A typical installation is:
 
 ```text
 match/
@@ -99,6 +99,58 @@ external assets and restart the simulator; no rebake is needed for those inputs.
 [Robot packages](docs/Robot_Packages.md) describes the external MJCF/GLB format.
 [Booster conversion](Tools/robots/README.md) explains how to normalize the K1
 archive. Camera calibration and controller tuning remain package-specific.
+
+## Deploy and visualize the 3D soccer turf
+
+The `features/simulation_lawn` branch includes the dense 3D grass mesh, the
+field image with white markings, PBR detail maps, the default scene settings,
+and the runtime loader. For an existing clone, get the branch and materialize
+its large LFS assets:
+
+```bash
+git lfs install
+git fetch origin
+git switch --track origin/features/simulation_lawn
+git lfs pull
+git submodule update --init --recursive
+```
+
+If the local branch already exists, use `git switch features/simulation_lawn`
+before `git pull --ff-only`. Git LFS is required: the grass GLB is about 409 MiB
+and the field/PBR images are stored there too. The default `Config/URS_scene.json`
+already points to these files; its base-color map contains the white field lines,
+and the 3D blades leave those markings clear.
+
+The runtime loader is part of this branch, so an AppImage built from an older
+branch will not load the 3D overlay. For a source preview, install the Python
+client dependencies, build the updated editor target, and start the scene. The
+source build requires Unreal Engine 5.7.4 and the FFmpeg development headers and
+libraries used by the project:
+
+```bash
+uv sync --project py_example
+export URS_UE_ROOT=/path/to/Unreal_Engine_5.7.4
+export URS_UE="$URS_UE_ROOT/Engine/Binaries/Linux/UnrealEditor"
+"$URS_UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh" \
+  URSoccerLabEditor Linux Development "$PWD/URSoccerLab.uproject"
+uv run --project py_example python Tools/runtime/run_scene.py \
+  --scene-config Config/URS_scene.json
+```
+
+In a second terminal, capture a full-field view through the guest inspector:
+
+```bash
+uv run --project py_example python Tools/field/capture_field_view.py \
+  --out artifacts/outputs/field_preview.png
+```
+
+Open `artifacts/outputs/field_preview.png` to inspect the rendered field. The
+scene must be running, and its `guest_inspector.enabled` setting must be true.
+To use the packaged runtime instead, build the AppImage from this branch as
+described in [AppImage packaging](Tools/packaging/README.md), then launch it
+with `./dist/URSoccerLab.AppImage Config/URS_scene.json` before running the
+capture command. Grass fibers are visual-only; MuJoCo contacts still use the
+flat `field_ground` plane and the configured friction.
 
 ## Build from source
 
