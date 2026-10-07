@@ -6,8 +6,8 @@ as a stationary observer.
 
 ## Prerequisites
 
-- ONNX policy: `refs/MOS9-AMP/logs/rsl_rl/mos9_loco/walk_v11_terrain/exported/policy_5500.onnx`
-- No PyTorch backend required (pure ONNX Runtime, included in the default env).
+- ONNX policy: `py_example/models/policies/mos9_walk_v11_5500.onnx`
+- Install ONNX Runtime with `uv sync --extra vision`; no PyTorch backend is required.
 
 ## Scene
 
@@ -16,18 +16,18 @@ as a stationary observer.
 
 ## Run
 
-Start the simulator offscreen in a separate terminal (project root):
+Supply the external robot packages and field maps referenced by `scene.json`.
+Start the packaged simulator from the project root:
 
 ```bash
-uv run --project py_example python Tools/runtime/run_scene.py \
-  --scene-config py_example/examples/mos9_walk/scene.json
+./dist/URSoccerLab.AppImage py_example/examples/mos9_walk/scene.json
 ```
 
 Then run the client:
 
 ```bash
 cd py_example
-uv run python examples/mos9_walk/mos9_walk.py \
+uv run --extra vision python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 \
   --vx 0.4 --duration 15 \
   --video ../artifacts/outputs/mos9_walker.mp4 --observer-video ../artifacts/outputs/mos9_observer.mp4

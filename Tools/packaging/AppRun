@@ -12,6 +12,24 @@ for d in "$HERE"/Engine/Plugins/*/*/Binaries/Linux "$HERE"/Engine/Plugins/*/Bina
   [ ! -d "$d" ] || LIBS="$LIBS:$d"
 done
 export LD_LIBRARY_PATH="$LIBS:${LD_LIBRARY_PATH:-}"
+# New GPU drivers may require a newer C++ ABI than the bundled runtime.
+# Prefer a newer host libstdc++ and its unwind runtime; retain the bundle fallback.
+BUNDLED_CXX="$HERE/usr/lib/libstdc++.so.6"
+if [ -f "$BUNDLED_CXX" ]; then
+  BUNDLED_ABI="$(LC_ALL=C grep -aoE 'GLIBCXX_[0-9]+(\.[0-9]+)+' "$BUNDLED_CXX" | sort -Vu | tail -n 1)"
+  for HOST_CXX in /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib64/libstdc++.so.6 /usr/lib/libstdc++.so.6; do
+    [ -f "$HOST_CXX" ] || continue
+    HOST_ABI="$(LC_ALL=C grep -aoE 'GLIBCXX_[0-9]+(\.[0-9]+)+' "$HOST_CXX" | sort -Vu | tail -n 1)"
+    NEWEST="$(printf '%s\n%s\n' "$BUNDLED_ABI" "$HOST_ABI" | sort -V | tail -n 1)"
+    if [ -n "$HOST_ABI" ] && [ "$HOST_ABI" != "$BUNDLED_ABI" ] && [ "$NEWEST" = "$HOST_ABI" ]; then
+      PRELOAD="$HOST_CXX"
+      HOST_GCC="$(dirname "$HOST_CXX")/libgcc_s.so.1"
+      [ ! -f "$HOST_GCC" ] || PRELOAD="$PRELOAD:$HOST_GCC"
+      export LD_PRELOAD="$PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}"
+      break
+    fi
+  done
+fi
 SAVE="${XDG_DATA_HOME:-$HOME/.local/share}/URSoccerLab"
 mkdir -p "$SAVE/runtime"
 CFG="$(mktemp "$SAVE/runtime/atlas-XXXXXX.ndisplay")"

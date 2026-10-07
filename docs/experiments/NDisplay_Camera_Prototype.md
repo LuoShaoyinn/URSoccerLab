@@ -1,5 +1,9 @@
 # nDisplay camera atlas renderer
 
+> Historical experiment: settings, commands and measurements refer to an older
+> revision. Use the [current user guide](../README.md) for supported startup and configuration.
+
+
 URSoccerLab's production RGB backend renders URLab MuJoCo cameras into one
 nDisplay atlas and disables their duplicate `SceneCaptureComponent2D`
 updates. A four-camera configuration remains useful for profiling.

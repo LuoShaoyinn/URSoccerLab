@@ -12,11 +12,11 @@ face. `robot_rp0` listens on port `10000`, `robot_rp1` on `10001`.
 
 ## Run
 
-Start the simulator offscreen in a separate terminal (project root):
+Supply the external robot packages and field maps referenced by `scene.json`.
+Start the packaged simulator from the project root:
 
 ```bash
-uv run --project py_example python Tools/runtime/run_scene.py \
-  --scene-config py_example/examples/standing/scene.json
+./dist/URSoccerLab.AppImage py_example/examples/standing/scene.json
 ```
 
 Then run the client:

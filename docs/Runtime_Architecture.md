@@ -51,8 +51,7 @@ No connection or recovery event requests a keyframe. Lossless depth remains
 a separate independently scheduled message. See [AV1 runtime](AV1_Runtime.md). There is
 at most one encoding job per robot per scene generation. Jobs use a shared completion
 mailbox, never a UObject. Old-generation completions are discarded after a scene rebuild;
-shutdown waits for outstanding jobs before releasing the encoder module. Completely black
-images are valid JPEG input.
+shutdown waits for outstanding jobs before releasing the encoder module. Black frames remain valid image input.
 
 The component emits `FEncodedCameraFrame` with actor ID, sequence, simulation time, and
 image metadata. Actor ID is a routing key rather than a position in the robot array.
@@ -69,7 +68,7 @@ metadata refresh. The socket adapter itself has no nDisplay dependency.
 payload serialization. Decoding produces typed messages and has no socket/buffer side
 effects. JSON helpers live in `Protocol/`. Image compression belongs to `Vision/`; future
 state/message compression belongs with the application protocol and must be explicitly
-identified on the wire. TCP does not recompress JPEG images.
+identified on the wire. TCP sends the encoded payload without recompressing it.
 
 `IURSNetworkService` is the game-thread-facing adapter contract. `URSNetworkThread` is its
 TCP implementation. It owns listener creation, accept/read/write, and socket destruction
@@ -96,7 +95,7 @@ path. UDP is not implemented. Guest inspector sessions now use a separate adapte
 floating camera component, sharing the image encoder and v2 RGB serializer.
 
 The guest camera endpoint and Python receiver are described in
-[Inspector_Plan.md](Inspector_Plan.md). Inspector sockets run on their own worker;
+[Guest_Cameras.md](Guest_Cameras.md). Inspector sockets run on their own worker;
 Unreal capture uses asynchronous GPU readback and the shared encoder pool.
 
 ## Verification

@@ -79,11 +79,11 @@ def phase_cook() -> int:
             f"-project={PROJECT}",
             "-noP4",
             "-platform=Linux",
-            "-clientconfig=Development",
+            "-clientconfig=Shipping",
             "-cook",
-            "-iterate",
             "-stage",
             "-pak",
+            "-compressed",
             "-package",
             "-build",
         ],
@@ -107,6 +107,26 @@ def _strip_external(tree: Path) -> int:
             p.unlink()
             removed += 1
     return removed
+
+
+def _strip_release_diagnostics(tree: Path) -> None:
+    """Keep build symbols in staging, but omit them and optional Vulkan layers.
+
+    Vulkan rendering uses the host driver; these packaged layers are developer
+    instrumentation, not the Vulkan loader or the application's encoder.
+    """
+    removed_bytes = 0
+    removed_files = 0
+    for p in tree.rglob("*"):
+        if not p.is_file():
+            continue
+        if p.suffix in (".debug", ".sym") or (
+            p.name.startswith("libVkLayer_") and ".so" in p.name
+        ):
+            removed_bytes += p.stat().st_size
+            removed_files += 1
+            p.unlink()
+    log(f"omitted {removed_files} diagnostic files ({removed_bytes / 1024**2:.1f} MiB)")
 
 
 def _stage_third_party(appdir: Path) -> None:
@@ -232,6 +252,18 @@ def phase_appdir() -> int:
     log(f"copying staged tree -> {APPDIR.relative_to(ROOT)}")
     shutil.copytree(STAGED, APPDIR, symlinks=True)
 
+    # UAT gives Shipping executables a configuration suffix. Keep the public
+    # launcher path identical across configurations without shipping two games.
+    binaries = APPDIR / "URSoccerLab/Binaries/Linux"
+    shipping = binaries / "URSoccerLab-Linux-Shipping"
+    is_shipping = shipping.is_file()
+    if is_shipping:
+        shipping.replace(binaries / "URSoccerLab")
+    (APPDIR / "usr/share/ursoccerlab").mkdir(parents=True, exist_ok=True)
+    (APPDIR / "usr/share/ursoccerlab/build-config").write_text(
+        "Shipping\n" if is_shipping else "Development\n"
+    )
+
     apprun = APPDIR / "AppRun"
     apprun.write_text(APPRUN)
     apprun.chmod(apprun.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -242,6 +274,7 @@ def phase_appdir() -> int:
     _write_desktop_and_icon(APPDIR)
     removed = _strip_external(APPDIR)
     log(f"removed {removed} external (vulkan/gpu) libs from AppDir")
+    _strip_release_diagnostics(APPDIR)
 
     exe = APPDIR / "URSoccerLab" / "Binaries" / "Linux" / "URSoccerLab"
     log(f"AppDir ready; exe={exe.relative_to(ROOT)} exists={exe.is_file()}")

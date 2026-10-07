@@ -67,6 +67,32 @@ metric depth remains separate. Settings are applied when the scene config is
 loaded; editing the JSON alone does not automatically reload the application.
 These JSON values are applied at startup and need no rebake.
 
+### Render settings
+
+Omitting `render` preserves the engine/hall settings. When a `render` object is
+present, omitted fields use the following parser defaults:
+
+| Key under `render` | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `true` | False applies a minimal render preset |
+| `lumen` | `true` | Lumen GI and reflections |
+| `hardware_ray_tracing` | `false` | Enable hardware ray tracing explicitly |
+| `anti_aliasing` | `"tsr"` | `none`, `fxaa`, `taa`, `tsr` |
+| `screen_percentage` | `100` | Render scale, 10–200 |
+| `shadow_quality` | `3` | 0–5 |
+| `auto_exposure` | `false` | Automatic camera exposure |
+| `exposure_compensation` | `0` | Exposure stops; examples explicitly use 2.5 |
+| `motion_blur` | `false` | Enable velocity-based blur |
+| `motion_blur_amount` | `0.5` | 0–1 |
+| `motion_blur_max_percent` | `5` | Maximum streak, 0–100 |
+| `motion_blur_target_fps` | `0` | 0 follows camera rate; otherwise 1–120 |
+| `film_grain.intensity` | `0` | 0 disables grain; range 0–1 |
+| `film_grain.shadows`, `midtones`, `highlights` | `1` | Tone multipliers, 0–1 |
+| `film_grain.texel_size` | `1` | 0–4 |
+
+Guest stream configuration is documented in [Guest cameras](Guest_Cameras.md);
+AV1 bitrate, keyframe intervals and GPU selection are in [AV1 runtime](AV1_Runtime.md).
+
 ## Startup flow
 
 ```text
@@ -77,7 +103,7 @@ These JSON values are applied at startup and need no rebake.
 AURSSoccerGameMode::InitGame
         |
         +-> register robot and object types
-        +-> apply JSON and spawn baked AMjArticulation Blueprints
+        +-> load external robot packages and spawn registered objects
         +-> disable URLab legacy network transports
                     |
                     v
@@ -116,13 +142,14 @@ baked into the level.
     "mode": "stereo_rgb",
     "left_camera": "left_eye",
     "right_camera": "right_eye",
-    "rgb": {"rate_hz": 30, "compression": "jpeg", "jpeg_quality": 85},
+    "rgb": {"rate_hz": 30, "compression": "av1", "bitrate_kbps": 2000, "keyframe_interval_s": 2},
     "depth": {
       "rate_hz": 15,
       "compression": "zlib_u16_mm",
       "max_depth_m": 65.535
     }
   },
+  "robot_types": {"pi_plus": "assets/robots/pi_plus/robot.json"},
   "robots": [
     {
       "actor_id": "robot_rp0",
@@ -155,11 +182,17 @@ JSON file's directory; absolute paths also work.
 | `vision.left_camera` | no | `left_eye` |
 | `vision.right_camera` | no | `right_eye` |
 | `vision.rgb.rate_hz` | no | `30` |
-| `vision.rgb.compression` | no | `jpeg`; alternative: `raw` |
+| `vision.rgb.compression` | no | **Recommended: `av1`**, as in the example. Parser fallback when omitted: `jpeg`. `raw` is also supported. |
+| `vision.rgb.bitrate_kbps` | no | `2000`; AV1 target bitrate |
+| `vision.rgb.keyframe_interval_s` | no | `2`; AV1 maximum GOP at configured rate |
+| `vision.rgb.vulkan_device` | no | empty; FFmpeg default Vulkan device |
 | `vision.rgb.jpeg_quality` | no | `85` |
 | `vision.depth.rate_hz` | no | `15` |
 | `vision.depth.compression` | no | `zlib_u16_mm`; alternatives: `raw_f32`, `raw_u16_mm` |
 | `vision.depth.max_depth_m` | no | `65.535` |
+| `field`, `goals` | yes | external field map/dimensions and exactly two explicit goal poses |
+| `robot_types` | for spawned robots | alias → external `robot.json`; no built-in robot fallback |
+| `guest_inspector` | no | enabled, port 12000, four 640×480 views, AV1 at 30 Hz; see [Guest cameras](Guest_Cameras.md) |
 | `robots` | yes | array, possibly empty |
 | `objects` | no | empty array |
 | `robots[].actor_id`, `robots[].type` | yes | unique ID and registered type |
@@ -173,7 +206,8 @@ policy-specific poses in configuration instead of runtime C++.
 
 `stereo_rgb` publishes both named RGB cameras in one synchronized message.
 `rgbd` publishes left-eye RGB plus independently scheduled depth aligned with
-that viewpoint. JPEG is the practical RGB default; depth remains numeric and
+that viewpoint. Set `compression: "av1"` for video streaming; JPEG remains the
+compatibility default when the key is omitted. Depth remains numeric and
 uses raw float, raw millimetres, or lossless zlib-compressed millimetres.
 
 ## External field
@@ -301,14 +335,14 @@ external/robots/<type>/               ignored, distributed separately
   meshes/*.glb                       Unreal render geometry and PBR
 
 Content/                             Unreal-generated, tracked with Git LFS
-  Levels/URS_SoccerField.umap        authored hall, goals, ground physics and lighting
+  Levels/URS_SoccerField.umap        authored hall, ground physics and lighting
   URSoccerLab/Objects/...            baked object Blueprint and meshes
   URSoccerLab/Scenes/...             background assets referenced by the level
 ```
 
 The original background GLB is intentionally not retained: the `.umap` and its
 referenced Content assets are the authoritative visual scene. The pitch surface is created at runtime from required external configuration.
-MuJoCo sees only the flat ground plane plus configured articulations.
+MuJoCo compiles the flat ground, six configured goalpost cylinders, robots and objects.
 
 Robot GLB mesh/geoms are extracted by the runtime loader and removed from the
 MuJoCo input; see [Robot packages](Robot_Packages.md). Objects retain their baked

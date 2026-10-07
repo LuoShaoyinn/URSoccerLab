@@ -1,5 +1,9 @@
 # Walk policy rerun with field collision
 
+> Historical experiment: settings, commands and measurements refer to an older
+> revision. Use the [current user guide](../README.md) for supported startup and configuration.
+
+
 ## Scope
 
 Rerun the existing external mos-brain Pi Plus walking-policy client after

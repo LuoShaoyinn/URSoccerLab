@@ -7,8 +7,41 @@ configure client programs, not the simulator's command-line interface.
 
 
 TCP-based clients for the URSoccerLab robot control API.
+Install the shipped wheel and use it from your own application. This directory
+provides API documentation and example source to browse and adapt; a repository
+checkout is only needed for source development or running the checkout's examples.
 
-## Setup
+## Install the client wheel
+
+Use Python 3.12 in your own virtual environment. Install the separately supplied
+wheel; the repository and Unreal Engine are not required by the client:
+
+```bash
+python -m pip install ursoccerlab_client-0.1.0-py3-none-any.whl
+```
+
+```python
+from ursoccerlab import RobotClient, AdminClient, InspectorClient
+from ursoccerlab.media import camera_to_rgb, depth_to_meters
+```
+
+The distribution is named `ursoccerlab-client`; its import name is `ursoccerlab`.
+The wheel contains the reusable client modules and declares PyAV, NumPy, Pillow
+and video-writing dependencies. Pip downloads those dependencies separately;
+this is not an offline dependency bundle. Example scripts, controllers, robot
+assets and policy weights remain separate. The wheel contains Python code and
+is platform-independent; dependency wheels remain platform-specific.
+
+To build a wheel from the repository root:
+
+```bash
+uv build --wheel --out-dir dist py_example
+```
+
+## Source checkout setup (developers)
+
+The following setup is for developing the client and running repository examples.
+Users of the shipped AppImage should install the wheel as described above.
 
 ```bash
 cd py_example
@@ -57,7 +90,8 @@ mailboxes to the dedicated network worker, which owns socket I/O.
 
 ## Controller Parameters — actuator mode and PD gains
 
-All robot actuators are `<motor>` (torque) in the MJCF. By default the
+Actuator behavior is package-specific. The Pi Plus and MOS9 control examples
+use the torque-motor interface. By default the
 simulator starts in **torque** mode: each command value is the applied torque
 in N·m. To use **position** mode (the value is a target angle in radians and
 the simulator runs a PD law internally), call `set_controller_params`:
@@ -144,7 +178,7 @@ uv run --project py_example python Tools/runtime/run_scene.py \
   --scene-config py_example/examples/move_head/scene.json
 ```
 
-This launches the UE editor in `-game` (PIE) mode with nDisplay atlas backend.
+This launches Unreal Editor in standalone `-game` mode with nDisplay atlas backend.
 Use this path when iterating on C++ or asset changes.
 
 ### Port mapping
@@ -156,7 +190,7 @@ Use this path when iterating on C++ or asset changes.
 | admin (set_pose, reset) | 11000 |
 
 Each per-robot port is a single bidirectional TCP connection: commands go in,
-state + camera frames come out (state at 60 Hz, AV1 RGB at 30 Hz by default).
+state + camera frames come out (state at 60 Hz, AV1 RGB at 30 Hz in the supplied scenes).
 
 ### Running a client
 
@@ -240,11 +274,12 @@ left-eye camera.
 
 ```bash
 cd py_example
-uv run python examples/mos9_walk/mos9_walk.py \
+uv run --extra vision python examples/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 --vx 0.4 --duration 15 \
   --video ../artifacts/outputs/mos9_walker.mp4 --observer-video ../artifacts/outputs/mos9_observer.mp4
 ```
 
+Install ONNX Runtime with `uv sync --extra vision`.
 Requires `py_example/models/policies/mos9_walk_v11_5500.onnx` (vendored via
 Git LFS). For solo walking (no observer), pass `--observer-port 0` and use
 `Config/examples/mos9_solo.json` as the scene config.
@@ -346,20 +381,22 @@ RGB/depth v2 layout:
 [u32 sequence][f64 sim_time]
 then, per image:
   [u8 name_len][UTF-8 camera_name]
-  [u8 codec][u8 pixel_format][u8 reserved]
+  [u8 codec][u8 pixel_format][u8 image_flags]
   [u16 width][u16 height]
   [u32 uncompressed_len][u32 data_len][data]
 ```
 
-Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib. Pixel format: `0x00`
+Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib, `0x03` AV1.
+`image_flags` bit 0 marks AV1 keyframes.
+See [AV1 runtime](../docs/AV1_Runtime.md) for packed stereo and codec epochs. Pixel format: `0x00`
 BGRA8, `0x01` float32 metres, `0x02` uint16 millimetres. Use
 `camera_to_rgb()` and `depth_to_meters()` for decoded NumPy arrays.
 
 ## Inspector receiver
 
-The source simulator opens the shared inspector TCP port `12000`.
-Older cooked AppImages do not include this endpoint. See the
-[inspector architecture](../docs/Inspector_Plan.md) for the v1 contract.
+The packaged and source simulators open the shared inspector TCP port `12000`
+when `guest_inspector.enabled` is true. See the
+[inspector architecture](../docs/Guest_Cameras.md) for the v1 contract.
 Each guest controls only its own floating camera and receives compressed RGB.
 
 ```sh

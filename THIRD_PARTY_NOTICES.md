@@ -8,6 +8,8 @@ The repository includes or references these separately licensed components:
 
 | Component | License | License location |
 | --- | --- | --- |
+| glTFRuntime | MIT | `Plugins/glTFRuntime/LICENSE` and [upstream revision](Plugins/glTFRuntime/UPSTREAM.md) |
+| FFmpeg (Docker AppImage build) | LGPL-2.1-or-later for the selected build | License bundled with the AppImage; [build configuration](Tools/packaging/Dockerfile) |
 | UnrealRoboticsLab (fork) | Apache-2.0 | `Plugins/UnrealRoboticsLab/LICENSE` |
 | MuJoCo | Apache-2.0 | `Plugins/UnrealRoboticsLab/third_party/MuJoCo/src/LICENSE` |
 | libzmq | MPL-2.0 | `Plugins/UnrealRoboticsLab/third_party/libzmq/src/LICENSE` |

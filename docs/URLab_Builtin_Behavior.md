@@ -79,16 +79,12 @@ xyaxes="0 -1 0 0 0 1"
 That maps camera image-right to eye `-Y`, camera image-up to eye `+Z`, and
 camera optical forward `-Z` to eye `+X`.
 
-## Fixed Pi Plus Robot Contract
+## External robot camera bindings
 
-The shipped Pi Plus fixture is a fixed robot type, not a runtime-dynamic URDF
-loader. URSoccerLab code may therefore treat these names as stable ABI:
-
-- Root link: `base_link`
-- Head yaw link: `head_yaw_link`
-- Head pitch link: `head_pitch_link`
-- Head yaw actuator/joint: `head_yaw_joint`
-- Head pitch actuator/joint: `head_pitch_joint`
+Robot body, joint and actuator names come from each external MJCF. The manifest
+binds root, head and cameras; there is no fixed Pi Plus ABI in the application.
+See [Robot packages](Robot_Packages.md). The following camera mount is an
+example for a head with +X forward, not a universal calibration.
 
 Stereo cameras should be represented directly in the per-robot MJCF under the
 moving head body. Do not encode the head-to-eye offsets in C++.
@@ -117,7 +113,7 @@ This means:
 - Rendered optical forward is eye `+X`.
 - Rendered image-left is eye `+Y`.
 - Rendered image-up is eye `+Z`.
-- The MJCF remains valid for native MuJoCo tooling.
+- The camera axes are native MuJoCo; package GLB visual tags require the runtime preprocessor.
 - URLab imports this camera frame, converts it to Unreal coordinates, and lets
   `UMjCamera` apply its built-in capture-component correction.
 
@@ -139,7 +135,7 @@ URLab owns:
 URSoccerLab owns:
 
 - Project scene assets and saved field level.
-- Project robot fixtures under `Assets/Robots`.
+- External robot package loading and manifest validation.
 - The external robot command/state protocol.
 - Consolidated per-robot TCP transport, port assignment, and metadata.
 - Editor smoke fixtures that assemble a test map from URLab imports.

@@ -8,12 +8,12 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = Path(os.environ.get('URS_UE', str(Path.home()/'software/Unreal_Engine_5.7.4'))).resolve()
-IMAGE = 'ursoccerlab-packager:24.04'
+IMAGE = 'ursoccerlab-packager:22.04'
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", nargs="?", default="all", choices=["all", "cook", "appdir", "image"])
+    parser.add_argument("phase", nargs="?", default="all", choices=["all", "build", "cook", "appdir", "image"])
     args = parser.parse_args()
     if not (ENGINE/'Engine/Build/BatchFiles/RunUAT.sh').is_file():
         raise SystemExit('Set URS_UE to your Unreal Engine 5.7.4 directory.')
@@ -36,8 +36,17 @@ def main():
     run += ['--user', f'{os.getuid()}:{os.getgid()}', '--env', 'HOME=/home/urs',
             '--env', f'URS_UE={ENGINE}', '--volume', f'{user_home}:/home/urs',
             '--volume', f'{ROOT}:{ROOT}', '--volume', f'{ENGINE}:{ENGINE}',
-            '--workdir', str(ROOT), IMAGE, 'python3', 'Tools/packaging/package_appimage.py', args.phase]
-    subprocess.run(run, env=env, check=True)
+            '--workdir', str(ROOT), IMAGE]
+    if args.phase == 'build':
+        # Compile both application targets without cooking or replacing the AppImage.
+        for target in ('URSoccerLab', 'URSoccerLabEditor'):
+            subprocess.run(run+[str(ENGINE/'Engine/Build/BatchFiles/Linux/Build.sh'),
+                                target, 'Linux', 'Development',
+                                f'-Project={ROOT/"URSoccerLab.uproject"}', '-WaitMutex'],
+                           env=env, check=True)
+    else:
+        subprocess.run(run+['python3', 'Tools/packaging/package_appimage.py', args.phase],
+                       env=env, check=True)
 
 
 if __name__ == '__main__': main()

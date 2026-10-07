@@ -7,7 +7,7 @@
 - **Admin RPC socket**: one TCP listener on port 11000 (global, shared by all robots).
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
 - **State publishing**: outbound JSON on the robot port at `StateRateHz` (default 60 Hz). Includes `sim_time`, base pose/velocity, joint qpos/qvel, actuator values, and camera metadata.
-- **Vision publishing**: the independent camera component emits versioned RGB (`0x01`) image sets after GPU readback. The protocol also reserves depth (`0x02`); the current capture/encoder path publishes RGB.
+- **Vision publishing**: the independent camera component emits versioned RGB (`0x01`) image sets after GPU readback. RGBD mode also publishes independently scheduled lossless depth (`0x02`).
 - **Default camera stream**: example scenes use stereo 640x480 per eye at 30 Hz, Vulkan AV1. JPEG/raw remain selectable. See [AV1 runtime](AV1_Runtime.md).
 - **Bounded asynchronous encoding**: `UURSCameraStreamComponent` owns capture scheduling and `FImageEncoder` runs on Unreal's worker pool. Each robot permits at most one in-flight RGB job per scene generation. No socket or packet-framing code runs in the camera component or encoder.
 - **Single network owner**: URSoccerLab leaves URLab camera rendering and
@@ -20,32 +20,15 @@
   and command state is synchronized separately.
   Rendering and compression can therefore miss camera-rate opportunities
   without stalling or racing the integrator.
-- **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. The default amount is `0.5` (a 180-degree shutter), the maximum streak is 5% of screen width, and velocity scaling follows `CameraRateHz`.
+- **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. JSON enables motion blur explicitly; its amount defaults to `0.5`, maximum streak to 5% of screen width, and target FPS zero follows the configured camera rate.
 - **Outbound buffering**: the network worker flushes nonblocking writes. Each client keeps one latest video frame waiting behind any partially sent frame. The byte stream is never truncated mid-frame; clients whose unsent byte buffer exceeds 4 MiB are disconnected.
 - **Admin threading**: socket I/O runs on the network worker. Ordered requests cross a queue to the game-thread admin service, and replies return to the originating connection.
 - **Command watchdog**: `CommandTimeoutSec` (default 0.1 s). If no valid command arrives within the timeout, motors are zeroed.
 
-Motion blur can be tuned per run:
-
-```text
--URSMotionBlur=0|1
--URSMotionBlurAmount=0.0..1.0
--URSMotionBlurMax=0.0..100.0
--URSMotionBlurTargetFPS=0..120
-```
-
-Target FPS `0` follows the actual render-frame rate. A fixed value is generally
-more reproducible for robotics datasets.
-
-Do not disable main-viewport world rendering for the ordinary
-`SceneCaptureComponent2D` backend. UE dispatches its deferred captures from the
-viewport draw, so disabling the world view freezes the camera render targets.
-Use a small offscreen viewport (`-ForceRes -ResX=64 -ResY=64`) to make its cost
-negligible. The following switch remains available for render-path diagnostics:
-
-```text
--URSDisableMainViewport=0|1
-```
+Configure motion blur, lighting and camera rates in scene JSON; see the
+[scene reference](URSoccerLab_Scene_Building_Api.md). The AppImage accepts only
+`./URSoccerLab.AppImage scene.json`. Internal render diagnostic switches belong
+to developer tools, not the packaged user interface.
 
 ## Frame Format
 
@@ -73,14 +56,18 @@ All TCP communication uses length-prefixed frames:
     [uncompressed_length LE32] [data_length LE32] [data]
 ```
 
-Codecs are `0x00` raw, `0x01` JPEG, and `0x02` zlib. Pixel formats are
+Codecs are `0x00` raw, `0x01` JPEG, `0x02` zlib, and `0x03` AV1.
+AV1 image flags bit 0 marks a keyframe; its inner payload, epochs and stereo
+packing are documented in [AV1 runtime](AV1_Runtime.md). Pixel formats are
 `0x00` BGRA8, `0x01` little-endian float32 depth in metres, and `0x02`
 little-endian uint16 depth in millimetres.
 
-A stereo-RGB message contains the synchronized left and right images. In RGBD
+A stereo-RGB message contains both eyes: AV1 packs them side by side in one
+encoded image entry, while JPEG/raw carry two separate entries. The Python
+client exposes named left/right images for both layouts. In RGBD
 mode, the RGB message contains the left image and the independently scheduled
 depth message contains depth aligned to that left camera. Sequences are
-per-robot and per-message-type; use `sim_time` to correlate vision with state.
+per-robot and per-message-type; `sim_time` is sampled at consumption and does not guarantee exact exposure/state synchronization.
 
 The Python client continues to recognize the legacy pre-v2 `0x01` packed
 camera payload so old recordings can still be inspected.
@@ -90,7 +77,7 @@ camera payload so old recordings can still be inspected.
 The admin listener accepts JSON requests of the form:
 
 ```json
-{"command": "set_pose", "args": {"actor_id": "robot_rp0", ...}}
+{"command": "set_pose", "args": {"actor_id": "robot_rp0", "translation_m": [0.5, 0, 0.3762]}}
 ```
 
 Supported commands:
@@ -120,49 +107,19 @@ admin.close()
 from ursoccerlab import RobotClient
 
 client = RobotClient("127.0.0.1", 10000)
-client.send_command({"head_pitch_joint": 0.1})
+client.send_command({"head_pitch_joint_servo": 0.1})
 for kind, data in client.recv():
     print(kind, data)
 ```
 
-## Dynamic Scene Config
+## Scene configuration
 
-`AURSSoccerGameMode::InitGame` reads `Config/URS_scene.json` before
-`AAMjManager::BeginPlay` and spawns the listed robots and dynamic objects via
-their type registries. The registered robot type is `pi_plus`; the registered
-object type is `soccer_ball`.
-
-The runtime accepts `-URSSceneConfig=<path>` to override the scene JSON. A
-relative path is resolved from the project directory; an absolute path may be
-used for per-example or externally managed configurations.
-
-```json
-{
-  "version": "urs_scene_v1",
-  "vision": {
-    "mode": "rgbd",
-    "rgb": {"rate_hz": 30, "compression": "jpeg", "jpeg_quality": 85},
-    "depth": {
-      "rate_hz": 15,
-      "compression": "zlib_u16_mm",
-      "max_depth_m": 65.535
-    }
-  },
-  "robots": [
-    {
-      "actor_id": "robot_rp0",
-      "type": "pi_plus",
-      "translation_m": [0.0, 0.0, 0.3762],
-      "rotation_quat_xyzw": [0.0, 0.0, 0.0, 1.0]
-    }
-  ]
-}
-```
-
-Translation and rotation are optional; missing translation falls back to
-the type's `DefaultBaseHeightM`, missing rotation to identity. The
-component stashes the initial pose per `actor_id` so the admin `reset`
-command can return to spawn.
+Scene JSON declares external robot packages, robot/object poses, mandatory field
+and goals, RGB/depth modes, guest cameras, lighting and effects. See
+[Getting started](Getting_Started.md) for a runnable example and the
+[scene reference](URSoccerLab_Scene_Building_Api.md) for defaults. Relative asset
+paths resolve from the JSON directory. Admin reset returns each actor to its
+configured initial pose.
 
 ## Validation Run
 
@@ -200,17 +157,6 @@ py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
 
 The benchmark uses the production nDisplay atlas by default. Pass
 `--scene-capture` only to compare the legacy independent-capture backend.
-On the RX 7900 XTX with the indoor-only production level, Lumen HWRT,
-hardware-ray-traced MegaLights, JPEG quality 85, and 640x480 sensors:
-
-| 3v3 mode | Delivered rate per robot | Minimum physics/wall ratio |
-| --- | --- | ---: |
-| Twelve RGB cameras | ~26.7 stereo messages/s (53.3 images/s) | 0.9998 |
-
-Every measured message was complete and there were no sequence gaps. Removing
-the Directional Light, Sky Light, Sky Atmosphere, fog, and cloud actors from
-the level improved 12-view delivery from 15.5 to 26.7 Hz. Rendering remains
-the limiting stage. Atlas readback, asynchronous JPEG, and TCP do not create a
-second throughput limit, and the physics clock remains real-time; bounded
-vision jobs skip unavailable render/encode opportunities instead of
-accumulating latency or blocking MuJoCo.
+Measure your own scene and GPU; delivered rates depend on view count,
+resolution, lighting and encoding settings. Dated measurements are preserved
+under [experiments](experiments/README.md) and are not current throughput guarantees.

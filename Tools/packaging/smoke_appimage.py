@@ -3,23 +3,28 @@
 Uses the local external Booster package and ball PBR fixture from source validation.
 """
 import json
+import argparse
 import math
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import time
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[2]
-sys.path.insert(0,str(ROOT/'py_example/src'))
 from ursoccerlab import InspectorClient, RobotClient
 from ursoccerlab.tcp import AdminClient
 from ursoccerlab.media import camera_to_rgb, depth_to_meters
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--shipping',action='store_true',help='Shipping disables engine logs; skip the PBR log assertion.')
+    parser.add_argument('--builtin-ball',action='store_true',help='Render the bundled ball skin instead of external checker PBR maps.')
+    options=parser.parse_args()
     image=ROOT/'dist/URSoccerLab.AppImage'
     output=ROOT/'artifacts/tests/appimage';output.mkdir(parents=True,exist_ok=True)
     environment=dict(os.environ,APPIMAGE_EXTRACT_AND_RUN='1',XDG_DATA_HOME=str(output/'runtime'))
@@ -27,6 +32,10 @@ def main():
         r=subprocess.run([str(image),*args],env=environment,capture_output=True,text=True,timeout=30)
         assert r.returncode==2,(args,r.returncode,r.stderr[-1000:])
     config=json.loads((ROOT/'artifacts/tests/ball-pbr/scene.json').read_text())
+    if options.builtin_ball:
+        for obj in config['objects']:
+            if obj['type']=='soccer_ball':
+                obj.pop('visual',None)
     config['guest_inspector'].update(max_guests=1,compression='av1')
     config['vision']['rgb'].update(compression='av1',keyframe_interval_s=2)
     report={}
@@ -40,9 +49,13 @@ def main():
                 deadline=time.monotonic()+90
                 while time.monotonic()<deadline:
                     if process.poll() is not None:raise RuntimeError('AppImage exited; see '+str(output/(mode+'.log')))
-                    text=(output/(mode+'.log')).read_text(errors='replace')
-                    if '[URS Inspector] listening on port 12000' in text:break
-                    time.sleep(.1)
+                    try:
+                        for port in (10000,11000,12000):
+                            with socket.create_connection(('127.0.0.1',port),timeout=.1):
+                                pass
+                        break
+                    except OSError:
+                        time.sleep(.1)
                 else:raise TimeoutError('packaged startup')
                 time.sleep(2)
                 admin=AdminClient('127.0.0.1');clients.append(admin)
@@ -65,7 +78,9 @@ def main():
                     time.sleep(.002)
                 assert min(counts)>30 and states>60,(counts,states)
                 if mode=='rgbd':assert depths>30,depths
-                assert 'external PBR applied to 1 material slots' in (output/(mode+'.log')).read_text(errors='replace')
+                runtime_log=output/'runtime/URSoccerLab/Saved/Logs/URSoccerLab.log'
+                if not options.shipping and not options.builtin_ball:
+                    assert 'external PBR applied to 1 material slots' in runtime_log.read_text(errors='replace')
                 if mode=='stereo_rgb':Image.fromarray(latest).save(output/'guest.png')
                 report[mode]={'rgb_frames':counts,'states':states,'depth_frames':depths,'seconds':6}
                 print(mode,report[mode],flush=True)
@@ -76,6 +91,20 @@ def main():
                 try:process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid,signal.SIGKILL);process.wait()
+                # The AppImage extraction wrapper can exit before its game child.
+                # Wait for socket shutdown before probing the next process's ports.
+                deadline=time.monotonic()+15
+                while time.monotonic()<deadline:
+                    busy=False
+                    for port in (10000,11000,12000):
+                        try:
+                            with socket.create_connection(('127.0.0.1',port),timeout=.1):
+                                busy=True
+                        except OSError:
+                            pass
+                    if not busy:break
+                    time.sleep(.1)
+                else:raise TimeoutError('packaged socket shutdown')
     (output/'results.json').write_text(json.dumps(report,indent=2)+'\n')
 
 

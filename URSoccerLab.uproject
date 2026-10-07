@@ -12,6 +12,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "NNEDenoiser",
+			"Enabled": false
+		},
+		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,
 			"TargetAllowList": [

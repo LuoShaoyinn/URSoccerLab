@@ -21,10 +21,6 @@ UnrealEditor URSoccerLab.uproject \
 
 ## Environment lighting
 
-After importing an environment GLB whose lamp meshes use a non-zero glTF
-`EmissiveFactor`, create one movable point light per disconnected physical lamp
-volume and save the field level:
-
 The hall uses 21 separate emissive lamp meshes on lighting channel 0. Each
 has six generated Lumen surface-cache cards; the original combined lamp mesh
 had none. The original mesh asset is retained and its actor is hidden.
@@ -59,10 +55,7 @@ UnrealEditor-Cmd URSoccerLab.uproject \
 ```
 
 The cleanup and lamp-conversion operations are idempotent. Their reports are
-written under the ignored `artifacts/diagnostics/` directory. The old
-`tune_environment_lighting.py` tool is retained as a historical tuning
-reference. It expects an atmospheric sun to already exist and is not the
-inverse of the indoor cleanup tool.
+written under the ignored `artifacts/diagnostics/` directory.
 
 ## Runtime diagnostics
 
@@ -72,8 +65,10 @@ Run the end-to-end vision smoke test:
 uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
 ```
 
-Select and verify the camera wire encoding with `--camera-compress`. JPEG
-quality is configurable; `raw` sends uncompressed BGRA:
+This legacy smoke tool checks JPEG/raw diagnostics with `--camera-compress`;
+`raw` sends uncompressed BGRA. For the production AV1 path, use
+`Tools/runtime/test_av1.py` or the packaged smoke tool
+`Tools/packaging/smoke_appimage.py`. JPEG quality is configurable:
 
 ```bash
 uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
@@ -115,8 +110,8 @@ uses the same generated nDisplay atlas and connects one client per robot.
 
 Build through Docker with `python3 Tools/packaging/build_docker.py`; set `URS_UE`
 to the Unreal Engine 5.7.4 directory. See [packaging instructions](packaging/README.md).
-The package excludes robot assets, authored field/ball texture inputs, Python
-clients and developer tools. GPU/Vulkan drivers come from the host.
+The package excludes robot assets, external field maps and ball texture overrides,
+Python clients and developer tools. The default ball mesh and skin are bundled. GPU/Vulkan drivers come from the host.
 
 Start with `./dist/URSoccerLab.AppImage scene.json`. The launcher accepts exactly
 one JSON file and creates both robot and guest camera viewports automatically.
@@ -126,8 +121,6 @@ Runtime options belong in JSON. See [Getting started](../docs/Getting_Started.md
 
 Robots load directly from external manifests, MJCF and GLBs. No robot editor
 import or cooked Blueprint is needed. See [Robot packages](../docs/Robot_Packages.md).
-The old `editor/import_robot.py`, `import_mos9.py` and `apply_robot_material.py`
-describe the retired cooked workflow.
 `validate_baked_assets.py` checks only the hall, field and objects, and rejects
 a restored cooked robot directory.
 
