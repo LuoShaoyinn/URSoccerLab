@@ -1,7 +1,7 @@
 # Runtime boundaries
 
 The simulator has independent physics, camera, protocol, and transport responsibilities.
-The existing TCP ports and outer framing are retained. AV1 uses codec ID 3 and requires the updated Python client.
+The existing TCP ports and outer framing are retained. AV1 uses codec ID 3; H.264/H.265 use IDs 4/5 and require the corresponding updated Python client.
 
 ```mermaid
 flowchart LR
@@ -43,7 +43,7 @@ does not request camera readback or encoding; nDisplay's normal rendering can co
 A local consumer can use the same component without a network listener.
 
 `FImageEncoder` accepts owned pixels and produces raw BGRA8 or JPEG image data.
-`FAv1Encoder` owns a persistent FFmpeg Vulkan AV1 codec per robot/guest. Stereo
+`FVideoEncoder` owns a persistent FFmpeg codec per robot/guest. The FFmpeg-only `Media::Selection` validates and selects one shared codec/backend; `Media::Codec` owns device, conversion and encoding resources. Stereo
 eyes are packed side by side before encoding and split by the Python decoder.
 `FVideoDeliveryGate` handles each connection independently: sequence gaps or
 unsent packet replacement skip dependent video until a periodic keyframe.

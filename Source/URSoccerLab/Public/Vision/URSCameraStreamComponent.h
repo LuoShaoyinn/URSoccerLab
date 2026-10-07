@@ -5,7 +5,7 @@
 #include "Async/Future.h"
 #include "Scene/URSSceneConfig.h"
 #include "Vision/URSImageEncoder.h"
-#include "Vision/URSAv1Encoder.h"
+#include "Vision/URSVideoEncoder.h"
 #include "URSCameraStreamComponent.generated.h"
 class UURSRobotCoreComponent;
 class UURSDisplayClusterCameraBinderComponent;
@@ -46,7 +46,7 @@ private:
 	{
 		FString ActorId;
 		bool bRgbEncodeInFlight = false, bDepthEncodeInFlight = false;
-		TSharedPtr<URSoccerLab::FAv1Encoder, ESPMode::ThreadSafe> Av1Encoder;
+		TSharedPtr<URSoccerLab::FVideoEncoder, ESPMode::ThreadSafe> VideoEncoder;
 		uint64 LastNDisplayRgbSequence = 0;
 		double NextEncodeTime = 0;
 	};

@@ -1,6 +1,6 @@
 [project]
 name = "ursoccerlab-client"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python robot control and camera streaming client for URSoccerLab"
 readme = "README.md"
 license = "Apache-2.0"

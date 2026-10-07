@@ -11,7 +11,7 @@ struct FVideoDeliveryGate
  uint32 LastSequence = 0;
  bool Offer(const FEncodedCameraFrame& Frame, TArray<uint8>& Pending, const TArray<uint8>& Payload)
  {
-  if (!Frame.bAv1) { WaitingForKey = true; HaveSequence = false; Pending = Payload; return true; }
+  if (!Frame.bVideo) { WaitingForKey = true; HaveSequence = false; Pending = Payload; return true; }
   if (!HaveSequence || Epoch != Frame.VideoEpoch || Frame.Sequence != LastSequence + 1)
   { Pending.Empty(); WaitingForKey = true; }
   // Replacing any unsent encoded packet breaks the dependency chain.

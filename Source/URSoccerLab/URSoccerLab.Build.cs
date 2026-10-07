@@ -6,6 +6,7 @@ using UnrealBuildTool;
 	{
 		public URSoccerLab(ReadOnlyTargetRules Target) : base(Target)
 		{
+			bEnableExceptions = true; // FFmpeg core reports validation failures with owned exceptions.
 			PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 			PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "URLab" });
@@ -27,7 +28,7 @@ using UnrealBuildTool;
 				"SlateCore"
 			});
 
-			// FFmpeg provides Vulkan AV1 encoding; isolate its C headers from the
+			// FFmpeg provides native and Vulkan hardware video encoding; isolate its C headers from the
             // engine toolchain's standard-library include paths.
             string ffmpegRoot = System.Environment.GetEnvironmentVariable("URS_FFMPEG_ROOT") ?? "/usr";
             string ffmpegInclude = System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../Intermediate/ThirdParty/FFmpeg/include"));

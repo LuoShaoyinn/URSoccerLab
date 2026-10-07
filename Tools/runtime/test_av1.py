@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rendered Vulkan AV1 integration; never cooks or packages an AppImage."""
+"""Rendered hardware AV1 integration; never cooks or packages an AppImage."""
 import json
 import math
 import os
@@ -29,9 +29,10 @@ def run(mode):
     config["robot_types"] = {name: str((original.parent / path).resolve()) for name, path in config["robot_types"].items()}
     config['field']['visual']['base_color_map'] = str((original.parent / config['field']['visual']['base_color_map']).resolve())
     config['vision']['mode'] = mode
-    config['vision']['rgb'].update(compression='av1', rate_hz=30, keyframe_interval_s=2)
+    config['encoder'] = dict(codec='av1', backend='auto', fallback_codec=None)
+    config['vision']['rgb'].update(rate_hz=30, keyframe_interval_s=2)
     config['camera_freq'] = 30
-    config['guest_inspector'].update(compression='av1', rate_hz=30)
+    config['guest_inspector'].update(rate_hz=30)
     # Exercise non-default port, dimensions and capacity without changing robots.
     if mode == 'rgbd':
         config['guest_inspector'].update(port=12010, width=800, height=600, max_guests=2)

@@ -23,7 +23,7 @@ struct FEncodedCameraFrame
 	uint32 Sequence = 0;
 	double SimTime = 0;
 	TArray<FEncodedCameraImage> Images;
-	bool bAv1 = false, bKeyFrame = false;
+	bool bVideo = false, bKeyFrame = false;
 	uint64 VideoEpoch = 0;
 	uint8 MessageType = 1;
 };

@@ -13,6 +13,7 @@ goals in the fixed hall. It assumes the installation layout shown in the
 ```json
 {
   "version": "urs_scene_v1",
+  "encoder": {"codec": "av1", "backend": "auto", "fallback_codec": "h264"},
   "robot_types": {
     "booster_k1": "assets/robots/booster_k1/robot.json"
   },
@@ -65,7 +66,6 @@ goals in the fixed hall. It assumes the installation layout shown in the
   "vision": {
     "mode": "stereo_rgb",
     "rgb": {
-      "compression": "av1",
       "bitrate_kbps": 2000,
       "keyframe_interval_s": 2
     }
@@ -77,7 +77,6 @@ goals in the fixed hall. It assumes the installation layout shown in the
     "width": 640,
     "height": 480,
     "rate_hz": 30,
-    "compression": "av1",
     "bitrate_kbps": 2000,
     "keyframe_interval_s": 2
   }
@@ -157,8 +156,7 @@ JSON path and does not watch files for changes.
 - **No window:** expected; connect a robot or guest client to receive images.
 - **Missing robot/map:** inspect paths relative to the JSON file; external assets
   are supplied separately from the application and are not in Git.
-- **AV1 fails:** check that the GPU and Vulkan driver support AV1 encoding.
-  `compression: "jpeg"` or `"raw"` can help diagnose encoder support.
+- **Encoding fails:** check the `[URS Encoder]` messages for the selected/rejected backend. Set shared `encoder.codec` to `"jpeg"` or `"raw"` to diagnose separately.
 - **FUSE unavailable:** run with `APPIMAGE_EXTRACT_AND_RUN=1` in the environment.
 - **Connection refused:** inspect startup logs under `~/.local/share/URSoccerLab/`
   and verify the robot order and inspector settings in JSON.

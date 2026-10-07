@@ -6,6 +6,14 @@
 
 namespace URSoccerLab
 {
+namespace Media { class Selection; }
+struct URSOCCERLAB_API FURSVideoEncoderConfig
+{
+ FString Codec = TEXT("av1");
+ FString Backend = TEXT("auto");
+ TOptional<FString> FallbackCodec = FString(TEXT("h264"));
+ FString Device; // backend-specific device override; empty selects automatically
+};
 enum class EURSVisionMode : uint8
 {
 	StereoRgb,
@@ -17,6 +25,8 @@ enum class EURSRgbCompression : uint8
 	Raw,
 	Jpeg,
 	Av1,
+	H264,
+	H265,
 };
 
 enum class EURSDepthCompression : uint8
@@ -29,11 +39,11 @@ enum class EURSDepthCompression : uint8
 struct URSOCCERLAB_API FURSRgbStreamConfig
 {
 	double RateHz = 30.0;
-	EURSRgbCompression Compression = EURSRgbCompression::Jpeg;
+	EURSRgbCompression Compression = EURSRgbCompression::Av1;
 	int32 JpegQuality = 85;
 	int32 BitrateKbps = 2000;
 	double KeyframeIntervalSeconds = 2.0;
-	FString VulkanDevice;
+	TSharedPtr<Media::Selection, ESPMode::ThreadSafe> EncoderSelection;
 };
 
 struct URSOCCERLAB_API FURSGuestInspectorConfig
@@ -224,6 +234,7 @@ struct URSOCCERLAB_API FURSSceneConfig
 	FURSFieldConfig Field;
 	FURSGoalsConfig Goals;
 	FString SourceDirectory;
+	FURSVideoEncoderConfig Encoder;
 	FURSVisionConfig Vision;
 	FURSGuestInspectorConfig GuestInspector;
 	FURSRenderConfig Render;
@@ -256,6 +267,8 @@ public:
 	static bool LoadFromFile(const FString& AbsPath, FURSSceneConfig& Out, FString& OutError);
 	static bool WriteToFile(const FString& AbsPath, const FURSSceneConfig& In, FString& OutError);
 
+	// Create a fresh shared selector when applying a new scene.
+	static void InitializeEncoder(FURSSceneConfig& Config);
 	static FURSSceneConfig MakeDefault();
 	static FURSSceneConfigValidationResult Validate(const FURSSceneConfig& Config);
 };

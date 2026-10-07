@@ -52,7 +52,7 @@ bool FURSSceneConfigDefaultTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("default translation Z"), Config.Robots[0].TranslationMeters.GetValue().Z, 0.3762);
 	TestTrue(TEXT("default rotation set"), Config.Robots[0].RotationQuatXyzw.IsSet());
 	TestTrue(TEXT("default vision is stereo RGB"), Config.Vision.Mode == EURSVisionMode::StereoRgb);
-	TestTrue(TEXT("default RGB compression is JPEG"), Config.Vision.Rgb.Compression == EURSRgbCompression::Jpeg);
+	TestTrue(TEXT("default RGB compression is AV1"), Config.Vision.Rgb.Compression == EURSRgbCompression::Av1);
 	TestEqual(TEXT("default RGB rate"), Config.Vision.Rgb.RateHz, 30.0);
 	TestTrue(TEXT("default depth compression is lossless zlib uint16"),
 		Config.Vision.Depth.Compression == EURSDepthCompression::ZlibUint16Millimeters);
@@ -75,7 +75,9 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	Original.Vision.Mode = EURSVisionMode::Rgbd;
 	Original.Vision.Rgb.RateHz = 30.0;
 	Original.Vision.Rgb.JpegQuality = 78;
-	Original.Vision.Rgb.Compression = EURSRgbCompression::Av1;
+	Original.Encoder.Codec = TEXT("h265");
+ Original.Encoder.Backend = TEXT("nvenc");
+ Original.Encoder.FallbackCodec.Reset();
 	Original.Vision.Rgb.BitrateKbps = 3500;
 	Original.Vision.Rgb.KeyframeIntervalSeconds = 3.0;
 	Original.GuestInspector.Rgb.RateHz = 30;
@@ -94,8 +96,12 @@ bool FURSSceneConfigRoundTripTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("load temp config"), FURSSceneConfigIo::LoadFromFile(Path, Loaded, Error));
 	TestTrue(TEXT("load error empty"), Error.IsEmpty());
 
-	TestTrue(TEXT("round-trip AV1 codec"), Loaded.Vision.Rgb.Compression == EURSRgbCompression::Av1);
-	TestEqual(TEXT("round-trip bitrate"), Loaded.Vision.Rgb.BitrateKbps, 3500);
+	TestTrue(TEXT("round-trip shared H265 codec"), Loaded.Vision.Rgb.Compression == EURSRgbCompression::H265);
+	TestTrue(TEXT("shared codec for guests"), Loaded.GuestInspector.Rgb.Compression == Loaded.Vision.Rgb.Compression);
+ TestTrue(TEXT("shared backend selector"), Loaded.GuestInspector.Rgb.EncoderSelection == Loaded.Vision.Rgb.EncoderSelection);
+ TestEqual(TEXT("backend round trip"), Loaded.Encoder.Backend, FString(TEXT("nvenc")));
+ TestFalse(TEXT("disabled fallback round trip"), Loaded.Encoder.FallbackCodec.IsSet());
+ TestEqual(TEXT("round-trip bitrate"), Loaded.Vision.Rgb.BitrateKbps, 3500);
 	TestEqual(TEXT("round-trip GOP"), Loaded.Vision.Rgb.KeyframeIntervalSeconds, 3.0);
 	TestEqual(TEXT("round-trip guest dimensions"), Loaded.GuestInspector.Width, 800);
 	TestEqual(TEXT("round-trip guest capacity"), Loaded.GuestInspector.MaxGuests, 2);
@@ -148,6 +154,11 @@ bool FURSSceneConfigLoadRejectionTest::RunTest(const FString& Parameters)
 		return bOk;
 	};
 
+ TestFalse(TEXT("invalid encoder backend"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"encoder\":{\"backend\":\"software\"}}"), Out, Error));
+ TestFalse(TEXT("invalid encoder codec"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"encoder\":{\"codec\":\"vp9\"}}"), Out, Error));
+ TestFalse(TEXT("invalid fallback"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"encoder\":{\"fallback_codec\":\"av1\"}}"), Out, Error));
+ TestFalse(TEXT("ambiguous device"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"encoder\":{\"backend\":\"auto\",\"device\":\"0\"}}"), Out, Error));
+ TestFalse(TEXT("conflicting legacy codecs"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"vision\":{\"rgb\":{\"compression\":\"av1\"}},\"guest_inspector\":{\"compression\":\"jpeg\"}}"), Out, Error));
  TestFalse(TEXT("guest fractional dimension rejected"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"guest_inspector\":{\"width\":640.5}}"), Out, Error));
  TestFalse(TEXT("guest string rate rejected"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"guest_inspector\":{\"rate_hz\":\"30\"}}"), Out, Error));
  TestFalse(TEXT("guest AV1 GOP zero rejected"), WriteAndLoad(TEXT("{\"version\":\"urs_scene_v1\",\"robots\":[],\"guest_inspector\":{\"keyframe_interval_s\":0}}"), Out, Error));

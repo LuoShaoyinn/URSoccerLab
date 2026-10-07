@@ -128,7 +128,6 @@
   },
   "vision": {
     "rgb": {
-      "compression": "av1",
       "bitrate_kbps": 2000,
       "keyframe_interval_s": 2
     }
@@ -141,7 +140,6 @@
     "height": 480,
     "rate_hz": 30,
     "fov_degrees": 90,
-    "compression": "av1",
     "bitrate_kbps": 2000,
     "keyframe_interval_s": 2
   },
@@ -153,5 +151,10 @@
     "emissive_intensity": 10.0,
     "source_radius_cm": 60,
     "specular_scale": 0.0
+  },
+  "encoder": {
+    "codec": "av1",
+    "backend": "auto",
+    "fallback_codec": "h264"
   }
 }

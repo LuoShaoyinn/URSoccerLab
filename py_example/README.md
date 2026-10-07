@@ -76,13 +76,13 @@ for kind, data in client.recv():
 
 - Motor commands: JSON dict of `{actuator_name: float}`
 - State: JSON with `sim_time`, `base`, `joints`, `actuators`, `cameras`
-- RGB: versioned binary image sets with AV1/JPEG/raw RGB
+- RGB: versioned binary image sets with AV1/H.264/H.265/JPEG/raw RGB
 - Depth: independent versioned messages with float32 metres or
   raw/zlib-compressed uint16 millimetres
 
 Commands, state, RGB, and depth share this one bidirectional TCP connection.
 Their rates are independent: the example scenes publish state at 60 Hz and
-stereo AV1 RGB at 30 Hz. The package decodes AV1 with PyAV and returns separate
+stereo AV1 RGB at 30 Hz. The package decodes AV1/H.264/H.265 with PyAV and returns separate
 left/right RGB images. RGBD keeps independent lossless depth messages.
 New connections receive state immediately and wait for a periodic video keyframe;
 connections never request or force keyframes. See [AV1 runtime](../docs/AV1_Runtime.md). Worker threads encode images, then hand completed frames through bounded
@@ -386,8 +386,8 @@ then, per image:
   [u32 uncompressed_len][u32 data_len][data]
 ```
 
-Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib, `0x03` AV1.
-`image_flags` bit 0 marks AV1 keyframes.
+Codec: `0x00` raw, `0x01` JPEG, `0x02` zlib, `0x03` AV1, `0x04` H.264, `0x05` H.265.
+`image_flags` bit 0 marks video keyframes.
 See [AV1 runtime](../docs/AV1_Runtime.md) for packed stereo and codec epochs. Pixel format: `0x00`
 BGRA8, `0x01` float32 metres, `0x02` uint16 millimetres. Use
 `camera_to_rgb()` and `depth_to_meters()` for decoded NumPy arrays.

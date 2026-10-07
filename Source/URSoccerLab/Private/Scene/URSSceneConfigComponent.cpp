@@ -1,4 +1,5 @@
 #include "Scene/URSSceneConfigComponent.h"
+#include "Vision/URSVideoCodec.h"
 #include "Scene/URSFieldTextures.h"
 #include "MuJoCo/Components/Geometry/Primitives/MjPlane.h"
 #include "Vision/URSCameraStreamComponent.h"
@@ -105,6 +106,7 @@ bool UURSSceneConfigComponent::ApplyConfig(const URSoccerLab::FURSSceneConfig& C
     }
     RobotPackages=MoveTemp(Packages);
 	ActiveConfig = Config;
+	FURSSceneConfigIo::InitializeEncoder(ActiveConfig);
 	if (!ApplyFieldConfig(OutError))
 		return false;
 
@@ -617,6 +619,14 @@ void UURSSceneConfigComponent::ConfigureRobotCameras(AMjArticulation* Articulati
 		}
 		Camera->Modify();
 	}
+
+ if (LeftCamera && LeftCamera->resolution.Num() >= 2 && ActiveConfig.Vision.Rgb.EncoderSelection)
+ {
+  Media::Profile Profile;
+  Profile.Width=LeftCamera->resolution[0]*(ActiveConfig.Vision.Mode==EURSVisionMode::StereoRgb?2:1);
+  Profile.Height=LeftCamera->resolution[1];Profile.Rate=CameraRateHz;Profile.Bitrate=ActiveConfig.Vision.Rgb.BitrateKbps*1000;
+  ActiveConfig.Vision.Rgb.EncoderSelection->AddProfile(Profile);
+ }
 
 	// Keep an already-running camera running, now solely as a capture source
 	// for URSoccerLab's consolidated TCP transport. Cameras configured before
