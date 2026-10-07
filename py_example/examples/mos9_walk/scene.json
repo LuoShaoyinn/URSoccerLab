@@ -124,7 +124,6 @@
   },
   "vision": {
     "rgb": {
-      "compression": "av1",
       "bitrate_kbps": 2000,
       "keyframe_interval_s": 2
     }
@@ -137,11 +136,15 @@
     "height": 480,
     "rate_hz": 30,
     "fov_degrees": 90,
-    "compression": "av1",
     "bitrate_kbps": 2000,
     "keyframe_interval_s": 2
   },
   "robot_types": {
     "mos9": "../../../external/robots/mos9/robot.json"
+  },
+  "encoder": {
+    "codec": "av1",
+    "backend": "auto",
+    "fallback_codec": "h264"
   }
 }

@@ -74,9 +74,8 @@ def main():
     config['robots'][1]['type'] = args.second_robot
     config['robots'][1]['translation_m'][2] = .53 if args.second_robot == 'mos9' else .3762
     config['guest_inspector'].update(max_guests=1, bitrate_kbps=8000)
-    config['guest_inspector']['compression'] = args.compression
+    config['encoder'] = dict(codec=args.compression, backend='auto', fallback_codec=None)
     if args.no_guest: config['guest_inspector']['enabled'] = False
-    config['vision']['rgb']['compression'] = args.compression
     if args.no_lumen: config.setdefault('render', {})['lumen'] = False
     if args.lamp_intensity_lumens is not None:
         config['lighting'] = {'lamp_intensity_lumens': args.lamp_intensity_lumens}

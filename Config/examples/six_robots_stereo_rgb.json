@@ -6,7 +6,6 @@
     "right_camera": "right_eye",
     "rgb": {
       "rate_hz": 30,
-      "compression": "av1",
       "jpeg_quality": 85,
       "bitrate_kbps": 2000,
       "keyframe_interval_s": 2
@@ -185,11 +184,15 @@
     "height": 480,
     "rate_hz": 30,
     "fov_degrees": 90,
-    "compression": "av1",
     "bitrate_kbps": 2000,
     "keyframe_interval_s": 2
   },
   "robot_types": {
     "pi_plus": "../../external/robots/pi_plus/robot.json"
+  },
+  "encoder": {
+    "codec": "av1",
+    "backend": "auto",
+    "fallback_codec": "h264"
   }
 }

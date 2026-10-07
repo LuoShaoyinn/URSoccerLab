@@ -56,6 +56,7 @@ def run(codec):
     config = json.loads(original.read_text())
     config["robot_types"] = {name: str((original.parent / path).resolve()) for name, path in config["robot_types"].items()}
     config['field']['visual']['base_color_map'] = str((original.parent / config['field']['visual']['base_color_map']).resolve())
+    config['encoder'] = dict(codec=codec, backend='auto', fallback_codec=None)
     config['camera_freq'] = 12
     scene = output / 'scene.json'
     scene.write_text(json.dumps(config))
@@ -65,7 +66,7 @@ def run(codec):
     env['LD_LIBRARY_PATH'] = str(ROOT / 'Plugins/UnrealRoboticsLab/Binaries/Linux')+':'+env.get('LD_LIBRARY_PATH', '')
     command = [sys.executable, str(ROOT/'Tools/runtime/run_scene.py'), '--ue', str(UE),
                '--scene-config', str(scene), '--sim-extra-arg=-FORCELOGFLUSH',
-               f'--sim-extra-arg=-abslog={ue_log}', f'--sim-extra-arg=-URSInspectorCodec={codec}']
+               f'--sim-extra-arg=-abslog={ue_log}']
     clients = []
     with (output/'launcher.log').open('w') as log:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)

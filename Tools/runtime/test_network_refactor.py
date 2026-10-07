@@ -54,7 +54,8 @@ def run(ue: Path, output: Path, codec: str) -> dict:
     config["field"]["visual"]["base_color_map"] = str((original.parent / config["field"]["visual"]["base_color_map"]).resolve())
     # Small raw frames keep this a protocol/behavior test rather than a bandwidth benchmark.
     config["camera_freq"] = 12
-    config["vision"] = {"rgb": {"compression": codec, "rate_hz": 12, "jpeg_quality": 85}}
+    config["encoder"] = dict(codec=codec, backend="auto", fallback_codec=None)
+    config["vision"] = {"rgb": {"rate_hz": 12, "jpeg_quality": 85}}
     config["render"]["resolution_x"] = 640
     config["render"]["resolution_y"] = 480
     config["robots"][0]["privilege"] = {"all_pos": True}

@@ -14,9 +14,7 @@ void UURSInspectorCameraComponent::BeginPlay()
  Binder = GetOwner()->FindComponentByClass<UURSDisplayClusterCameraBinderComponent>();
  EncoderModule = &FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
  if (const auto* Config = GetOwner()->FindComponentByClass<UURSSceneConfigComponent>()) Settings = Config->GetActiveConfig().GuestInspector;
- FString Codec;
- if (FParse::Value(FCommandLine::Get(), TEXT("URSInspectorCodec="), Codec))
-  Settings.Rgb.Compression = Codec == TEXT("raw") ? URSoccerLab::EURSRgbCompression::Raw : Codec == TEXT("jpeg") ? URSoccerLab::EURSRgbCompression::Jpeg : URSoccerLab::EURSRgbCompression::Av1;
+
 }
 bool UURSInspectorCameraComponent::SetPose(uint64 Id, const URSoccerLab::FInspectorPose& Pose)
 {
@@ -27,8 +25,8 @@ bool UURSInspectorCameraComponent::SetPose(uint64 Id, const URSoccerLab::FInspec
  if (!Sessions.Contains(Id))
  {
   FSession Session;
-  if (Settings.Rgb.Compression == URSoccerLab::EURSRgbCompression::Av1)
-   Session.Av1Encoder = MakeShared<URSoccerLab::FAv1Encoder, ESPMode::ThreadSafe>(Settings.Rgb);
+  if (Settings.Rgb.Compression != URSoccerLab::EURSRgbCompression::Raw && Settings.Rgb.Compression != URSoccerLab::EURSRgbCompression::Jpeg)
+   Session.VideoEncoder = MakeShared<URSoccerLab::FVideoEncoder, ESPMode::ThreadSafe>(Settings.Rgb);
   // Ignore an atlas already completed before this slot was assigned.
   Session.LastAtlasSequence = Binder->GetLatestRgbFrameSequence();
   Sessions.Add(Id, MoveTemp(Session));
@@ -96,15 +94,15 @@ void UURSInspectorCameraComponent::TickComponent(float DeltaTime, ELevelTick Tic
   auto* Module = EncoderModule;
   const bool Compress = Settings.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg;
   const int Quality = Settings.Rgb.JpegQuality;
-  const auto Av1Encoder = Session.Av1Encoder;
+  const auto VideoEncoder = Session.VideoEncoder;
   const uint32 Gen = Generation;
   const uint64 Id = Pair.Key;
   Jobs.Add(Async(EAsyncExecution::ThreadPool,
-   [Id, Gen, Outbox, Module, Compress, Quality, Av1Encoder, Image = MoveTemp(Image), Frame = MoveTemp(Frame)]() mutable {
-    if (Av1Encoder)
+   [Id, Gen, Outbox, Module, Compress, Quality, VideoEncoder, Image = MoveTemp(Image), Frame = MoveTemp(Frame)]() mutable {
+    if (VideoEncoder)
     {
      TArray<URSoccerLab::FRawCameraImage> Images; Images.Add(MoveTemp(Image));
-     if (!Av1Encoder->Encode(Images, Frame)) Frame.Images.Empty();
+     if (!VideoEncoder->Encode(Images, Frame)) Frame.Images.Empty();
     }
     else
     {

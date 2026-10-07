@@ -3,7 +3,7 @@
 #include "Components/ActorComponent.h"
 #include "Inspector/URSInspectorProtocol.h"
 #include "Vision/URSImageEncoder.h"
-#include "Vision/URSAv1Encoder.h"
+#include "Vision/URSVideoEncoder.h"
 #include "Async/Future.h"
 #include "Containers/Queue.h"
 #include "URSInspectorCameraComponent.generated.h"
@@ -28,7 +28,7 @@ private:
  struct FSession
  {
   uint64 LastAtlasSequence = 0;
-  TSharedPtr<URSoccerLab::FAv1Encoder, ESPMode::ThreadSafe> Av1Encoder;
+  TSharedPtr<URSoccerLab::FVideoEncoder, ESPMode::ThreadSafe> VideoEncoder;
   bool Busy = false; double NextCapture = 0; uint32 Sequence = 0;
  };
  TMap<uint64, FSession> Sessions;

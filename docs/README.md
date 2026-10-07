@@ -32,7 +32,7 @@ are grouped separately.
 - [Admin pose, reset and locking](URSoccerLab_TCP_Runtime.md#admin-rpc)
 - [Guest floating cameras and recording](Guest_Cameras.md)
 - [Rendering, lighting and camera effects](Rendering.md)
-- [AV1 streaming, keyframes and depth](AV1_Runtime.md)
+- [Video encoding, keyframes and depth](AV1_Runtime.md)
 
 ## Troubleshooting
 

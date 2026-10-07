@@ -19,22 +19,21 @@ All documentation is Markdown and can be read directly on GitHub.
 | Physical entities | [Field map](docs/Field_Assets.md) · [Goalposts](docs/URSoccerLab_Scene_Building_Api.md#goalposts) · [Ball physics](docs/URSoccerLab_Scene_Building_Api.md#ball-overrides) |
 | Loading assets | [Robot packages](docs/Robot_Packages.md) · [Booster conversion](Tools/robots/README.md) · [Field PBR](docs/Field_PBR.md) · [Ball PBR](docs/URSoccerLab_Scene_Building_Api.md#external-ball-pbr-maps) |
 | Robot control and sensors | [Python clients and examples](py_example/README.md) · [Guest cameras](docs/Guest_Cameras.md) |
-| Rendering and streaming | [Lighting and camera effects](docs/Rendering.md) · [AV1 video and depth](docs/AV1_Runtime.md) |
+| Rendering and streaming | [Lighting and camera effects](docs/Rendering.md) · [Video encoding and depth](docs/AV1_Runtime.md) |
 | Troubleshooting | [Startup and logs](docs/Getting_Started.md#troubleshooting) |
 | Developers | [Architecture](docs/Runtime_Architecture.md) · [TCP protocol](docs/URSoccerLab_TCP_Runtime.md) · [Tools](Tools/README.md) · [Docker packaging](Tools/packaging/README.md) |
 
 ## Get the distribution files
 
 Use the supplied `URSoccerLab.AppImage` and
-`ursoccerlab_client-0.1.0-py3-none-any.whl`. Robot packages and field textures are
+`ursoccerlab_client-0.1.1-py3-none-any.whl`. Robot packages and field textures are
 separate resource archives. The wheel provides the Python API; `py_example/`
 is a reference for client usage and example programs.
 
 ## Start the simulator
 
 You need Linux x86-64, a Vulkan-capable GPU with current drivers, and the
-`URSoccerLab.AppImage`. For AV1 camera streaming, the GPU and its Vulkan driver
-must support AV1 video encoding. The Docker packaging baseline is
+`URSoccerLab.AppImage`. Camera video uses a shared hardware encoder policy: AV1 with automatic native/Vulkan backend selection and optional H.264 fallback. The Docker packaging baseline is
 Ubuntu 22.04 (glibc 2.35); older Linux distributions are not validated.
 
 You also need a scene JSON, external robot packages, and a field image. These
@@ -45,7 +44,7 @@ PBR maps override its skin. A typical installation is:
 ```text
 match/
 ├── URSoccerLab.AppImage
-├── ursoccerlab_client-0.1.0-py3-none-any.whl
+├── ursoccerlab_client-0.1.1-py3-none-any.whl
 ├── scene.json
 └── assets/
     ├── field/albedo.png
@@ -94,7 +93,7 @@ Use Python 3.12 and install the shipped wheel into your own virtual environment:
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install ./ursoccerlab_client-0.1.0-py3-none-any.whl
+python -m pip install ./ursoccerlab_client-0.1.1-py3-none-any.whl
 ```
 
 Import the installed package from your own Python program:

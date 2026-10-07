@@ -1,4 +1,5 @@
 #include "Scene/URSSceneConfig.h"
+#include "Vision/URSVideoCodec.h"
 
 #include "Dom/JsonObject.h"
 #include "Misc/FileHelper.h"
@@ -187,6 +188,8 @@ bool ParseVisionMode(const FString& Value, EURSVisionMode& Out)
 
 bool ParseRgbCompression(const FString& Value, EURSRgbCompression& Out)
 {
+	if (Value == TEXT("h264")) { Out = EURSRgbCompression::H264; return true; }
+	if (Value == TEXT("h265")) { Out = EURSRgbCompression::H265; return true; }
 	if (Value == TEXT("av1")) { Out = EURSRgbCompression::Av1; return true; }
 	if (Value == TEXT("raw"))
 	{
@@ -228,7 +231,7 @@ const TCHAR* VisionModeString(const EURSVisionMode Value)
 
 const TCHAR* RgbCompressionString(const EURSRgbCompression Value)
 {
-	return Value == EURSRgbCompression::Av1 ? TEXT("av1") : Value == EURSRgbCompression::Raw ? TEXT("raw") : TEXT("jpeg");
+	return Value == EURSRgbCompression::H264 ? TEXT("h264") : Value == EURSRgbCompression::H265 ? TEXT("h265") : Value == EURSRgbCompression::Av1 ? TEXT("av1") : Value == EURSRgbCompression::Raw ? TEXT("raw") : TEXT("jpeg");
 }
 
 const TCHAR* DepthCompressionString(const EURSDepthCompression Value)
@@ -264,9 +267,95 @@ bool ReadStreamOptions(const TSharedPtr<FJsonObject>& Obj, FURSRgbStreamConfig& 
  if (!FMath::IsFinite(Out.RateHz) || Out.RateHz < 1 || Out.RateHz > 120 ||
      !FMath::IsFinite(Out.KeyframeIntervalSeconds) || Out.KeyframeIntervalSeconds < 0.1 || Out.KeyframeIntervalSeconds > 60)
  { Error = TEXT("rate_hz must be in [1,120] and keyframe_interval_s in [0.1,60]"); return false; }
- if (Obj->HasField(TEXT("vulkan_device")) && !Obj->TryGetStringField(TEXT("vulkan_device"), Out.VulkanDevice))
- { Error = TEXT("vulkan_device must be a string"); return false; }
+ if (Obj->HasField(TEXT("vulkan_device")))
+ { Error = TEXT("Move vulkan_device to shared encoder.device"); return false; }
  return true;
+}
+
+bool ReadEncoder(const TSharedPtr<FJsonObject> &Root, FURSSceneConfig &Out, FString &Error)
+{
+    const TSharedPtr<FJsonObject> *Ptr = nullptr;
+    if (Root->HasField(TEXT("encoder")))
+    {
+        if (!Root->TryGetObjectField(TEXT("encoder"), Ptr) || !Ptr || !Ptr->IsValid())
+        {
+            Error = TEXT("encoder must be an object");
+            return false;
+        }
+        const auto &Obj = *Ptr;
+        for (const auto &Pair : {TPair<const TCHAR *, FString *>(TEXT("codec"), &Out.Encoder.Codec),
+                                 {TEXT("backend"), &Out.Encoder.Backend},
+                                 {TEXT("device"), &Out.Encoder.Device}})
+        {
+            if (Obj->HasField(Pair.Key) && !Obj->TryGetStringField(Pair.Key, *Pair.Value))
+            {
+                Error = FString(TEXT("encoder.")) + Pair.Key + TEXT(" must be a string");
+                return false;
+            }
+        }
+        if (Obj->HasField(TEXT("fallback_codec")))
+        {
+            const auto Value = Obj->TryGetField(TEXT("fallback_codec"));
+            if (Value->Type == EJson::Null)
+                Out.Encoder.FallbackCodec.Reset();
+            else
+            {
+                FString Codec;
+                if (!Value->TryGetString(Codec))
+                {
+                    Error = TEXT("encoder.fallback_codec must be null, h264, or h265");
+                    return false;
+                }
+                Out.Encoder.FallbackCodec = Codec;
+            }
+        }
+    }
+    else
+    {
+        // Import legacy compression settings only when they describe one shared codec.
+        const TSharedPtr<FJsonObject> *Vision = nullptr;
+        const TSharedPtr<FJsonObject> *Rgb = nullptr;
+        const TSharedPtr<FJsonObject> *Guest = nullptr;
+        bool HasRobot = Root->TryGetObjectField(TEXT("vision"), Vision) &&
+                        (*Vision)->TryGetObjectField(TEXT("rgb"), Rgb) && (*Rgb)->HasField(TEXT("compression"));
+        bool HasGuest =
+            Root->TryGetObjectField(TEXT("guest_inspector"), Guest) && (*Guest)->HasField(TEXT("compression"));
+        if (HasRobot && HasGuest && Out.Vision.Rgb.Compression != Out.GuestInspector.Rgb.Compression)
+        {
+            Error = TEXT("All videos must share a codec; replace per-stream compression with encoder.codec");
+            return false;
+        }
+        if (HasRobot)
+            Out.Encoder.Codec = RgbCompressionString(Out.Vision.Rgb.Compression);
+        else if (HasGuest)
+            Out.Encoder.Codec = RgbCompressionString(Out.GuestInspector.Rgb.Compression);
+    }
+    if (Out.Encoder.Backend == TEXT("auto") && !Out.Encoder.Device.IsEmpty())
+    {
+        Error = TEXT("encoder.device requires an explicit backend");
+        return false;
+    }
+    EURSRgbCompression Compression;
+    if (!ParseRgbCompression(Out.Encoder.Codec, Compression))
+    {
+        Error = TEXT("encoder.codec must be av1, h264, h265, raw, or jpeg");
+        return false;
+    }
+    if (Out.Encoder.Backend != TEXT("auto") && Out.Encoder.Backend != TEXT("nvenc") &&
+        Out.Encoder.Backend != TEXT("qsv") && Out.Encoder.Backend != TEXT("vaapi") &&
+        Out.Encoder.Backend != TEXT("vulkan"))
+    {
+        Error = TEXT("encoder.backend must be auto, nvenc, qsv, vaapi, or vulkan");
+        return false;
+    }
+    if (Out.Encoder.FallbackCodec.IsSet() && Out.Encoder.FallbackCodec.GetValue() != TEXT("h264") &&
+        Out.Encoder.FallbackCodec.GetValue() != TEXT("h265"))
+    {
+        Error = TEXT("encoder.fallback_codec must be null, h264, or h265");
+        return false;
+    }
+    FURSSceneConfigIo::InitializeEncoder(Out);
+    return true;
 }
 
 bool ReadGuestInspector(const TSharedPtr<FJsonObject>& Root, FURSGuestInspectorConfig& Out, FString& Error)
@@ -298,7 +387,7 @@ bool ReadGuestInspector(const TSharedPtr<FJsonObject>& Root, FURSGuestInspectorC
  {
   FString Codec;
   if (!Obj->TryGetStringField(TEXT("compression"), Codec) || !ParseRgbCompression(Codec, Out.Rgb.Compression))
-  { Error = TEXT("guest_inspector.compression must be raw, jpeg, or av1"); return false; }
+  { Error = TEXT("guest_inspector.compression must be raw, jpeg, av1, h264, or h265"); return false; }
  }
  return ReadStreamOptions(Obj, Out.Rgb, Error);
 }
@@ -854,7 +943,7 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 		}
 	}
 
-	return true;
+	return ReadEncoder(Root, Out, OutError);
 }
 
 bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfig& In, FString& OutError)
@@ -911,6 +1000,12 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 		Root->SetObjectField(TEXT("goals"), Goals);
 	}
  auto Guest = MakeShared<FJsonObject>();
+ auto Encoder = MakeShared<FJsonObject>();
+ Encoder->SetStringField(TEXT("codec"),In.Encoder.Codec);Encoder->SetStringField(TEXT("backend"),In.Encoder.Backend);
+ if(In.Encoder.FallbackCodec.IsSet()) Encoder->SetStringField(TEXT("fallback_codec"),In.Encoder.FallbackCodec.GetValue());
+ else Encoder->SetField(TEXT("fallback_codec"),MakeShared<FJsonValueNull>());
+ if(!In.Encoder.Device.IsEmpty())Encoder->SetStringField(TEXT("device"),In.Encoder.Device);
+ Root->SetObjectField(TEXT("encoder"),Encoder);
  Guest->SetBoolField(TEXT("enabled"), In.GuestInspector.bEnabled);
  Guest->SetNumberField(TEXT("port"), In.GuestInspector.Port);
  Guest->SetNumberField(TEXT("max_guests"), In.GuestInspector.MaxGuests);
@@ -918,11 +1013,9 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
  Guest->SetNumberField(TEXT("height"), In.GuestInspector.Height);
  Guest->SetNumberField(TEXT("fov_degrees"), In.GuestInspector.FovDegrees);
  Guest->SetNumberField(TEXT("rate_hz"), In.GuestInspector.Rgb.RateHz);
- Guest->SetStringField(TEXT("compression"), RgbCompressionString(In.GuestInspector.Rgb.Compression));
  Guest->SetNumberField(TEXT("jpeg_quality"), In.GuestInspector.Rgb.JpegQuality);
  Guest->SetNumberField(TEXT("bitrate_kbps"), In.GuestInspector.Rgb.BitrateKbps);
  Guest->SetNumberField(TEXT("keyframe_interval_s"), In.GuestInspector.Rgb.KeyframeIntervalSeconds);
- Guest->SetStringField(TEXT("vulkan_device"), In.GuestInspector.Rgb.VulkanDevice);
  Root->SetObjectField(TEXT("guest_inspector"), Guest);
 	TSharedPtr<FJsonObject> VisionObj = MakeShared<FJsonObject>();
 	VisionObj->SetStringField(TEXT("mode"), VisionModeString(In.Vision.Mode));
@@ -931,11 +1024,9 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 
 	TSharedPtr<FJsonObject> RgbObj = MakeShared<FJsonObject>();
 	RgbObj->SetNumberField(TEXT("rate_hz"), In.Vision.Rgb.RateHz);
-	RgbObj->SetStringField(TEXT("compression"), RgbCompressionString(In.Vision.Rgb.Compression));
 	RgbObj->SetNumberField(TEXT("jpeg_quality"), In.Vision.Rgb.JpegQuality);
 	RgbObj->SetNumberField(TEXT("bitrate_kbps"), In.Vision.Rgb.BitrateKbps);
 	RgbObj->SetNumberField(TEXT("keyframe_interval_s"), In.Vision.Rgb.KeyframeIntervalSeconds);
-	RgbObj->SetStringField(TEXT("vulkan_device"), In.Vision.Rgb.VulkanDevice);
 	VisionObj->SetObjectField(TEXT("rgb"), RgbObj);
 
 	TSharedPtr<FJsonObject> DepthObj = MakeShared<FJsonObject>();
@@ -1113,6 +1204,31 @@ bool FURSSceneConfigIo::WriteToFile(const FString& AbsPath, const FURSSceneConfi
 	return true;
 }
 
+void FURSSceneConfigIo::InitializeEncoder(FURSSceneConfig& Config)
+{
+ EURSRgbCompression Compression = EURSRgbCompression::Av1;
+ ParseRgbCompression(Config.Encoder.Codec, Compression);
+ Config.Vision.Rgb.Compression = Compression;
+ Config.GuestInspector.Rgb.Compression = Compression;
+ Media::Policy Policy;
+ Policy.Codec = TCHAR_TO_UTF8(*Config.Encoder.Codec);
+ Policy.Backend = TCHAR_TO_UTF8(*Config.Encoder.Backend);
+ Policy.Device = TCHAR_TO_UTF8(*Config.Encoder.Device);
+ Policy.Fallback = Config.Encoder.FallbackCodec.IsSet() ? TCHAR_TO_UTF8(*Config.Encoder.FallbackCodec.GetValue()) : "";
+ if (Config.GuestInspector.bEnabled)
+ {
+  Media::Profile Profile;
+  Profile.Width = Config.GuestInspector.Width;
+  Profile.Height = Config.GuestInspector.Height;
+  Profile.Rate = Config.GuestInspector.Rgb.RateHz;
+  Profile.Bitrate = Config.GuestInspector.Rgb.BitrateKbps * 1000;
+  Policy.Profiles.push_back(Profile);
+ }
+ auto Selection = MakeShared<Media::Selection, ESPMode::ThreadSafe>(MoveTemp(Policy));
+ Config.Vision.Rgb.EncoderSelection = Selection;
+ Config.GuestInspector.Rgb.EncoderSelection = Selection;
+}
+
 FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 {
 	FURSSceneConfig Config;
@@ -1131,12 +1247,21 @@ FURSSceneConfig FURSSceneConfigIo::MakeDefault()
 	Ball.Type = TEXT("soccer_ball");
 	Ball.TranslationMeters = FVector(0.0, 0.0, 0.075);
 	Ball.RotationQuatXyzw = FQuat::Identity;
+	InitializeEncoder(Config);
 	return Config;
 }
 
 FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfig& Config)
 {
 	FURSSceneConfigValidationResult Result;
+ EURSRgbCompression Codec;
+ const auto& Encoder = Config.Encoder;
+ if (!ParseRgbCompression(Encoder.Codec, Codec) ||
+     (Encoder.Backend != TEXT("auto") && Encoder.Backend != TEXT("nvenc") && Encoder.Backend != TEXT("qsv") && Encoder.Backend != TEXT("vaapi") && Encoder.Backend != TEXT("vulkan")) ||
+     (Encoder.Backend == TEXT("auto") && !Encoder.Device.IsEmpty()) ||
+     (Encoder.FallbackCodec.IsSet() && Encoder.FallbackCodec.GetValue() != TEXT("h264") && Encoder.FallbackCodec.GetValue() != TEXT("h265")))
+ { Result.bOk = false; Result.Errors.Add(TEXT("Invalid shared encoder codec, backend, fallback_codec, or device")); }
+
  const auto InRange = [](double Value, double Low, double High) { return FMath::IsFinite(Value) && Value >= Low && Value <= High; };
  const auto& Render = Config.Render;
  if (!InRange(Config.Lighting.SourceRadiusCm, 0, 500) || !InRange(Config.Lighting.SpecularScale, 0, 1))

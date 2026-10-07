@@ -9,6 +9,8 @@ from PIL import Image
 from ursoccerlab.media import camera_to_rgb, depth_to_meters
 from ursoccerlab.tcp import (
     CODEC_JPEG,
+    CODEC_H264,
+    CODEC_H265,
     CODEC_RAW,
     CODEC_ZLIB,
     IMAGE_MESSAGE_VERSION,
@@ -46,6 +48,16 @@ def image_message(
 
 
 class CameraProtocolTest(unittest.TestCase):
+    def test_hardware_video_codec_ids(self):
+        for codec, name in [(CODEC_H264, 'h264'), (CODEC_H265, 'h265')]:
+            with self.subTest(codec=name):
+                payload = image_message(sequence=12, sim_time=1.5,
+                                        entries=[('left_eye', codec, PIXEL_BGRA8, 1280, 480, b'video', 1280*480*4)])
+                images = parse_image_message(payload)
+                self.assertEqual(images[0]['codec'], name)
+                self.assertEqual(images[0]['sequence'], 12)
+                self.assertEqual(images[0]['data'], b'video')
+
     def test_parse_raw_camera_payload(self) -> None:
         pixels = bytes((1, 2, 3, 255, 4, 5, 6, 255))
         payload = (

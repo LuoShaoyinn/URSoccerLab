@@ -6,7 +6,7 @@ bool FURSVideoDeliveryTest::RunTest(const FString&)
 {
  using namespace URSoccerLab;
  FVideoDeliveryGate Gate; TArray<uint8> Pending; const TArray<uint8> Bytes = {1,2,3};
- FEncodedCameraFrame Frame; Frame.bAv1 = true; Frame.VideoEpoch = 1; Frame.Sequence = 10;
+ FEncodedCameraFrame Frame; Frame.bVideo = true; Frame.VideoEpoch = 1; Frame.Sequence = 10;
  TestFalse(TEXT("join skips delta"), Gate.Offer(Frame, Pending, Bytes));
  Frame.Sequence = 11; Frame.bKeyFrame = true;
  TestTrue(TEXT("join starts at key"), Gate.Offer(Frame, Pending, Bytes)); Pending.Empty();
@@ -23,7 +23,7 @@ bool FURSVideoDeliveryTest::RunTest(const FString&)
  TestFalse(TEXT("recreated encoder delta waits"), Gate.Offer(Frame, Pending, Bytes));
  Frame.Sequence = 1; Frame.bKeyFrame = true;
  TestTrue(TEXT("recreated encoder key resumes"), Gate.Offer(Frame, Pending, Bytes));
- Frame.bAv1 = false;
+ Frame.bVideo = false;
  TestTrue(TEXT("JPEG retains latest-frame behavior"), Gate.Offer(Frame, Pending, Bytes));
  return true;
 }

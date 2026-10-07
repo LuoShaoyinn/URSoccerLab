@@ -13,7 +13,7 @@ They do not need Unreal Engine or Docker installed.
 ### Installation and startup
 
 - The packaged baseline is Linux x86-64, Ubuntu 22.04 / glibc 2.35.
-- AV1 streaming requires a GPU and Vulkan driver supporting AV1 video encoding.
+- Video streaming requires a supported hardware encoder; the shared JSON policy selects native NVENC/QSV/VAAPI or Vulkan, with optional H.264/H.265 fallback.
   There is currently no automatic software encoder fallback.
 - The Python client wheel requires Python 3.12 and installs as `ursoccerlab`.
 - Supply a scene JSON, external robot packages, and external field textures.
@@ -22,7 +22,7 @@ They do not need Unreal Engine or Docker installed.
 ```bash
 chmod +x URSoccerLab.AppImage
 ./URSoccerLab.AppImage scene.json
-python -m pip install ursoccerlab_client-0.1.0-py3-none-any.whl
+python -m pip install ursoccerlab_client-0.1.1-py3-none-any.whl
 ```
 
 The AppImage accepts exactly one argument: the scene JSON file. Configure scene,
@@ -93,8 +93,7 @@ access MuJoCo state directly. See [runtime architecture](docs/Runtime_Architectu
 Keep robot and guest cameras on the shared nDisplay pipeline. Preserve independent
 state/camera schedules and separate lossless depth delivery. Update the Python
 receiver and [protocol documentation](docs/URSoccerLab_TCP_Runtime.md) with wire
-changes. AV1 is recommended; the robot JSON parser still defaults to JPEG when
-RGB compression is omitted, so specify AV1 explicitly in examples.
+changes. Shared `encoder` settings default to AV1, automatic hardware backend selection and H.264 fallback. Keep robot and guest codec/backend selection identical.
 
 The hall uses lighting channel 0 and emissive lamps with Lumen. Keep hardware ray
 tracing enabled. Offline Path Tracing compilation and the unused neural denoiser
@@ -120,7 +119,7 @@ The `build` phase compiles Development game/editor targets without cooking or
 replacing the AppImage. Standalone asset validation checks files and MJCF; running
 it inside Unreal also checks asset loading. AV1 fixture tests require a PyAV build
 with the software encoder used by the fixture; this is separate from the server's
-Vulkan hardware encoder. Choose checks relevant to the change and report limits.
+hardware encoders. Choose checks relevant to the change and report limits.
 
 An editor build or NullRHI startup does not prove packaged camera rendering.
 External robot rendering needs a GPU. For camera changes, render and inspect

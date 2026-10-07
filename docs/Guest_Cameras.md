@@ -23,6 +23,7 @@ server-owned; guests cannot request arbitrary resolution, FPS, or codecs.
 Add this section to the scene JSON:
 
 ```json
+"encoder": {"codec": "av1", "backend": "auto", "fallback_codec": "h264"},
 "guest_inspector": {
   "enabled": true,
   "port": 12000,
@@ -31,7 +32,6 @@ Add this section to the scene JSON:
   "height": 480,
   "rate_hz": 30,
   "fov_degrees": 90,
-  "compression": "av1",
   "bitrate_kbps": 2000,
   "keyframe_interval_s": 2
 }
@@ -73,11 +73,11 @@ Malformed outer framing closes that connection. Invalid commands produce an
 error without affecting other sessions.
 
 Server RGB (type 1) reuses the existing v2 image payload: one image named
-`inspector`, sequence, sim_time, dimensions, AV1 packets (default), JPEG or raw BGRA8 bytes. No robot
+`inspector`, sequence, sim_time, dimensions, AV1/H.264/H.265 packets, JPEG or raw BGRA8 bytes. No robot
 state or depth messages. Simulation time is sampled at frame consumption, with
 the same synchronization limits as robot cameras. Sequences are per session;
 reconnecting creates a new session. JSON/RGB can interleave. The server preset is
-640x480, at most 30 Hz, Vulkan AV1 at 2000 kbps, and four guest
+640x480, at most 30 Hz, the shared encoder at 2000 kbps, and four guest
 sessions. Encoding is globally capped at four jobs, including jobs from recently
 disconnected sessions. Configure startup limits using the `guest_inspector` scene JSON section (see [AV1 runtime](AV1_Runtime.md)). The AppImage accepts only the JSON path; configure the port and codec in JSON.
 Clients cannot raise resource limits.

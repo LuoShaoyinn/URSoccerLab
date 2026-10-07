@@ -8,7 +8,7 @@
 - **Motor commands**: inbound JSON on the robot port. Keys are actuator names, values are floats. Only recognised actuator names update motor targets; unrecognised keys are silently ignored. The watchdog is refreshed only if at least one actuator was actually changed — an empty `{}` does **not** keep stale commands alive.
 - **State publishing**: outbound JSON on the robot port at `StateRateHz` (default 60 Hz). Includes `sim_time`, base pose/velocity, joint qpos/qvel, actuator values, and camera metadata.
 - **Vision publishing**: the independent camera component emits versioned RGB (`0x01`) image sets after GPU readback. RGBD mode also publishes independently scheduled lossless depth (`0x02`).
-- **Default camera stream**: example scenes use stereo 640x480 per eye at 30 Hz, Vulkan AV1. JPEG/raw remain selectable. See [AV1 runtime](AV1_Runtime.md).
+- **Default camera stream**: example scenes use stereo 640x480 per eye at 30 Hz, hardware video. JPEG/raw remain selectable. See [AV1 runtime](AV1_Runtime.md).
 - **Bounded asynchronous encoding**: `UURSCameraStreamComponent` owns capture scheduling and `FImageEncoder` runs on Unreal's worker pool. Each robot permits at most one in-flight RGB job per scene generation. No socket or packet-framing code runs in the camera component or encoder.
 - **Single network owner**: URSoccerLab leaves URLab camera rendering and
   readback enabled but disables URLab's legacy ZMQ, shared-memory, and RPC
@@ -56,13 +56,13 @@ All TCP communication uses length-prefixed frames:
     [uncompressed_length LE32] [data_length LE32] [data]
 ```
 
-Codecs are `0x00` raw, `0x01` JPEG, `0x02` zlib, and `0x03` AV1.
-AV1 image flags bit 0 marks a keyframe; its inner payload, epochs and stereo
+Codecs are `0x00` raw, `0x01` JPEG, `0x02` zlib, `0x03` AV1, `0x04` H.264 and `0x05` H.265.
+Video image flags bit 0 marks a keyframe; its inner payload, epochs and stereo
 packing are documented in [AV1 runtime](AV1_Runtime.md). Pixel formats are
 `0x00` BGRA8, `0x01` little-endian float32 depth in metres, and `0x02`
 little-endian uint16 depth in millimetres.
 
-A stereo-RGB message contains both eyes: AV1 packs them side by side in one
+A stereo-RGB message contains both eyes: video codecs pack them side by side in one
 encoded image entry, while JPEG/raw carry two separate entries. The Python
 client exposes named left/right images for both layouts. In RGBD
 mode, the RGB message contains the left image and the independently scheduled

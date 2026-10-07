@@ -70,7 +70,7 @@ These JSON values are applied at startup and need no rebake.
 ### Render settings
 
 Omitting `render` preserves the engine/hall settings. When a `render` object is
-present, omitted fields use the following parser defaults:
+present, omitted fields use the following diagnostic alternatives:
 
 | Key under `render` | Default | Meaning |
 | --- | --- | --- |
@@ -122,6 +122,7 @@ baked into the level.
 ```json
 {
   "version": "urs_scene_v1",
+  "encoder": {"codec": "av1", "backend": "auto", "fallback_codec": "h264"},
   "field": {
     "length_m": 9.0, "width_m": 6.0,
     "border_x_m": 0.8, "border_y_m": 0.9,
@@ -142,7 +143,7 @@ baked into the level.
     "mode": "stereo_rgb",
     "left_camera": "left_eye",
     "right_camera": "right_eye",
-    "rgb": {"rate_hz": 30, "compression": "av1", "bitrate_kbps": 2000, "keyframe_interval_s": 2},
+    "rgb": {"rate_hz": 30, "bitrate_kbps": 2000, "keyframe_interval_s": 2},
     "depth": {
       "rate_hz": 15,
       "compression": "zlib_u16_mm",
@@ -182,10 +183,12 @@ JSON file's directory; absolute paths also work.
 | `vision.left_camera` | no | `left_eye` |
 | `vision.right_camera` | no | `right_eye` |
 | `vision.rgb.rate_hz` | no | `30` |
-| `vision.rgb.compression` | no | **Recommended: `av1`**, as in the example. Parser fallback when omitted: `jpeg`. `raw` is also supported. |
-| `vision.rgb.bitrate_kbps` | no | `2000`; AV1 target bitrate |
-| `vision.rgb.keyframe_interval_s` | no | `2`; AV1 maximum GOP at configured rate |
-| `vision.rgb.vulkan_device` | no | empty; FFmpeg default Vulkan device |
+| `encoder.codec` | no | `av1`; shared by robot and guest videos; alternatives `h264`, `h265`, `jpeg`, `raw` |
+| `encoder.backend` | no | `auto`; alternatives `nvenc`, `qsv`, `vaapi`, `vulkan` |
+| `encoder.fallback_codec` | no | `h264`; `h265` or `null` to disable fallback |
+| `encoder.device` | no | device selector for an explicit backend; omit with `auto` |
+| `vision.rgb.bitrate_kbps` | no | `2000`; video target bitrate |
+| `vision.rgb.keyframe_interval_s` | no | `2`; video maximum GOP at configured rate |
 | `vision.rgb.jpeg_quality` | no | `85` |
 | `vision.depth.rate_hz` | no | `15` |
 | `vision.depth.compression` | no | `zlib_u16_mm`; alternatives: `raw_f32`, `raw_u16_mm` |
@@ -206,8 +209,7 @@ policy-specific poses in configuration instead of runtime C++.
 
 `stereo_rgb` publishes both named RGB cameras in one synchronized message.
 `rgbd` publishes left-eye RGB plus independently scheduled depth aligned with
-that viewpoint. Set `compression: "av1"` for video streaming; JPEG remains the
-compatibility default when the key is omitted. Depth remains numeric and
+that viewpoint. Use shared `encoder.codec` for video streaming; AV1 with automatic backend selection and H.264 fallback is the default. Depth remains numeric and
 uses raw float, raw millimetres, or lossless zlib-compressed millimetres.
 
 ## External field

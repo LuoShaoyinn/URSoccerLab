@@ -24,7 +24,7 @@ void UURSCameraStreamComponent::BeginPlay()
 	if (const auto* Config = GetOwner()->FindComponentByClass<UURSSceneConfigComponent>())
 		if (Config->GetActiveConfig().CameraFreq > 0)
 			CameraRateHz = Config->GetActiveConfig().CameraFreq;
-	CameraCompress = VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Av1 ? TEXT("av1") : VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg ? TEXT("jpeg") : TEXT("raw");
+	CameraCompress = VisionConfig.Rgb.Compression != URSoccerLab::EURSRgbCompression::Raw && VisionConfig.Rgb.Compression != URSoccerLab::EURSRgbCompression::Jpeg ? TEXT("video") : VisionConfig.Rgb.Compression == URSoccerLab::EURSRgbCompression::Jpeg ? TEXT("jpeg") : TEXT("raw");
 	JpegQuality = VisionConfig.Rgb.JpegQuality;
 	FParse::Value(FCommandLine::Get(), TEXT("URSCameraRateHz="), CameraRateHz);
 	CameraRateHz = FMath::Clamp(CameraRateHz, 1.0, 120.0);
@@ -52,7 +52,7 @@ void UURSCameraStreamComponent::OnRobotsChanged()
 		for (const auto& Id : Core->GetRobotIds())
 			{
 				FCameraState State; State.ActorId = Id;
-				if (CameraCompress == TEXT("av1")) State.Av1Encoder = MakeShared<URSoccerLab::FAv1Encoder, ESPMode::ThreadSafe>(VisionConfig.Rgb);
+				if (CameraCompress == TEXT("video")) State.VideoEncoder = MakeShared<URSoccerLab::FVideoEncoder, ESPMode::ThreadSafe>(VisionConfig.Rgb);
 				CameraStates.Add(MoveTemp(State));
 			}
 	NextRgbTimeSec = FPlatformTime::Seconds();
@@ -207,22 +207,22 @@ void UURSCameraStreamComponent::TickCameraCapture()
 		const uint32 Seq = Sequence++;
 		const uint32 Gen = CaptureGeneration;
 		const double SimTime = State.SimTime;
-		const auto Av1Encoder = CameraStates[Ri].Av1Encoder;
+		const auto VideoEncoder = CameraStates[Ri].VideoEncoder;
 		const bool bJpeg = CameraCompress == TEXT("jpeg");
 		const int32 Quality = JpegQuality;
 		IImageWrapperModule* Module = ImageWrapperModule;
 		auto CompletionMailbox = Mailbox;
 		CameraStates[Ri].bRgbEncodeInFlight = true;
-		EncodeJobs.Add(Async(EAsyncExecution::ThreadPool, [CompletionMailbox, Gen, Seq, SimTime, ActorId, Av1Encoder, bJpeg,
+		EncodeJobs.Add(Async(EAsyncExecution::ThreadPool, [CompletionMailbox, Gen, Seq, SimTime, ActorId, VideoEncoder, bJpeg,
 		                                                   Quality, Module, Images = MoveTemp(Images)]() {
 			FCompletedFrame Result;
 			Result.Generation = Gen;
 			Result.Frame.ActorId = ActorId;
 			Result.Frame.Sequence = Seq;
 			Result.Frame.SimTime = SimTime;
-			if (Av1Encoder)
+			if (VideoEncoder)
 			{
-				if (!Av1Encoder->Encode(Images, Result.Frame)) Result.Frame.Images.Empty();
+				if (!VideoEncoder->Encode(Images, Result.Frame)) Result.Frame.Images.Empty();
 			}
 			else for (const auto& Image : Images)
 			{

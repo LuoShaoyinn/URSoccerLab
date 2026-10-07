@@ -32,13 +32,13 @@ inside the container. It supports Docker's Podman shim with isolated user storag
 when that shim is installed. Build caches persist between invocations.
 
 The builder uses Ubuntu 22.04. A separate stage compiles minimal shared FFmpeg
-8.0.1 with Vulkan Video AV1 encoding; GCC, NASM and development packages are
+8.1.3 with native NVENC/QSV/VAAPI and Vulkan video encoding; GCC, NASM and development packages are
 excluded from the final builder stage. Unreal uses the engine's bundled Clang
 toolchain and sysroot. CoACD's OpenMP runtime is installed explicitly.
 
-Vulkan headers are pinned to 1.4.321. Ubuntu 22.04 glslang supplies FFmpeg's GLSL initialization/compiler support,
+Vulkan headers are pinned to 1.4.321. The bundled generic libva 2.24.1 dispatcher searches the host’s standard DRI driver directories; oneVPL 2.16.0 provides the Intel dispatcher. Neither includes a GPU driver. Ubuntu 22.04 glslang supplies FFmpeg's GLSL initialization/compiler support,
 linked statically with SPIR-V tools and their license notices. CPU pixels are
-converted to NV12 and uploaded to the Vulkan Video encoder. The host's GPU driver and Vulkan loader are not bundled.
+converted to NV12 and supplied to the selected hardware encoder. Native driver APIs are loaded dynamically. The generic Vulkan loader is bundled from Unreal; host GPU drivers are not bundled.
 The packaged ELF libraries require at most glibc 2.35. Startup and MuJoCo were
 checked in Ubuntu 22.04 with NullRHI and no external robot rendering. GPU AV1
 stereo/RGBD and guest streaming are checked separately on the current RADV host;
@@ -61,14 +61,13 @@ remains enabled. The default ball textures and ZeroMQ library remain bundled.
 The unused neural path-tracing denoiser is disabled; cameras retain Lumen and
 hardware ray tracing. Shipping omits Unreal's development console and engine
 logs, while JSON configuration and TCP control remain available.
-The symbols remain in the staged build for debugging. Rendering and AV1 encoding
-use the host Vulkan driver; the release retains the engine and encoder libraries.
+The symbols remain in the staged build for debugging. Rendering uses the host Vulkan driver; encoding uses the selected native or Vulkan backend; the release retains the engine and encoder libraries.
 
 FFmpeg, libstdc++, libgcc and launcher dependencies are staged under `usr/lib`.
 The launcher prefers a newer host libstdc++/libgcc when available, so modern GPU
 drivers are not constrained by the bundled C++ ABI; otherwise it uses the bundle.
 The FFmpeg LGPL license is included. FFmpeg source is available at
-https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz; its exact configure/build command
+https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz; its exact configure/build command
 is in [Dockerfile](Dockerfile). Bundled library licenses remain applicable.
 
 ## Package the Python client
@@ -79,7 +78,7 @@ From the repository root, build the separate Python wheel:
 uv build --wheel --out-dir dist py_example
 ```
 
-The output is `dist/ursoccerlab_client-0.1.0-py3-none-any.whl`. It contains the
+The output is `dist/ursoccerlab_client-0.1.1-py3-none-any.whl`. It contains the
 reusable client and Apache license, not example programs or assets. Users install
 it into Python 3.12 with pip; dependencies are downloaded separately. See
 [client installation](../../py_example/README.md#install-the-client-wheel).
@@ -124,5 +123,5 @@ APPIMAGE_EXTRACT_AND_RUN=1 ./dist/URSoccerLab.AppImage scene.json
 
 Logs and data live under `$XDG_DATA_HOME/URSoccerLab`, defaulting to
 `~/.local/share/URSoccerLab`. Only the host GPU/Vulkan stack is needed to render;
-AV1 additionally requires Vulkan AV1 video encode support. The simulator is
+Video requires a supported NVENC, QSV, VAAPI or Vulkan hardware encoder. The generic Vulkan loader is bundled; GPU drivers remain host-provided. The simulator is
 headless and images are received through client connections.

@@ -4,8 +4,7 @@
 The AppImage contains the cooked hall, ball and generic runtime loaders
 (TCP transport, MuJoCo, nDisplay, glTFRuntime). Robot packages, field textures
 and scene configuration are external filesystem inputs. It excludes UnrealEditor,
-py_example and Tools. Vulkan/GPU drivers come from the host (AMD or NVIDIA);
-they are intentionally NOT bundled.
+py_example and Tools. GPU drivers come from the host (AMD or NVIDIA); the generic Vulkan loader is bundled.
 
 Phases (each resumable; run with no subcommand to do all)::
 
@@ -52,7 +51,7 @@ THIRD_PARTY = {
 INSTALL_ROOT = ROOT / "Plugins/UnrealRoboticsLab/third_party/install"
 
 # Host-provided libs we must NOT bundle (external Vulkan / GPU drivers).
-EXTERNAL_PATTERNS = ("libvulkan.", "libGL.", "libEGL.", "libglapi", "libnvidia", "libdrm")
+EXTERNAL_PATTERNS = ("libvulkan_", "libGL.", "libEGL.", "libglapi", "libnvidia", "libdrm")
 
 
 def log(msg: str) -> None:
@@ -176,6 +175,30 @@ def _bundle_runtime(appdir: Path) -> None:
             log(f"WARNING: {soname} not found via ldconfig; not bundled")
 
 
+def _bundle_vulkan_loader(appdir: Path) -> None:
+    """Use Unreal's portable generic loader for both rendering and FFmpeg video."""
+    import ctypes
+    source = ENGINE / "Engine/Binaries/ThirdParty/Vulkan/Linux/libvulkan.so"
+    loader = ctypes.CDLL(str(source))
+    version = ctypes.c_uint32()
+    if loader.vkEnumerateInstanceVersion(ctypes.byref(version)) != 0:
+        raise RuntimeError("Cannot query bundled Vulkan loader version")
+    major, minor, patch = version.value >> 22, (version.value >> 12) & 1023, version.value & 4095
+    libdir = appdir / "usr/lib"; libdir.mkdir(parents=True, exist_ok=True)
+    name = f"libvulkan.so.{major}.{minor}.{patch}"
+    shutil.copy2(source, libdir / name)
+    for alias in ("libvulkan.so", "libvulkan.so.1"):
+        path = libdir / alias; path.unlink(missing_ok=True); path.symlink_to(name)
+    fallback = appdir / "Engine/Binaries/ThirdParty/Vulkan/Linux/libvulkan.so"
+    fallback.parent.mkdir(parents=True, exist_ok=True)
+    fallback.unlink(missing_ok=True)
+    fallback.symlink_to(os.path.relpath(libdir / name, fallback.parent))
+    licenses = appdir / "usr/share/ursoccerlab"
+    licenses.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path(__file__).with_name("Vulkan-Loader-LICENSE.txt"), licenses / "Vulkan-Loader-LICENSE.txt")
+    log(f"bundled generic Vulkan loader {major}.{minor}.{patch}; GPU drivers remain external")
+
+
 def _bundle_media_and_launcher(appdir: Path) -> None:
     """Ship minimal FFmpeg and jq dependencies, never the host GPU driver."""
     import re
@@ -271,6 +294,7 @@ def phase_appdir() -> int:
     _stage_third_party(APPDIR)
     _bundle_runtime(APPDIR)
     _bundle_media_and_launcher(APPDIR)
+    _bundle_vulkan_loader(APPDIR)
     _write_desktop_and_icon(APPDIR)
     removed = _strip_external(APPDIR)
     log(f"removed {removed} external (vulkan/gpu) libs from AppDir")
