@@ -90,9 +90,8 @@ geom, rather than forcing identical coefficients for all generated pairs.
 
 Use the existing scene apply/recompile flow to change physics on reload; editing
 component values alone does not update a running compiled model. Loading new
-maps needs no asset rebake. The updated runtime code must be built/cooked into a
-future application release once; subsequent map changes stay external. This
-change does not cook or update the AppImage.
+maps needs no asset rebake. The packaged AppImage includes the PBR loader and generic material. Subsequent
+map changes stay external: edit JSON and restart without rebuilding the package.
 
 ## Verification
 

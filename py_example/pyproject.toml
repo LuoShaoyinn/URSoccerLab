@@ -1,8 +1,10 @@
 [project]
-name = "py-example"
+name = "ursoccerlab-client"
 version = "0.1.0"
-description = "TCP control and camera examples for URSoccerLab"
+description = "Python robot control and camera streaming client for URSoccerLab"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "av>=16",

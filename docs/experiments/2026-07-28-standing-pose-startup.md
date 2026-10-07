@@ -1,5 +1,9 @@
 # Pi Standing Pose Startup Fix
 
+> Historical experiment: settings, commands and measurements refer to an older
+> revision. Use the [current user guide](../README.md) for supported startup and configuration.
+
+
 ## Scope
 
 Investigate free-base Pi robots falling to the ground and producing blank or

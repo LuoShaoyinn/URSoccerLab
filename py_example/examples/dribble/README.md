@@ -11,7 +11,7 @@ no fixed-shape ONNX is required. Defaults to the ROCm GPU.
 ## Prerequisites
 
 - Vision + a PyTorch backend: `uv sync --extra vision --extra torch_rocm`.
-- Pi Plus policy checkpoint: `refs/mos-brain/.../pi_plus_model_40000.pt`
+- Pi Plus policy checkpoint: `py_example/models/policies/pi_plus_model_40000.pt`
   (used by the local `policy.py`).
 - Ultralytics `.pt` checkpoint: `py_example/models/yolo26s.pt` (tracked via
   git LFS; the `--ultralytics-pt` default points here).
@@ -25,11 +25,11 @@ ball through the admin endpoint before control.
 
 ## Run
 
-Start the simulator offscreen in a separate terminal (project root):
+Supply the external robot packages and field maps referenced by `scene.json`.
+Start the packaged simulator from the project root:
 
 ```bash
-uv run --project py_example python Tools/runtime/run_scene.py \
-  --scene-config py_example/examples/dribble/scene.json
+./dist/URSoccerLab.AppImage py_example/examples/dribble/scene.json
 ```
 
 Then run the client (needs vision + a PyTorch backend):

@@ -39,8 +39,8 @@ retain the previous JPEG default. Guests default to AV1 at 30 Hz.
 ```
 
 These are startup settings. Resolution and capacity determine the generated
-nDisplay atlas; restart the simulator to change them. Use `run_scene.py` or
-`run_with_sim.py` to generate the matching layout. Guest dimensions must be
+nDisplay atlas; restart the simulator to change them. The AppImage launcher generates the matching layout from the JSON. Source
+launchers `run_scene.py` and `run_with_sim.py` also generate it. Guest dimensions must be
 even, width 64–1920 and height 64–1080; capacity is 1–4; rate is 1–120 Hz;
 FOV is 10–150 degrees. Bitrate is 64–100000 kbps and keyframe interval 0.1–60 s.
 `camera_freq`, when positive, overrides the robot RGB rate as before.
@@ -111,6 +111,8 @@ py_example/.venv/bin/python -m unittest discover -s py_example/tests
 The rendered test exercises stereo, RGBD, moving guest cameras, non-default
 guest settings, multiple robot readers and late joins. Native automation tests
 configuration round-trip/rejection and per-connection AV1 dependency recovery.
-No AppImage has been cooked or updated. Future packaging must bundle FFmpeg
-runtime libraries and their dependencies, preserve their license notices, and
-validate them against the target distribution's driver/runtime environment.
+The Docker-built AppImage bundles FFmpeg 8.0.1 Vulkan AV1 libraries and their
+dependencies and license notices. GPU drivers remain host-provided. See
+[Docker packaging](../Tools/packaging/README.md) for the build and distribution
+baseline. Stereo, RGBD and guest streaming were checked in the packaged runtime;
+other GPU/driver combinations require their own validation.

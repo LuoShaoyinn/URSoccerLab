@@ -21,7 +21,6 @@ EXPECTED_ASSETS = [
     ("Runtime field mesh", "Content/URSoccerLab/Scenes/SoccerField/Runtime/SM_RuntimeField.uasset"),
     ("Runtime field material", "Content/URSoccerLab/Scenes/SoccerField/Runtime/MI_RuntimeField.uasset"),
     ("Environment mesh", "Content/URSoccerLab/Scenes/SoccerField/Environment/StaticMeshes/Material2.uasset"),
-    ("Cloud material", "Content/URSoccerLab/Scenes/SoccerField/Lighting/MI_URS_OvercastCloud.uasset"),
     ("Field physics", "Content/URSoccerLab/Scenes/SoccerField/Physics/field_physics.uasset"),
 ]
 

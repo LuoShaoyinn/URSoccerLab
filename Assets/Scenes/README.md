@@ -8,9 +8,8 @@ Content/
 │   └── URS_SoccerField.umap
 └── URSoccerLab/Scenes/SoccerField/
     ├── Environment/   # building meshes, materials, textures, import metadata
-    ├── Field/         # remaining generic material/texture assets
-    ├── Lighting/      # scene-specific material assets
-    └── Runtime/       # generic external-map material (no pitch image)
+    ├── Skybox/        # unlit window background
+    ├── Runtime/       # generic external-map material (no pitch image)
     └── Physics/       # Unreal-baked MuJoCo ground collision actor
 ```
 

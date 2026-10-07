@@ -11,7 +11,8 @@ Assets/Objects/<object-type>/
 ```
 
 Physics uses simple MJCF collision geometry. Unreal-only GLB visuals are
-attached with the same empty-frame convention used by robots:
+attached with the baked object empty-frame convention (external robots instead
+use GLB mesh/geom references):
 
 ```xml
 <frame name="visual__soccer_ball"/>

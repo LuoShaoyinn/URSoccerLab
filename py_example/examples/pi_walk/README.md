@@ -8,7 +8,7 @@ Run one Pi Plus walking policy while recording both robots' left-eye cameras.
 
 - PyTorch backend extra (pick one): `uv sync --extra torch_rocm` (ROCm),
   `--extra torch_cpu`, or `--extra torch_cuda`.
-- Policy checkpoint: `refs/mos-brain/simulation/mujoco/assets/policies/pi_plus_model_40000.pt`
+- Policy checkpoint: `py_example/models/policies/pi_plus_model_40000.pt`
 
 > The policy was trained against the older mos-brain Pi dynamics. It exercises
 > the runtime protocol and capture path, but is **not a validated gait** for
@@ -22,11 +22,11 @@ observer (`robot_rp1`, port `10001`).
 
 ## Run
 
-Start the simulator offscreen in a separate terminal (project root):
+Supply the external robot packages and field maps referenced by `scene.json`.
+Start the packaged simulator from the project root:
 
 ```bash
-uv run --project py_example python Tools/runtime/run_scene.py \
-  --scene-config py_example/examples/pi_walk/scene.json
+./dist/URSoccerLab.AppImage py_example/examples/pi_walk/scene.json
 ```
 
 Then run the client (needs a PyTorch backend extra):
@@ -46,7 +46,7 @@ uv run --extra torch_rocm python examples/pi_walk/pi_walk.py \
 | `--vx` | `0.35` | forward velocity command (m/s) |
 | `--duration` | `15` | walk length in seconds |
 | `--policy-hz` | `50` | policy inference rate |
-| `--policy` | `refs/.../pi_plus_model_40000.pt` | checkpoint path |
+| `--policy` | `py_example/models/policies/pi_plus_model_40000.pt` | checkpoint path |
 
 ## Output
 

@@ -1,5 +1,9 @@
 # Shadow Jitter Investigation and Z-Offset Fix
 
+> Historical experiment: settings, commands and measurements refer to an older
+> revision. Use the [current user guide](../README.md) for supported startup and configuration.
+
+
 Date: 2026-07-27 (updated 2026-07-28)
 
 ## Summary
