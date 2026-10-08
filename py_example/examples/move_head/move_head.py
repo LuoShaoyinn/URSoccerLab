@@ -9,10 +9,10 @@ dynamically from the state's ``actuators`` dict by substring-matching
 Connect to as many robots as the scene provides::
 
     # single robot
-    uv run python examples/move_head.py --port 10000 --duration 10
+    python examples/move_head.py --port 10000 --duration 10
 
     # two robots face-to-face
-    uv run python examples/move_head.py --port 10000 10001 --duration 10
+    python examples/move_head.py --port 10000 10001 --duration 10
 """
 from __future__ import annotations
 

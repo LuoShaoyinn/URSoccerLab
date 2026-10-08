@@ -120,11 +120,11 @@ Install FFmpeg development libraries with the configured hardware encoders and A
 uses `/usr/include/{libavcodec,libavutil,libswscale}` and `/usr/lib`, or set
 `URS_FFMPEG_ROOT` to a matching installation prefix. Headers are isolated into
 `Intermediate/ThirdParty/FFmpeg` to preserve Unreal's compiler sysroot.
-Run `uv sync --project py_example` for the pinned PyAV dependency.
+Install the client wheel in your Python 3.12 environment before running these checks.
+Connector unit tests live on `main-cli` under `python/tests`.
 
 ```sh
-py_example/.venv/bin/python Tools/runtime/test_av1.py
-py_example/.venv/bin/python -m unittest discover -s py_example/tests
+python Tools/runtime/test_av1.py
 ```
 
 The rendered test exercises stereo, RGBD, moving guest cameras, non-default
@@ -147,7 +147,7 @@ g++ -std=c++17 -O2 -pthread Source/URSoccerLab/Private/Vision/URSVideoCodec.cpp 
   -o /tmp/urs-test-encoder
 mkdir -p artifacts/tests/encoder-backend
 /tmp/urs-test-encoder av1 auto h264 artifacts/tests/encoder-backend/probe
-py_example/.venv/bin/python Tools/runtime/test_encoder_packets.py av1 artifacts/tests/encoder-backend/probe
+python Tools/runtime/test_encoder_packets.py av1 artifacts/tests/encoder-backend/probe
 ```
 
 Use the selected codec printed by the probe as the Python argument. The diagnostic

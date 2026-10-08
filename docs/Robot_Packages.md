@@ -134,8 +134,8 @@ Run native `URSoccerLab` automation for configuration and physics validation.
 With the two external packages installed, run:
 
 ```bash
-PYTHONPATH=py_example/src py_example/.venv/bin/python Tools/runtime/test_external_robots.py
-PYTHONPATH=py_example/src py_example/.venv/bin/python Tools/runtime/test_av1.py
+python Tools/runtime/test_external_robots.py
+python Tools/runtime/test_av1.py
 ```
 
 The first test drives deterministic locked poses with moving head joints for a

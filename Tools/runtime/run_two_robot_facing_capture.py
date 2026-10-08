@@ -135,9 +135,7 @@ def main() -> int:
             out_dir = OUT_DIR / robot
             out_dir.mkdir(parents=True, exist_ok=True)
             client_cmd = [
-                "uv",
-                "run",
-                "python",
+                sys.executable,
                 "examples/vision_smoke.py",
                 "--host",
                 "127.0.0.1",

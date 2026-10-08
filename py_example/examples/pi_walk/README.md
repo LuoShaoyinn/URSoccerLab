@@ -6,7 +6,7 @@ Run one Pi Plus walking policy while recording both robots' left-eye cameras.
 
 ## Prerequisites
 
-- PyTorch backend extra (pick one): `uv sync --extra torch_rocm` (ROCm),
+- PyTorch backend extra (pick one): `install the required ML dependencies separately` (ROCm),
   `--extra torch_cpu`, or `--extra torch_cuda`.
 - Policy checkpoint: `py_example/models/policies/pi_plus_model_40000.pt`
 
@@ -33,8 +33,8 @@ Then run the client (needs a PyTorch backend extra):
 
 ```bash
 cd py_example
-uv sync --extra torch_rocm
-uv run --extra torch_rocm python examples/pi_walk/pi_walk.py \
+# Install the required ML dependencies separately (see py_example/README.md).
+python examples/pi_walk/pi_walk.py \
   --vx 0.35 --duration 15 \
   --video ../artifacts/outputs/walker.mp4 --observer-video ../artifacts/outputs/observer.mp4
 ```

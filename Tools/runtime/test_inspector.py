@@ -11,7 +11,6 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'py_example/src'))
 from ursoccerlab import InspectorClient, RobotClient, AdminClient
 from ursoccerlab.media import camera_to_rgb
 from PIL import Image

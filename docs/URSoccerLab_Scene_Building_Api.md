@@ -358,9 +358,9 @@ The common checks are:
 ```bash
 python3 Tools/editor/validate_baked_assets.py
 
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
+python Tools/runtime/run_vision_smoke_test.py
 
-uv run --project py_example python Tools/runtime/run_scene.py \
+python Tools/runtime/run_scene.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json
 ```
 

@@ -87,7 +87,7 @@ Supported commands:
 - **reset** — return the robot to its initial spawn pose.
 - **lock_pose / unlock_pose** — hold a robot at a fixed pose (overrides physics).
 
-Minimal example using `py_example/src/ursoccerlab/tcp.py`:
+Minimal example using the installed `ursoccerlab` wheel:
 
 ```python
 from ursoccerlab import AdminClient
@@ -141,16 +141,16 @@ messages, and compares MuJoCo simulation-time advance with wall time:
 For a normal production run without the benchmark clients:
 
 ```bash
-py_example/.venv/bin/python Tools/runtime/run_scene.py \
+python Tools/runtime/run_scene.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json
 ```
 
 ```bash
-py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
+python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_rgbd.json \
   --duration-sec 12 --output artifacts/benchmarks/six_rgbd.json
 
-py_example/.venv/bin/python Tools/runtime/benchmark_match_vision.py \
+python Tools/runtime/benchmark_match_vision.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json \
   --duration-sec 12 --output artifacts/benchmarks/six_stereo_rgb.json
 ```

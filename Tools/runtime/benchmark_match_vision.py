@@ -23,7 +23,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PY_EXAMPLE = ROOT / "py_example"
-sys.path.insert(0, str(PY_EXAMPLE / "src"))
 
 from ursoccerlab.tcp import (  # noqa: E402
     FrameConn,

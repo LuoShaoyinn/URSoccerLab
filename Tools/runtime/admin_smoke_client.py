@@ -3,7 +3,7 @@
 
 Run the simulator with TCP transport active, then:
 
-    uv run --project py_example python Tools/runtime/admin_smoke_client.py --robot robot_rp0
+    python Tools/runtime/admin_smoke_client.py --robot robot_rp0
 
 The client connects to the admin TCP port, exercises set_pose (joint_qpos),
 set_pose (translation), reset, and a deliberate dim_mismatch error.

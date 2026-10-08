@@ -4,7 +4,7 @@
 All actuators (head included) are held at 0 each frame so position-servo robots
 keep their configured pose. Connect to as many robots as the scene provides::
 
-    uv run python examples/standing/standing.py --port 10000 10001 --duration 5
+    python examples/standing/standing.py --port 10000 10001 --duration 5
 
 Run Unreal with this folder's ``scene.json``.
 """

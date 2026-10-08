@@ -3,8 +3,8 @@
 Convert the supplied archive into the existing external robot format:
 
 ```bash
-uv pip install --python py_example/.venv/bin/python numpy trimesh mujoco
-py_example/.venv/bin/python Tools/robots/normalize_booster.py \
+uv pip install --python python numpy trimesh mujoco
+python Tools/robots/normalize_booster.py \
   ../Booster_K1_URDF_PBR.zip --output external/robots/booster_k1
 ```
 

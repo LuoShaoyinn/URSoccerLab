@@ -105,7 +105,7 @@ Build the editor normally. Run the `URSoccerLab.` automation suite, including
 worker/mailbox checks. Run the source integration test:
 
 ```sh
-py_example/.venv/bin/python Tools/runtime/test_network_refactor.py
+python Tools/runtime/test_network_refactor.py
 ```
 
 It checks JPEG and raw stereo streams, two robot ports, multiple clients, applied commands,

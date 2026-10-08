@@ -7,14 +7,14 @@ as a stationary observer, recording the walk from its left-eye camera.
 Use this folder's ``scene.json`` (mos9 walker + observer)::
 
     cd py_example
-    uv run python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 10001 \
+    python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 10001 \
         --vx 0.4 --duration 15 \
         --video out/walker.mp4 --observer-video out/observer.mp4
 
 For solo walking (no observer), pass ``--observer-port 0`` and use
 ``Config/examples/mos9_solo.json``::
 
-    uv run python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 0 \
+    python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 0 \
         --vx 0.4 --duration 15 \
         --video out/walker.mp4
 """

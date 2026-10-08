@@ -119,8 +119,8 @@ finally:
     robot.close()
 ```
 
-Install the client from `py_example/` before running this snippet. To save camera
-images and guest recordings, see [client examples](../py_example/README.md).
+Install the shipped client wheel before running this snippet. To save camera
+images and guest recordings, see [client examples](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md).
 With AV1, a new connection may wait until the next periodic keyframe; the example
 uses a two-second interval. Robot state arrives independently of camera frames.
 

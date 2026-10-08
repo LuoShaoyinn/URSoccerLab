@@ -55,7 +55,7 @@ connection and recovery events do not force keyframes.
 
 For complete instructions, use [Getting started](docs/Getting_Started.md),
 [scene configuration](docs/URSoccerLab_Scene_Building_Api.md),
-[Python clients](py_example/README.md), and [the guide index](docs/README.md).
+[Python clients](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md), and [the guide index](docs/README.md).
 
 ## Development workflow
 
@@ -73,7 +73,8 @@ For complete instructions, use [Getting started](docs/Getting_Started.md),
   remain necessary for source builds.
 - `external/`: Git-ignored robot packages and field/ball textures. Do not commit
   or automatically upload these resources, or restore retired built-in robots/maps.
-- `py_example/`: reusable Python client, examples and client tests.
+- `py_example/`: simulator examples and policy fixtures. Reusable Python/C++
+  connectors are maintained on `main-cli` (`python/`, `include/`, `src/`).
 - `Tools/`: editor utilities, runtime checks, robot conversion and packaging.
 - `artifacts/` and `dist/`: ignored generated outputs. Preserve requested renders,
   release artifacts and checksums when cleaning temporary files.
@@ -111,14 +112,13 @@ export URS_UE=/path/to/Unreal_Engine_5.7.4
 python3 Tools/packaging/build_docker.py build
 python3 Tools/editor/validate_baked_assets.py
 python3 Tools/packaging/test_launcher.py
-uv sync --project py_example
-uv run --project py_example python -m unittest discover -s py_example/tests
+python -m pip install dist/ursoccerlab_client-0.1.1-py3-none-any.whl
 ```
 
 The `build` phase compiles Development game/editor targets without cooking or
 replacing the AppImage. Standalone asset validation checks files and MJCF; running
-it inside Unreal also checks asset loading. AV1 fixture tests require a PyAV build
-with the software encoder used by the fixture; this is separate from the server's
+it inside Unreal also checks asset loading. Connector fixture tests run on
+`main-cli` and require a PyAV build with the software encoder used by the fixture; this is separate from the server's
 hardware encoders. Choose checks relevant to the change and report limits.
 
 An editor build or NullRHI startup does not prove packaged camera rendering.
@@ -133,8 +133,8 @@ cooking or to leave the AppImage unchanged. When packaging is part of the task:
 
 ```bash
 python3 Tools/packaging/build_docker.py all
-uv build --wheel --out-dir dist py_example
-uv run --project py_example python Tools/packaging/smoke_appimage.py --shipping --builtin-ball
+# Build the wheel on main-cli: uv build --wheel --out-dir build/python-wheel python
+python Tools/packaging/smoke_appimage.py --shipping --builtin-ball
 ```
 
 The AppImage uses Shipping configuration, compressed cooked content, and an

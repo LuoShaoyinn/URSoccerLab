@@ -9,7 +9,7 @@ are grouped separately.
 
 - [Project overview and quick start](../README.md)
 - [Installation, external resources and your first scene](Getting_Started.md)
-- [Python client setup and examples](../py_example/README.md)
+- [Python client setup and examples](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md)
 
 ## Concepts and configuration
 
@@ -28,7 +28,7 @@ are grouped separately.
 
 ## Robot control and cameras
 
-- [Robot commands, state and controller gains](../py_example/README.md#robotclient--motor-commands-state-and-camera)
+- [Robot commands, state and controller gains](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md#robot-control-state-and-cameras)
 - [Admin pose, reset and locking](URSoccerLab_TCP_Runtime.md#admin-rpc)
 - [Guest floating cameras and recording](Guest_Cameras.md)
 - [Rendering, lighting and camera effects](Rendering.md)

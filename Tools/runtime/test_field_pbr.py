@@ -13,7 +13,6 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'py_example/src'))
 from ursoccerlab import InspectorClient, RobotClient
 from ursoccerlab.media import camera_to_rgb
 from test_network_refactor import stop

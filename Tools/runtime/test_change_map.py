@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test external maps in the source runtime; never cook or rebuild the AppImage.
 
-Run with py_example/.venv/bin/python Tools/runtime/test_change_map.py.
+Run with python Tools/runtime/test_change_map.py.
 Requires the built editor, Pillow and the Python client dependencies.
 """
 from __future__ import annotations
@@ -18,7 +18,6 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'py_example/src'))
 from ursoccerlab.gains import detect_gains
 from ursoccerlab.media import camera_to_rgb
 from ursoccerlab.tcp import RobotClient

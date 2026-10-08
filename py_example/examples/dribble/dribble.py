@@ -4,7 +4,7 @@
 Launch the runtime with this folder's ``scene.json`` via the nDisplay backend
 (run from the project root)::
 
-    uv run --project py_example python Tools/runtime/run_scene.py \
+    python Tools/runtime/run_scene.py \
       --scene-config py_example/examples/dribble/scene.json
 
 The ball detector is the Ultralytics COCO ``yolo26s.pt`` checkpoint

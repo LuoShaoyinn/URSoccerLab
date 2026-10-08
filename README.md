@@ -18,7 +18,7 @@ All documentation is Markdown and can be read directly on GitHub.
 | Concepts and configuration | [Coordinates and clocks](docs/Concepts.md) · [Scene JSON](docs/URSoccerLab_Scene_Building_Api.md) |
 | Physical entities | [Field map](docs/Field_Assets.md) · [Goalposts](docs/URSoccerLab_Scene_Building_Api.md#goalposts) · [Ball physics](docs/URSoccerLab_Scene_Building_Api.md#ball-overrides) |
 | Loading assets | [Robot packages](docs/Robot_Packages.md) · [Booster conversion](Tools/robots/README.md) · [Field PBR](docs/Field_PBR.md) · [Ball PBR](docs/URSoccerLab_Scene_Building_Api.md#external-ball-pbr-maps) |
-| Robot control and sensors | [Python clients and examples](py_example/README.md) · [Guest cameras](docs/Guest_Cameras.md) |
+| Robot control and sensors | [Python clients and examples](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md) · [Guest cameras](docs/Guest_Cameras.md) |
 | Rendering and streaming | [Lighting and camera effects](docs/Rendering.md) · [Video encoding and depth](docs/AV1_Runtime.md) |
 | Troubleshooting | [Startup and logs](docs/Getting_Started.md#troubleshooting) |
 | Developers | [Architecture](docs/Runtime_Architecture.md) · [TCP protocol](docs/URSoccerLab_TCP_Runtime.md) · [Tools](Tools/README.md) · [Docker packaging](Tools/packaging/README.md) |
@@ -103,7 +103,7 @@ from ursoccerlab import RobotClient, AdminClient, InspectorClient
 from ursoccerlab.media import camera_to_rgb, depth_to_meters
 ```
 
-See [Python API usage and examples](py_example/README.md) for robot control,
+See [Python API usage and examples](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md) for robot control,
 camera receiving and guest recording. Browse the [example programs](py_example/examples)
 as reference code and adapt them to your application. Match your scene's robot
 types and actuator names; walking examples also require separate controllers and

@@ -70,18 +70,18 @@ The FFmpeg LGPL license is included. FFmpeg source is available at
 https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz; its exact configure/build command
 is in [Dockerfile](Dockerfile). Bundled library licenses remain applicable.
 
-## Package the Python client
+## Python client distribution
 
-From the repository root, build the separate Python wheel:
+Reusable connectors and wheel builds are maintained on `main-cli`, not in this
+simulator branch. From a checkout of `main-cli`:
 
 ```bash
-uv build --wheel --out-dir dist py_example
+uv build --wheel --out-dir build/python-wheel python
 ```
 
-The output is `dist/ursoccerlab_client-0.1.1-py3-none-any.whl`. It contains the
-reusable client and Apache license, not example programs or assets. Users install
-it into Python 3.12 with pip; dependencies are downloaded separately. See
-[client installation](../../py_example/README.md#install-the-client-wheel).
+Install the supplied `ursoccerlab_client-0.1.1-py3-none-any.whl` into the Python 3.12
+environment used for runtime checks. The wheel contains no simulator assets or
+example programs. See [client installation](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md).
 
 ## Compile source without packaging
 

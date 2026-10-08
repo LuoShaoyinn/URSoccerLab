@@ -250,7 +250,6 @@ def main() -> int:
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be between 1 and 100")
     run_checked([sys.executable, str(ROOT / "Tools" / "editor" / "validate_baked_assets.py")], ROOT)
-    run_checked(["uv", "sync"], ROOT / "py_example")
 
     args.out.mkdir(parents=True, exist_ok=True)
     sim_extra_args = list(args.sim_extra_arg)
@@ -287,9 +286,7 @@ def main() -> int:
             time.sleep(args.render_warmup_sec)
 
         client_cmd = [
-            "uv",
-            "run",
-            "python",
+            sys.executable,
             "examples/vision_smoke.py",
             "--host",
             args.host,

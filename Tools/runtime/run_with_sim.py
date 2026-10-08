@@ -15,7 +15,7 @@ whole process group. The sim is killed on:
 
 Usage (everything after ``--`` is the client command):
 
-    uv run --project py_example python Tools/runtime/run_with_sim.py \
+    python Tools/runtime/run_with_sim.py \
         --ue '$HOME/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor' \
         --scene-config Config/examples/walker_and_observer.json \
         -- python examples/walk_policy.py --vx 0.35 --duration 15 \

@@ -13,8 +13,8 @@ current MJCF until the models are calibrated or the policy is retrained.
 Run with one of the optional PyTorch backends:
 
     cd py_example
-    uv sync --extra torch_rocm
-    uv run --extra torch_rocm python examples/pi_walk.py \
+# Install the required ML dependencies separately (see py_example/README.md).
+    python examples/pi_walk.py \
         --vx 0.35 --duration 15 \
         --video out/walker.mp4 \
         --observer-video out/observer.mp4

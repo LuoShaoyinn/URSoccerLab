@@ -62,7 +62,7 @@ written under the ignored `artifacts/diagnostics/` directory.
 Run the end-to-end vision smoke test:
 
 ```bash
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py
+python Tools/runtime/run_vision_smoke_test.py
 ```
 
 This legacy smoke tool checks JPEG/raw diagnostics with `--camera-compress`;
@@ -71,11 +71,11 @@ This legacy smoke tool checks JPEG/raw diagnostics with `--camera-compress`;
 `Tools/packaging/smoke_appimage.py`. JPEG quality is configurable:
 
 ```bash
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
+python Tools/runtime/run_vision_smoke_test.py \
   --camera-compress jpeg --jpeg-quality 85 \
   --out artifacts/outputs/vision_jpeg_q85
 
-uv run --project py_example python Tools/runtime/run_vision_smoke_test.py \
+python Tools/runtime/run_vision_smoke_test.py \
   --camera-compress raw \
   --out artifacts/outputs/vision_raw
 ```
@@ -84,7 +84,7 @@ While Unreal is serving camera frames, measure message rate, payload bandwidth,
 frame intervals, and whether every message contains the expected cameras:
 
 ```bash
-uv run --project py_example python \
+python \
   Tools/runtime/benchmark_camera_transport.py \
   --expected-cameras 2 --duration 15
 ```
@@ -95,7 +95,7 @@ take `--ue`):
 
 ```bash
 export URS_UE="$HOME/software/Unreal_Engine_5.7.4/Engine/Binaries/Linux/UnrealEditor"
-uv run --project py_example python Tools/runtime/run_scene.py \
+python Tools/runtime/run_scene.py \
   --scene-config Config/examples/six_robots_stereo_rgb.json
 ```
 
@@ -127,7 +127,7 @@ a restored cooked robot directory.
 Validate the external packages and camera streams with:
 
 ```bash
-PYTHONPATH=py_example/src py_example/.venv/bin/python Tools/runtime/test_external_robots.py
+python Tools/runtime/test_external_robots.py
 ```
 
 ## Dynamic object assets
@@ -152,7 +152,7 @@ Scene JSON must specify the field dimensions and external image. Source-runtime
 rendering can be checked with:
 
 ```bash
-py_example/.venv/bin/python Tools/runtime/test_change_map.py
+python Tools/runtime/test_change_map.py
 ```
 
 This runs two external maps and field sizes, captures camera images, and writes

@@ -10,7 +10,7 @@ no fixed-shape ONNX is required. Defaults to the ROCm GPU.
 
 ## Prerequisites
 
-- Vision + a PyTorch backend: `uv sync --extra vision --extra torch_rocm`.
+- Vision + a PyTorch backend: `install the required ML dependencies separately`.
 - Pi Plus policy checkpoint: `py_example/models/policies/pi_plus_model_40000.pt`
   (used by the local `policy.py`).
 - Ultralytics `.pt` checkpoint: `py_example/models/yolo26s.pt` (tracked via
@@ -36,9 +36,8 @@ Then run the client (needs vision + a PyTorch backend):
 
 ```bash
 cd py_example
-uv sync --extra vision --extra torch_rocm
-uv run --extra vision --extra torch_rocm \
-  python examples/dribble/dribble.py --ultralytics-device 0 --duration 10
+# Install the required ML dependencies separately (see py_example/README.md).
+python examples/dribble/dribble.py --ultralytics-device 0 --duration 10
 ```
 
 ## Phases

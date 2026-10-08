@@ -152,9 +152,7 @@ def main() -> int:
             time.sleep(args.render_warmup_sec)
 
         client_cmd = [
-            "uv",
-            "run",
-            "python",
+            sys.executable,
             str(ROOT / "Tools" / "runtime" / "admin_smoke_client.py"),
             "--host",
             args.host,

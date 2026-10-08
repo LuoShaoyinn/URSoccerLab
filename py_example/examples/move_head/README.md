@@ -23,7 +23,7 @@ Then run the client:
 
 ```bash
 cd py_example
-uv run python examples/move_head/move_head.py --port 10000 10001 --duration 10 \
+python examples/move_head/move_head.py --port 10000 10001 --duration 10 \
   --video ../artifacts/outputs/head_motion
 ```
 

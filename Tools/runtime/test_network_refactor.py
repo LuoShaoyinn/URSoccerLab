@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise isolated TCP/state/camera/admin pipelines in the source runtime.
 
-Never cooks or rebuilds the AppImage. Run with py_example/.venv/bin/python.
+Never cooks or rebuilds the AppImage. Run with python.
 Tests JPEG and raw streaming, two robot ports, multiple clients, commands,
 admin operations, malformed/fragmented requests, and reconnects.
 """
@@ -19,7 +19,6 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "py_example/src"))
 from ursoccerlab.gains import detect_gains
 from ursoccerlab.media import camera_to_rgb
 from ursoccerlab.tcp import AdminClient, FrameConn, RobotClient
