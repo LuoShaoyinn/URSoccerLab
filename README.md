@@ -96,8 +96,13 @@ For an admin panel without a guest view:
 
 ## Distribution status
 
-This is a source preview, not a published portable package. The local Linux
-MinSizeRel executable is approximately **678 KiB**, excluding shared dependencies.
+Download the viewer, C/C++ SDK and Python wheel from the
+[CLI release](https://github.com/LuoShaoyinn/URSoccerLab/releases/tag/cli-v0.1.0).
+The Linux x86_64 viewer archive was built on Arch Linux and requires matching
+shared libraries; it is not a portable bundle. Extract it and run
+`./bin/urs-viewer --host 127.0.0.1`. Windows binaries are not published yet.
+
+The Linux MinSizeRel executable is approximately **678 KiB**, excluding shared dependencies.
 A standalone distribution must also supply SDL/FFmpeg libraries and their required
 license notices. Linux builds inherit their build environment's glibc and library
 requirements; the local build is not an Ubuntu 22.04-compatible AppImage.
