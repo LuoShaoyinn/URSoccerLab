@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+if(@URS_BUILD_CONNECTOR@)
+  find_dependency(PkgConfig)
+  pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
+  find_dependency(Threads)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/URSClientTargets.cmake")
+check_required_components(URSoccerLabClient)

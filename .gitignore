@@ -1,72 +1,15 @@
-# Unreal generated files
-/Binaries/
-/Build/
-/DerivedDataCache/
-/Intermediate/
-/Saved/
-/.vs/
-/.vscode/
-*.sln
-*.suo
-*.opensdf
-*.sdf
-*.VC.db
-*.VC.opendb
-*.xcodeproj
-*.xcworkspace
-Makefile
-
-# Unreal local/editor state
-*.code-workspace
-*.user
-*.sublime-workspace
-*.sublime-project
-/.ignore
-
-# Packaged/cooked output
-/Releases/
-/StagedBuilds/
-/WindowsNoEditor/
-/LinuxNoEditor/
-/Generated/
-
-# Project-generated URLab/import artifacts
-/Content/MuJoCoImports/
-/Assets/Scenes/SoccerField/physics/*_ue.xml
-/Saved/URLab/
-
-# Python/local environment artifacts
-__pycache__/
-*.py[cod]
+# Native build outputs and local environments
+/build/
+/build-*/
+/artifacts/
+/dist/
+/external/
 .venv/
 venv/
-env/
+__pycache__/
+*.py[cod]
 .env
 .env.*
-/py_example/out
-
-# Logs and dumps
-*.log
-*.trace
-*.utrace
-*.dmp
-*.tmp
-
-# Binary/archive/model artifacts
-*.7z
-*.zip
-*.tar
-*.tar.gz
-*.tgz
-*.rar
-*.onnx
-*.engine
-*.trt
-# ...except vendored model checkpoints under py_example/models (git LFS)
-!py_example/models/
-!py_example/models/**
-
-# Native build artifacts
 *.o
 *.obj
 *.a
@@ -76,53 +19,26 @@ env/
 *.dll
 *.dylib
 *.exe
+*.log
+*.tmp
+*.7z
+*.zip
+*.tar.gz
+CMakeUserPresets.json
+/.vscode/
+/.vs/
 
-# URLab plugin local machine config and generated dependencies
-/Plugins/UnrealRoboticsLab/Config/LocalUnrealRoboticsLab.ini
-/Plugins/UnrealRoboticsLab/Binaries/
-/Plugins/UnrealRoboticsLab/Intermediate/
-/Plugins/UnrealRoboticsLab/DerivedDataCache/
-/Plugins/UnrealRoboticsLab/Saved/
-/Plugins/UnrealRoboticsLab/third_party/install/
-/Plugins/UnrealRoboticsLab/third_party/*/src/build/
-/Plugins/UnrealRoboticsLab/third_party/*/src/_deps/
-
-# Large game assets: track intentionally with Git LFS or remove this rule.
-*.uasset
-*.umap
-!/Plugins/glTFRuntime/Content/*.uasset
-!/Content/
-!/Content/Levels/
-!/Content/Levels/URS_SoccerField.umap
-!/Content/URSoccerLab/
-!/Content/URSoccerLab/Scenes/
-!/Content/URSoccerLab/Scenes/SoccerField/
-!/Content/URSoccerLab/Scenes/SoccerField/**/*.uasset
-!/Content/URSoccerLab/Objects/
-!/Content/URSoccerLab/Objects/**
-
-refs/
-
-# AppImage packaging workspace (cook output, AppDir, .AppImage)
-/build/
-
-# Packaged AppImage output
-/dist/
-
-# Build artifacts (do not commit)
-/ArchivedBuilds/
-/Saved/StagedBuilds/
-/Saved/Cooked/
-/_pack/
-
-.opencode/
-
-# Generated test/debug/capture artifacts and legacy training-output link
-/artifacts/
-/runs
-
-# User-supplied runtime field maps and PBR textures
-/external/
-
-# Local Unreal editor state
+# Existing local simulator build outputs; not part of this branch
+/Binaries/
+/Build/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
 /.zen/
+/ArchivedBuilds/
+/Releases/
+/StagedBuilds/
+/Generated/
+/refs/
+/runs
+/.opencode/

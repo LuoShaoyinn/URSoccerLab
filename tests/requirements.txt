@@ -1,0 +1,3 @@
+# Test fixtures only; no Python dependency in the viewer.
+av==16.1.0
+numpy>=2,<3

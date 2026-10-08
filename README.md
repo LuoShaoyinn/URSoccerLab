@@ -1,144 +1,229 @@
-# URSoccerLab
+# URSoccerLab Viewer
 
-URSoccerLab simulates robot soccer with MuJoCo physics and Unreal Engine camera
-rendering. Run the simulator from an AppImage, then connect a Python client to
-control a robot or watch through a guest camera. Use the shipped AppImage and
-Python wheel from your own working directory. No repository checkout, Unreal
-Engine installation or Docker installation is needed to run them.
+A small native desktop client for watching URSoccerLab through a floating guest
+camera, with an optional admin panel for actor poses. This `main-cli` branch is a
+standalone C/C++ project. The simulator and its documentation remain on the
+[main branch](https://github.com/LuoShaoyinn/URSoccerLab/tree/main).
 
-## User guide
+The viewer uses SDL2, Dear ImGui and FFmpeg. It receives streamed images rather
+than rendering the scene locally. Python, Unreal Engine and MuJoCo are not needed
+to run the viewer. This branch also owns the reusable C/C++ connector libraries
+and the [Python connector wheel](python/README.md).
 
-Start with [Getting started](docs/Getting_Started.md), then choose a topic below.
-The complete [guide index](docs/README.md) links to user and developer references.
-All documentation is Markdown and can be read directly on GitHub.
+## Build
 
-| Topic | Guides |
+### Linux
+
+Install the development dependencies on Ubuntu, then build from the repository
+root:
+
+```bash
+sudo apt install build-essential cmake pkg-config libsdl2-dev \
+    libavcodec-dev libavutil-dev libswscale-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel
+cmake --build build -j
+```
+
+CMake downloads pinned Dear ImGui and cJSON sources with SHA256 checks. SDL2 and
+FFmpeg come from the build environment. FFmpeg needs AV1, H.264 and HEVC decoders
+for the corresponding server codecs; libdav1d is preferred for AV1.
+
+### Windows
+
+Build in an MSYS2 **UCRT64** terminal:
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc \
+    mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
+    mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
+    mingw-w64-ucrt-x86_64-ffmpeg
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+cmake --build build
+```
+
+The result is a native `build/urs-viewer.exe`. Outside that terminal, dependent
+DLLs must be next to the executable or on PATH. Windows compilation and packaging
+have not been validated yet.
+
+## Start the simulator and connect
+
+Run the separately distributed simulator AppImage with a scene JSON that enables
+`guest_inspector`. Start the viewer in another terminal:
+
+```bash
+./build/urs-viewer --host 127.0.0.1
+```
+
+On Windows use `build/urs-viewer.exe`. Replace localhost with the simulator's IP
+for a remote connection; the server can run on Linux while the viewer runs on
+Windows.
+
+Click **Connect guest** using port **12000**. Video starts at a periodic keyframe.
+The scene JSON determines guest resolution, frame rate and capacity; the client
+does not negotiate them.
+
+| Control | Action |
 | --- | --- |
-| Overview and installation | [First scene and external resources](docs/Getting_Started.md) |
-| Concepts and configuration | [Coordinates and clocks](docs/Concepts.md) · [Scene JSON](docs/URSoccerLab_Scene_Building_Api.md) |
-| Physical entities | [Field map](docs/Field_Assets.md) · [Goalposts](docs/URSoccerLab_Scene_Building_Api.md#goalposts) · [Ball physics](docs/URSoccerLab_Scene_Building_Api.md#ball-overrides) |
-| Loading assets | [Robot packages](docs/Robot_Packages.md) · [Booster conversion](Tools/robots/README.md) · [Field PBR](docs/Field_PBR.md) · [Ball PBR](docs/URSoccerLab_Scene_Building_Api.md#external-ball-pbr-maps) |
-| Robot control and sensors | [Python clients and examples](py_example/README.md) · [Guest cameras](docs/Guest_Cameras.md) |
-| Rendering and streaming | [Lighting and camera effects](docs/Rendering.md) · [Video encoding and depth](docs/AV1_Runtime.md) |
-| Troubleshooting | [Startup and logs](docs/Getting_Started.md#troubleshooting) |
-| Developers | [Architecture](docs/Runtime_Architecture.md) · [TCP protocol](docs/URSoccerLab_TCP_Runtime.md) · [Tools](Tools/README.md) · [Docker packaging](Tools/packaging/README.md) |
+| Click the video | Capture the mouse |
+| Mouse | Look around |
+| WASD | Move forward/back/left/right |
+| Space / left Ctrl | Move up/down |
+| Left Shift | Move faster |
+| Esc or losing window focus | Release the mouse |
 
-## Get the distribution files
+Use the speed slider or **Reset camera** in the panel. Camera positions stay
+within +/-99 metres; flight does not collide with hall geometry.
 
-Use the supplied `URSoccerLab.AppImage` and
-`ursoccerlab_client-0.1.1-py3-none-any.whl`. Robot packages and field textures are
-separate resource archives. The wheel provides the Python API; `py_example/`
-is a reference for client usage and example programs.
+### Optional admin panel
 
-## Start the simulator
+Click **Connect admin** on port **11000**. Enter an actor ID from your scene, such
+as `robot_rp0` or `ball`.
 
-You need Linux x86-64, a Vulkan-capable GPU with current drivers, and the
-`URSoccerLab.AppImage`. Camera video uses a shared hardware encoder policy: AV1 with automatic native/Vulkan backend selection and optional H.264 fallback. The Docker packaging baseline is
-Ubuntu 22.04 (glibc 2.35); older Linux distributions are not validated.
+- **Get pose** fills the position and xyzw quaternion fields.
+- **Set pose** applies those fields, leaving joint positions unspecified.
+- **Reset actor** restores its initial pose.
+- **Lock pose** holds the specified pose; **Unlock pose** releases it.
 
-You also need a scene JSON, external robot packages, and a field image. These
-assets are supplied separately; robot models and field maps are not inside
-the AppImage. The ball's default mesh and skin remain built in; optional external
-PBR maps override its skin. A typical installation is:
+Replies use short status messages rather than raw JSON. Actor IDs are entered
+manually. The panel does not discover actors, authenticate users, pause physics
+or edit scene configuration.
 
-```text
-match/
-├── URSoccerLab.AppImage
-├── ursoccerlab_client-0.1.1-py3-none-any.whl
-├── scene.json
-└── assets/
-    ├── field/albedo.png
-    └── robots/booster_k1/
-        ├── robot.json
-        ├── model.xml
-        └── meshes/
-```
-
-Follow [Getting started](docs/Getting_Started.md) to create `scene.json`, then:
+For an admin panel without a guest view:
 
 ```bash
-chmod +x URSoccerLab.AppImage
-./URSoccerLab.AppImage scene.json
+./build/urs-viewer --host 127.0.0.1 --admin-only
 ```
 
-Resource archives are supplied separately:
-`robots.7z` contains Pi Plus, MOS9 and Booster K1 packages; `fields.7z` contains
-the example field image and grass PBR maps; `ball.7z` contains the original ball
-GLB/MJCF, extracted PBR textures and sample checkerboard maps for testing.
-The ball archive also includes its attribution and license links.
-Legacy backups are excluded. Extract them from your match
-directory with `7z x robots.7z` (and likewise for the other archives). They restore
-paths under `external/`; point your scene JSON at those paths instead of the
-`assets/` paths in the example. These resources are not stored in Git.
+## Distribution status
 
-**The simulator accepts exactly one argument: the scene JSON file.** Set all
-scene, physics, lighting and camera options in JSON. Extra Unreal flags and the
-former `-URSSceneConfig=...` form are rejected. Rendering is offscreen; use a
-client to receive camera images. Stop the simulator with Ctrl+C.
-
-If FUSE is unavailable, use the AppImage runtime's extraction environment setting:
-
-```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./URSoccerLab.AppImage scene.json
-```
-
-Runtime data are under `~/.local/share/URSoccerLab/`, or beneath
-`$XDG_DATA_HOME/URSoccerLab/` when that variable is set. Shipping builds omit
-Unreal engine logs.
-
-## Connect a client
-
-Use Python 3.12 and install the shipped wheel into your own virtual environment:
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install ./ursoccerlab_client-0.1.1-py3-none-any.whl
-```
-
-Import the installed package from your own Python program:
-
-```python
-from ursoccerlab import RobotClient, AdminClient, InspectorClient
-from ursoccerlab.media import camera_to_rgb, depth_to_meters
-```
-
-See [Python API usage and examples](py_example/README.md) for robot control,
-camera receiving and guest recording. Browse the [example programs](py_example/examples)
-as reference code and adapt them to your application. Match your scene's robot
-types and actuator names; walking examples also require separate controllers and
-policy weights. Pip installs the wheel's dependencies separately.
-
-Default TCP ports are:
-
-| Client | Port |
-| --- | --- |
-| First robot | 10000 |
-| Further robots, in JSON order | 10001, 10002, … |
-| Administration: reset, pose and scene operations | 11000 |
-| Guest floating cameras | 12000 |
-
-Robot connections carry control, state and camera data. Guests receive camera
-images and control their own camera pose; they cannot administer the match.
-Only expose the ports needed by your clients.
-
-## Configure your match
-
-[Getting started](docs/Getting_Started.md) includes a complete scene example.
-The [scene reference](docs/URSoccerLab_Scene_Building_Api.md) documents physics,
-PBR textures, lighting, motion blur and film grain. The hall stays fixed; field
-size, field image, both goals, ball settings and robots come from your JSON.
-Relative asset paths resolve from the JSON file's directory. Change the JSON or
-external assets and restart the simulator; no rebake is needed for those inputs.
-
-[Robot packages](docs/Robot_Packages.md) describes the external MJCF/GLB format.
-[Booster conversion](Tools/robots/README.md) explains how to normalize the K1
-archive. Camera calibration and controller tuning remain package-specific.
+This is a source preview, not a published portable package. The local Linux
+MinSizeRel executable is approximately **678 KiB**, excluding shared dependencies.
+A standalone distribution must also supply SDL/FFmpeg libraries and their required
+license notices. Linux builds inherit their build environment's glibc and library
+requirements; the local build is not an Ubuntu 22.04-compatible AppImage.
 
 ## Development
 
-For changes to the simulator or client library, see [the development guide](AGENTS.md#development-workflow)
-and [Docker packaging](Tools/packaging/README.md). Source development requires
-Unreal Engine 5.7.4, Git LFS and the pinned submodule. Supply external robot and
-field resources separately. [Runtime architecture](docs/Runtime_Architecture.md)
-and [inspector protocol](docs/Guest_Cameras.md) describe the implementation.
+The project uses C99 and C++17, with a conventional root CMake build:
+
+```text
+CMakeLists.txt
+include/               # C protocol and public C++ connector headers
+src/                   # Protocol, transport, decoder, replies and GUI
+tests/                 # Native/headless checks and video fixtures
+python/                # Reusable Python package, wheel metadata and tests
+cmake/                 # Installed CMake package configuration
+```
+
+The C library has no GUI, socket, JSON-parser or decoder dependency. C++ connection
+workers own sockets and video decoding; they publish owned latest images. SDL
+textures and UI remain on the main thread. Pending camera commands are replaced
+by the newest pose; admin commands use a bounded queue. Reconnect manually after
+a disconnect.
+
+AV1/H.264/H.265 decoders reset on epoch, codec or sequence changes and wait for a
+keyframe. Padded frames are cropped to visible dimensions. The GUI also accepts
+raw BGRA and JPEG diagnostic images. It displays guest RGB only: it is not a
+robot-eye/depth viewer. No server wire-format change is required.
+
+### C protocol library
+
+Include `urs_protocol.h` and link `urs_protocol`:
+
+| API | Purpose |
+| --- | --- |
+| `urs_feed` | Incremental framing for partial/coalesced TCP reads |
+| `urs_frame_header` | Outgoing big-endian length/type prefix |
+| `urs_parse_images` | Version-2 RGB/depth metadata and payload views |
+| `urs_parse_video` | Video epoch, coded dimensions, config and packet views |
+| `urs_camera_json` | Validated guest pose command |
+| `urs_admin_json` | Validated, escaped admin command |
+
+Initialize `urs_parser` to zero and release it with `urs_parser_destroy`. Callback
+payloads are borrowed and valid only during the callback. Malformed input or a
+nonzero callback result returns -1; discard the parser/connection. Frames are
+limited to 32 MiB. Image/video fields are little-endian. JSON formatting requires
+the default C numeric locale.
+
+To build only this library, without fetching GUI dependencies:
+
+```bash
+cmake -S . -B build -DURS_BUILD_VIEWER=OFF -DURS_BUILD_CONNECTOR=OFF
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+All native targets share `build/`; there is no separate protocol build directory.
+Re-enable both options to restore the full viewer build.
+
+### C++ connector
+
+`URSoccerLab::client` provides the asynchronous `Client` API used by the viewer:
+TCP connections, commands, replies and latest decoded RGB images. Public headers
+live in `include/ursoccerlab/`. It currently provides the guest/admin workflow;
+robot-specific high-level methods and stereo/depth splitting remain in Python.
+The C protocol API is available for custom robot clients.
+
+Build the connector without SDL/ImGui:
+
+```bash
+cmake -S . -B build -DURS_BUILD_CONNECTOR=ON -DURS_BUILD_VIEWER=OFF
+cmake --build build
+```
+
+Install the C/C++ libraries and headers (plus the viewer when enabled) with:
+
+```bash
+cmake --install build --prefix /your/install/path
+```
+
+Consumers can then use the installed package:
+
+```cmake
+find_package(URSoccerLabClient CONFIG REQUIRED)
+target_link_libraries(my_client PRIVATE URSoccerLab::client)
+```
+
+```cpp
+#include <ursoccerlab/client.hpp>
+Client guest;
+guest.connect("127.0.0.1", 12000, true);
+```
+
+Point `CMAKE_PREFIX_PATH` at the install prefix. Installation does not collect
+third-party shared libraries into a portable bundle.
+
+### Python wheel
+
+```bash
+uv build --wheel --out-dir build/python-wheel python
+python -m pip install build/python-wheel/ursoccerlab_client-0.1.1-py3-none-any.whl
+```
+
+Import `RobotClient`, `AdminClient` and `InspectorClient` from `ursoccerlab`.
+See [Python API and development instructions](python/README.md).
+
+### Validation
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+The tests cover framing, metadata, command formatting, readable JSON replies and
+three SDL/ImGui render iterations using SDL's dummy video driver. Dummy-video
+initialization does not validate interactive mouse capture or real presentation.
+
+Optional real AV1/H.264/H.265 decoder fixtures use Python only for testing:
+
+```bash
+python3 -m venv build/fixture-venv
+build/fixture-venv/bin/python -m pip install -r tests/requirements.txt
+build/fixture-venv/bin/python tests/interop.py build/client_probe
+```
+
+These fixtures exercise fragmented TCP delivery, camera JSON and visible-image
+cropping. On Windows use the fixture environment's `Scripts/python.exe` and
+`build/client_probe.exe`. They do not replace a test against the running simulator.
+
+Original code is Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE) and
+[third-party notices](THIRD_PARTY_NOTICES.md).
