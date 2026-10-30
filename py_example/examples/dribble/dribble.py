@@ -202,7 +202,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=10000)
-    parser.add_argument("--observer-port", type=int, default=10001)
+    parser.add_argument("--observer-port", type=int, default=10001,
+                        help="observer robot TCP port (0 to skip observer)")
     parser.add_argument("--admin-port", type=int, default=11000)
     parser.add_argument("--ball-actor", default="ball")
     parser.add_argument(
@@ -212,6 +213,7 @@ def main() -> int:
         help="reset robot_rp0 and --ball-actor through the admin endpoint before control",
     )
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
+    parser.add_argument("--robot-type", choices=("pi_plus", "mos9"), default="pi_plus")
     parser.add_argument("--ultralytics-pt", type=Path, default=DEFAULT_ULTRALYTICS_PT)
     parser.add_argument("--ultralytics-device", default="0", help="ROCm GPU id (0) | cpu")
     parser.add_argument("--ultralytics-conf", type=float, default=0.15)
@@ -245,21 +247,37 @@ def main() -> int:
     parser.add_argument("--trace", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/dribble/trace.json")
     args = parser.parse_args()
 
-    policy = load_policy(args.policy)
+    mos9 = None
+    if args.robot_type == "mos9":
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mos9_walk"))
+        import mos9_walk as mos9
+        from ursoccerlab.gains import MOS9
+        if args.policy == POLICY_PATH:
+            args.policy = mos9.POLICY_PATH
+        policy = mos9.OnnxPolicy(str(args.policy))
+        default_dof = mos9.DEFAULT_QPOS.astype(np.float32)
+        joint_names = mos9.JOINT_NAMES_URS
+        gains = MOS9
+    else:
+        policy = load_policy(args.policy)
+        default_dof = DEFAULT_DOF
+        joint_names = JOINTS_MUJOCO
+        gains = PI_PLUS
     vision: VisionWorker | None = None
     client = RobotClient(args.host, args.port)
-    observer = RobotClient(args.host, args.observer_port)
-    for c in (client, observer):
-        c.set_controller_params(**PI_PLUS, actuator_mode="position")
+    observer = RobotClient(args.host, args.observer_port) if args.observer_port else None
+    for c in (c for c in (client, observer) if c is not None):
+        c.set_controller_params(**gains, actuator_mode="position")
     latest_state: dict | None = None
     body_actuators: list[str] | None = None
     head_yaw_actuator: str | None = None
     head_pitch_actuator: str | None = None
-    body_targets = DEFAULT_DOF.copy()
+    body_targets = default_dof.copy()
     head_yaw = 0.0
     head_pitch = 0.0
     history = np.zeros(OBS_STEP_DIM * OBS_HISTORY, dtype=np.float32)
-    last_action = np.zeros(20, dtype=np.float32)
+    last_action = np.zeros(len(default_dof), dtype=np.float32)
     raw_frames: list[np.ndarray] = []
     annotated_frames: list[np.ndarray] = []
     observer_frames: list[np.ndarray] = []
@@ -286,7 +304,7 @@ def main() -> int:
                 latest_state = payload
                 if body_actuators is None:
                     available = set(payload.get("actuators", {}))
-                    body_actuators = [f"{joint}_servo" for joint in JOINTS_MUJOCO]
+                    body_actuators = [f"{joint}_servo" for joint in joint_names]
                     head_yaw_actuator = "head_yaw_joint_servo"
                     head_pitch_actuator = "head_pitch_joint_servo"
                     required = body_actuators + [head_yaw_actuator, head_pitch_actuator]
@@ -316,6 +334,8 @@ def main() -> int:
 
     def pump_observer(capture: bool = True) -> None:
         nonlocal observer_next_record_time
+        if observer is None:
+            return
         for kind, payload in observer.recv():
             if kind not in ("rgb", "camera") or not payload:
                 continue
@@ -539,20 +559,36 @@ def main() -> int:
                     dtype=np.float32,
                 )
                 latest_command[:] = command
-                step = observation(latest_state, command, last_action)
-                history = np.roll(history, -OBS_STEP_DIM)
-                history[-OBS_STEP_DIM:] = step
-                with torch.inference_mode():
-                    action = policy(
-                        torch.from_numpy(np.clip(history, -100.0, 100.0)).unsqueeze(0)
+                if mos9 is not None:
+                    rotation = mos9.quat_to_rotmat(np.asarray(base["quat"]))
+                    joints = latest_state["joints"]
+                    qpos = np.asarray([joints[name]["qpos"] for name in joint_names])
+                    qvel = np.asarray([joints[name]["qvel"] for name in joint_names])
+                    obs = np.concatenate([
+                        rotation.T @ np.asarray(angular_velocity[3:6]) * 0.2,
+                        rotation.T @ np.array([0.0, 0.0, -1.0]),
+                        command, qpos - default_dof, qvel * 0.05, last_action,
+                    ]).astype(np.float32)
+                    last_action = policy(obs).astype(np.float32)
+                    body_targets = np.clip(
+                        default_dof + last_action * mos9.ACTION_SCALES,
+                        mos9.JOINT_RANGES[:, 0], mos9.JOINT_RANGES[:, 1],
                     )
-                last_action = np.clip(action.numpy().squeeze().astype(np.float32), -100.0, 100.0)
-                body_targets = last_action[ISAAC_TO_MUJOCO] * ACTION_SCALE + DEFAULT_DOF
+                else:
+                    step = observation(latest_state, command, last_action)
+                    history = np.roll(history, -OBS_STEP_DIM)
+                    history[-OBS_STEP_DIM:] = step
+                    with torch.inference_mode():
+                        action = policy(
+                            torch.from_numpy(np.clip(history, -100.0, 100.0)).unsqueeze(0)
+                        )
+                    last_action = np.clip(action.numpy().squeeze().astype(np.float32), -100.0, 100.0)
+                    body_targets = last_action[ISAAC_TO_MUJOCO] * ACTION_SCALE + default_dof
                 next_policy = now + 1.0 / args.policy_hz
             send_targets()
             time.sleep(0.001)
 
-        body_targets = DEFAULT_DOF.copy()
+        body_targets = default_dof.copy()
         send_targets()
         pump()
         pump_observer()
@@ -567,14 +603,16 @@ def main() -> int:
         print(f"[vision] {inference_count} frames, mean inference {mean_ms:.2f} ms")
         write_video(raw_frames, args.video, args.video_fps)
         write_video(annotated_frames, args.annotated_video, args.video_fps)
-        write_video(observer_frames, args.observer_video, args.video_fps)
+        if observer_frames:
+            write_video(observer_frames, args.observer_video, args.video_fps)
         args.trace.parent.mkdir(parents=True, exist_ok=True)
         args.trace.write_text(json.dumps(trace, indent=2) + "\n", encoding="utf-8")
         print(f"saved {args.trace}")
         return 0
     finally:
         client.close()
-        observer.close()
+        if observer is not None:
+            observer.close()
         if vision is not None:
             vision.close()
 

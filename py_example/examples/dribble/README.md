@@ -40,6 +40,24 @@ cd py_example
 python examples/dribble/dribble.py --ultralytics-device 0 --duration 10
 ```
 
+## MOS9 on the earlier grass pitch
+
+The MOS9 scene contains only the dribbling robot; use `--observer-port 0`
+to skip the observer connection. Use `scene_mos9.json` and `--robot-type mos9`
+to select the MOS9 ONNX gait
+(`py_example/models/policies/mos9_walk_v11_5500.onnx`; requires ONNX Runtime).
+The original Pi Plus scene and controller default remain available.
+
+This scene expects `external/field/grass_pitch.png`, a copy of the earlier
+`refs/field_fixed.png`, plus the normal, roughness and AO maps in
+`external/field/grass1-ue/`. All textures remain external and Git-ignored.
+Restart the simulator when changing scenes or textures.
+
+```bash
+./dist/URSoccerLab.AppImage py_example/examples/dribble/scene_mos9.json
+python py_example/examples/dribble/dribble.py --robot-type mos9 --observer-port 0 --ultralytics-device cpu --duration 12
+```
+
 ## Phases
 
 1. **reset** — admin `reset(robot_rp0)`, `reset(ball)`.
@@ -64,7 +82,9 @@ python examples/dribble/dribble.py --ultralytics-device 0 --duration 10
 
 `../artifacts/outputs/dribble/{left_eye,detections,observer}.mp4` and `trace.json`.
 
-## Self-contained
+## Policy helpers
 
 This folder copies the Pi Plus policy helpers into `policy.py` so it has no
 dependency on the `pi_walk` example.
+The optional MOS9 controller reuses gait constants and ONNX inference from
+the sibling `mos9_walk` example.
