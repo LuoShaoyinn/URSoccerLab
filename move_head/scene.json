@@ -15,39 +15,33 @@
   },
   "robots": [
     {
-      "actor_id": "robot_mos9",
-      "type": "mos9",
+      "actor_id": "robot_rp0",
+      "type": "pi_plus",
       "translation_m": [
-        -3.0,
-        0.0,
-        0.53
+        -1.0,
+        -0.5,
+        0.3762
       ],
       "rotation_quat_xyzw": [
         0.0,
         0.0,
         0.0,
         1.0
-      ],
-      "privilege": {
-        "self_pos": true,
-        "ball_pos_related": true,
-        "ball_vel_related": true,
-        "all_pos": true
-      }
+      ]
     },
     {
-      "actor_id": "robot_observer",
-      "type": "mos9",
+      "actor_id": "robot_rp1",
+      "type": "pi_plus",
       "translation_m": [
-        0.0,
-        3.0,
-        0.53
+        1.0,
+        -0.5,
+        0.3762
       ],
       "rotation_quat_xyzw": [
         0.0,
         0.0,
-        -0.7071,
-        0.7071
+        1.0,
+        0.0
       ]
     }
   ],
@@ -77,7 +71,7 @@
     "border_x_m": 0.8,
     "border_y_m": 0.9,
     "visual": {
-      "base_color_map": "../../../external/field/example.png"
+      "base_color_map": "../external/field/example.png"
     },
     "physics": {
       "friction": [
@@ -140,7 +134,7 @@
     "keyframe_interval_s": 2
   },
   "robot_types": {
-    "mos9": "../../../external/robots/mos9/robot.json"
+    "pi_plus": "../external/robots/pi_plus/robot.json"
   },
   "encoder": {
     "codec": "av1",

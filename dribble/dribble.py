@@ -5,7 +5,7 @@ Launch the runtime with this folder's ``scene.json`` via the nDisplay backend
 (run from the project root)::
 
     python Tools/runtime/run_scene.py \
-      --scene-config py_example/examples/dribble/scene.json
+      --scene-config dribble/scene.json
 
 The ball detector is the Ultralytics COCO ``yolo26s.pt`` checkpoint
 (class 32 = sports ball, normalized to ``ball``); resize/NMS are handled by
@@ -44,7 +44,7 @@ from ursoccerlab.media import camera_to_rgb, write_video  # noqa: E402
 from ursoccerlab.tcp import AdminClient, RobotClient  # noqa: E402
 
 DEFAULT_ULTRALYTICS_PT = (
-    Path(__file__).resolve().parents[2] / "models" / "yolo26s.pt"
+    Path(__file__).resolve().parents[1] / "models" / "yolo26s.pt"
 )
 
 _COLORS = ["#ffb000", "#00d7ff", "#ff4f81", "#73d13d", "#9254de", "#36cfc9", "#fa541c"]
@@ -241,16 +241,16 @@ def main() -> int:
     parser.add_argument("--head-max-rate", type=float, default=0.3, help="rad/s")
     parser.add_argument("--head-search-rate", type=float, default=0.15, help="rad/s")
     parser.add_argument("--video-fps", type=int, default=30)
-    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/dribble/left_eye.mp4")
-    parser.add_argument("--annotated-video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/dribble/detections.mp4")
-    parser.add_argument("--observer-video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/dribble/observer.mp4")
-    parser.add_argument("--trace", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/dribble/trace.json")
+    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[1] / "artifacts/outputs/dribble/left_eye.mp4")
+    parser.add_argument("--annotated-video", type=Path, default=Path(__file__).resolve().parents[1] / "artifacts/outputs/dribble/detections.mp4")
+    parser.add_argument("--observer-video", type=Path, default=Path(__file__).resolve().parents[1] / "artifacts/outputs/dribble/observer.mp4")
+    parser.add_argument("--trace", type=Path, default=Path(__file__).resolve().parents[1] / "artifacts/outputs/dribble/trace.json")
     args = parser.parse_args()
 
     mos9 = None
     if args.robot_type == "mos9":
         import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mos9_walk"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "walk" / "mos9_walk"))
         import mos9_walk as mos9
         from ursoccerlab.gains import MOS9
         if args.policy == POLICY_PATH:

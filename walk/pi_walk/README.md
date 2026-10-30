@@ -8,7 +8,7 @@ Run one Pi Plus walking policy while recording both robots' left-eye cameras.
 
 - PyTorch backend extra (pick one): `install the required ML dependencies separately` (ROCm),
   `--extra torch_cpu`, or `--extra torch_cuda`.
-- Policy checkpoint: `py_example/models/policies/pi_plus_model_40000.pt`
+- Policy checkpoint: `models/policies/pi_plus_model_40000.pt`
 
 > The policy was trained against the older mos-brain Pi dynamics. It exercises
 > the runtime protocol and capture path, but is **not a validated gait** for
@@ -26,17 +26,16 @@ Supply the external robot packages and field maps referenced by `scene.json`.
 Start the packaged simulator from the project root:
 
 ```bash
-./dist/URSoccerLab.AppImage py_example/examples/pi_walk/scene.json
+./dist/URSoccerLab.AppImage walk/pi_walk/scene.json
 ```
 
 Then run the client (needs a PyTorch backend extra):
 
 ```bash
-cd py_example
-# Install the required ML dependencies separately (see py_example/README.md).
-python examples/pi_walk/pi_walk.py \
+# Install the required ML dependencies separately (see README.md).
+python walk/pi_walk/pi_walk.py \
   --vx 0.35 --duration 15 \
-  --video ../artifacts/outputs/walker.mp4 --observer-video ../artifacts/outputs/observer.mp4
+  --video artifacts/outputs/walker.mp4 --observer-video artifacts/outputs/observer.mp4
 ```
 
 ## Options
@@ -46,14 +45,14 @@ python examples/pi_walk/pi_walk.py \
 | `--vx` | `0.35` | forward velocity command (m/s) |
 | `--duration` | `15` | walk length in seconds |
 | `--policy-hz` | `50` | policy inference rate |
-| `--policy` | `py_example/models/policies/pi_plus_model_40000.pt` | checkpoint path |
+| `--policy` | `models/policies/pi_plus_model_40000.pt` | checkpoint path |
 
 ## Output
 
-Walker and observer H.264 MP4s under `../artifacts/outputs/`.
+Walker and observer H.264 MP4s under `artifacts/outputs/`.
 
 ## Shared code
 
 This folder is the canonical home of the Pi Plus policy helpers (`Actor`,
 `load_policy`, `observation`, joint maps). The `dribble` example ships its own
-copy in `examples/dribble/policy.py` so it stays self-contained.
+copy in `dribble/policy.py` so it stays self-contained.

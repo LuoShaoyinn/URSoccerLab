@@ -16,14 +16,13 @@ Supply the external robot packages and field maps referenced by `scene.json`.
 Start the packaged simulator from the project root:
 
 ```bash
-./dist/URSoccerLab.AppImage py_example/examples/standing/scene.json
+./dist/URSoccerLab.AppImage standing/scene.json
 ```
 
 Then run the client:
 
 ```bash
-cd py_example
-python examples/standing/standing.py --port 10000 10001 --duration 5 \
+python standing/standing.py --port 10000 10001 --duration 5 \
   --video ../artifacts/outputs/standing
 ```
 

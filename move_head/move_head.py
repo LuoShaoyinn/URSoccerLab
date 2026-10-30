@@ -9,10 +9,10 @@ dynamically from the state's ``actuators`` dict by substring-matching
 Connect to as many robots as the scene provides::
 
     # single robot
-    python examples/move_head.py --port 10000 --duration 10
+    python move_head/move_head.py --port 10000 --duration 10
 
     # two robots face-to-face
-    python examples/move_head.py --port 10000 10001 --duration 10
+    python move_head/move_head.py --port 10000 10001 --duration 10
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def main(default_mode: str = "sweep") -> int:
                     help="sweep head joints, or capture with no motor commands")
     ap.add_argument("--cmd-hz", type=float, default=60.0)
     ap.add_argument("--video-fps", type=int, default=30)
-    ap.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/head_demo",
+    ap.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[1] / "artifacts/outputs/head_demo",
                     help="output video path or prefix (.mp4 always applied; _N appended per robot when >1)")
     args = ap.parse_args()
 

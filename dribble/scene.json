@@ -95,7 +95,7 @@
     "border_x_m": 0.8,
     "border_y_m": 0.9,
     "visual": {
-      "base_color_map": "../../../external/field/example.png"
+      "base_color_map": "../external/field/example.png"
     },
     "physics": {
       "friction": [
@@ -158,7 +158,7 @@
     "keyframe_interval_s": 2
   },
   "robot_types": {
-    "pi_plus": "../../../external/robots/pi_plus/robot.json"
+    "pi_plus": "../external/robots/pi_plus/robot.json"
   },
   "encoder": {
     "codec": "av1",

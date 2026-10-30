@@ -6,7 +6,7 @@ as a stationary observer.
 
 ## Prerequisites
 
-- ONNX policy: `py_example/models/policies/mos9_walk_v11_5500.onnx`
+- ONNX policy: `models/policies/mos9_walk_v11_5500.onnx`
 - Install ONNX Runtime with `install the required ML dependencies separately`; no PyTorch backend is required.
 
 ## Scene
@@ -20,17 +20,16 @@ Supply the external robot packages and field maps referenced by `scene.json`.
 Start the packaged simulator from the project root:
 
 ```bash
-./dist/URSoccerLab.AppImage py_example/examples/mos9_walk/scene.json
+./dist/URSoccerLab.AppImage walk/mos9_walk/scene.json
 ```
 
 Then run the client:
 
 ```bash
-cd py_example
-python examples/mos9_walk/mos9_walk.py \
+python walk/mos9_walk/mos9_walk.py \
   --robot-port 10000 --observer-port 10001 \
   --vx 0.4 --duration 15 \
-  --video ../artifacts/outputs/mos9_walker.mp4 --observer-video ../artifacts/outputs/mos9_observer.mp4
+  --video artifacts/outputs/mos9_walker.mp4 --observer-video artifacts/outputs/mos9_observer.mp4
 ```
 
 For solo walking (no observer): `--observer-port 0` and launch with
@@ -48,4 +47,4 @@ For solo walking (no observer): `--observer-port 0` and launch with
 
 ## Output
 
-Walker and observer H.264 MP4s under `../artifacts/outputs/`.
+Walker and observer H.264 MP4s under `artifacts/outputs/`.

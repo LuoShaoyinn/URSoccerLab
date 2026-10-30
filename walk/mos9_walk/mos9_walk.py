@@ -6,15 +6,14 @@ as a stationary observer, recording the walk from its left-eye camera.
 
 Use this folder's ``scene.json`` (mos9 walker + observer)::
 
-    cd py_example
-    python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 10001 \
+        python walk/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 10001 \
         --vx 0.4 --duration 15 \
         --video out/walker.mp4 --observer-video out/observer.mp4
 
 For solo walking (no observer), pass ``--observer-port 0`` and use
 ``Config/examples/mos9_solo.json``::
 
-    python examples/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 0 \
+    python walk/mos9_walk/mos9_walk.py --robot-port 10000 --observer-port 0 \
         --vx 0.4 --duration 15 \
         --video out/walker.mp4
 """
@@ -113,8 +112,8 @@ def main() -> int:
     parser.add_argument("--wz", type=float, default=0.0)
     parser.add_argument("--policy-hz", type=float, default=50.0)
     parser.add_argument("--video-fps", type=int, default=30)
-    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/mos9_walker.mp4")
-    parser.add_argument("--observer-video", type=Path, default=Path(__file__).resolve().parents[3] / "artifacts/outputs/mos9_observer.mp4")
+    parser.add_argument("--video", type=Path, default=Path(__file__).resolve().parents[2] / "artifacts/outputs/mos9_walker.mp4")
+    parser.add_argument("--observer-video", type=Path, default=Path(__file__).resolve().parents[2] / "artifacts/outputs/mos9_observer.mp4")
     parser.add_argument("--admin-port", type=int, default=11000)
     parser.add_argument("--actor", default="robot_rp0")
     parser.add_argument("--base-height", type=float, default=0.56)

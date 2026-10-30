@@ -16,11 +16,11 @@
   "robots": [
     {
       "actor_id": "robot_rp0",
-      "type": "mos9",
+      "type": "booster_k1",
       "translation_m": [
-        -1.0,
-        0.0,
-        0.56
+        -1,
+        0,
+        0.57
       ],
       "rotation_quat_xyzw": [
         0.0,
@@ -29,26 +29,8 @@
         1.0
       ],
       "joint_positions_rad": {
-        "head_yaw_joint": 0.0,
-        "head_pitch_joint": 0.0,
-        "r_shoulder_pitch_joint": 0.0,
-        "r_shoulder_roll_joint": -1.4,
-        "r_elbow_joint": 0.0,
-        "l_shoulder_pitch_joint": 0.0,
-        "l_shoulder_roll_joint": 1.4,
-        "l_elbow_joint": 0.0,
-        "r_hip_pitch_joint": 0.0,
-        "r_hip_roll_joint": 0.0,
-        "r_hip_yaw_joint": 0.0,
-        "r_knee_joint": 0.0,
-        "r_ankle_pitch_joint": 0.0,
-        "r_ankle_roll_joint": 0.0,
-        "l_hip_pitch_joint": 0.0,
-        "l_hip_roll_joint": 0.0,
-        "l_hip_yaw_joint": 0.0,
-        "l_knee_joint": 0.0,
-        "l_ankle_pitch_joint": 0.0,
-        "l_ankle_roll_joint": 0.0
+        "Left_Shoulder_Roll": -1.3,
+        "Right_Shoulder_Roll": 1.3
       }
     }
   ],
@@ -69,21 +51,16 @@
       ]
     }
   ],
-  "mujoco_dt": 0.002,
+  "mujoco_dt": 0.005,
   "camera_freq": 30,
-  "state_freq": 60,
+  "state_freq": 50,
   "field": {
     "length_m": 9.0,
     "width_m": 6.0,
     "border_x_m": 0.8,
     "border_y_m": 0.9,
     "visual": {
-      "base_color_map": "../../../external/field/grass_pitch.png",
-      "normal_map": "../../../external/field/grass1-ue/grass1-normal1-dx.png",
-      "roughness_map": "../../../external/field/grass1-ue/grass1-rough.png",
-      "ao_map": "../../../external/field/grass1-ue/grass1-ao.png",
-      "normal_format": "directx",
-      "detail_tile_size_m": 0.5
+      "base_color_map": "../../external/field/example.png"
     },
     "physics": {
       "friction": [
@@ -146,7 +123,7 @@
     "keyframe_interval_s": 2
   },
   "robot_types": {
-    "mos9": "../../../external/robots/mos9/robot.json"
+    "booster_k1": "../../external/robots/booster_k1/robot.json"
   },
   "encoder": {
     "codec": "av1",

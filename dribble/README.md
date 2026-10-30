@@ -11,9 +11,9 @@ no fixed-shape ONNX is required. Defaults to the ROCm GPU.
 ## Prerequisites
 
 - Vision + a PyTorch backend: `install the required ML dependencies separately`.
-- Pi Plus policy checkpoint: `py_example/models/policies/pi_plus_model_40000.pt`
+- Pi Plus policy checkpoint: `models/policies/pi_plus_model_40000.pt`
   (used by the local `policy.py`).
-- Ultralytics `.pt` checkpoint: `py_example/models/yolo26s.pt` (tracked via
+- Ultralytics `.pt` checkpoint: `models/yolo26s.pt` (tracked via
   git LFS; the `--ultralytics-pt` default points here).
 
 ## Scene
@@ -29,15 +29,14 @@ Supply the external robot packages and field maps referenced by `scene.json`.
 Start the packaged simulator from the project root:
 
 ```bash
-./dist/URSoccerLab.AppImage py_example/examples/dribble/scene.json
+./dist/URSoccerLab.AppImage dribble/scene.json
 ```
 
 Then run the client (needs vision + a PyTorch backend):
 
 ```bash
-cd py_example
-# Install the required ML dependencies separately (see py_example/README.md).
-python examples/dribble/dribble.py --ultralytics-device 0 --duration 10
+# Install the required ML dependencies separately (see README.md).
+python dribble/dribble.py --ultralytics-device 0 --duration 10
 ```
 
 ## MOS9 on the earlier grass pitch
@@ -45,7 +44,7 @@ python examples/dribble/dribble.py --ultralytics-device 0 --duration 10
 The MOS9 scene contains only the dribbling robot; use `--observer-port 0`
 to skip the observer connection. Use `scene_mos9.json` and `--robot-type mos9`
 to select the MOS9 ONNX gait
-(`py_example/models/policies/mos9_walk_v11_5500.onnx`; requires ONNX Runtime).
+(`models/policies/mos9_walk_v11_5500.onnx`; requires ONNX Runtime).
 The original Pi Plus scene and controller default remain available.
 
 This scene expects `external/field/grass_pitch.png`, a copy of the earlier
@@ -54,8 +53,8 @@ This scene expects `external/field/grass_pitch.png`, a copy of the earlier
 Restart the simulator when changing scenes or textures.
 
 ```bash
-./dist/URSoccerLab.AppImage py_example/examples/dribble/scene_mos9.json
-python py_example/examples/dribble/dribble.py --robot-type mos9 --observer-port 0 --ultralytics-device cpu --duration 12
+./dist/URSoccerLab.AppImage dribble/scene_mos9.json
+python dribble/dribble.py --robot-type mos9 --observer-port 0 --ultralytics-device cpu --duration 12
 ```
 
 ## Phases
@@ -70,7 +69,7 @@ python py_example/examples/dribble/dribble.py --robot-type mos9 --observer-port 
 
 | flag | default | notes |
 |------|---------|-------|
-| `--ultralytics-pt` | `py_example/models/yolo26s.pt` | Ultralytics checkpoint |
+| `--ultralytics-pt` | `models/yolo26s.pt` | Ultralytics checkpoint |
 | `--ultralytics-device` | `0` | ROCm GPU id, or `cpu` |
 | `--ultralytics-conf` | `0.15` | detection confidence |
 | `--duration` | `1` | dribble length in seconds |
@@ -87,4 +86,4 @@ python py_example/examples/dribble/dribble.py --robot-type mos9 --observer-port 
 This folder copies the Pi Plus policy helpers into `policy.py` so it has no
 dependency on the `pi_walk` example.
 The optional MOS9 controller reuses gait constants and ONNX inference from
-the sibling `mos9_walk` example.
+the `walk/mos9_walk` example.
