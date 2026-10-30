@@ -27,8 +27,7 @@ All documentation is Markdown and can be read directly on GitHub.
 
 Use the supplied `URSoccerLab.AppImage` and
 `ursoccerlab_client-0.1.1-py3-none-any.whl`. Robot packages and field textures are
-separate resource archives. The wheel provides the Python API; `py_example/`
-is a reference for client usage and example programs.
+separate resource archives. The wheel provides the Python API; the [python-example branch](https://github.com/LuoShaoyinn/URSoccerLab/tree/python-example/py_example) contains reference programs.
 
 ## Start the simulator
 
@@ -104,7 +103,7 @@ from ursoccerlab.media import camera_to_rgb, depth_to_meters
 ```
 
 See [Python API usage and examples](https://github.com/LuoShaoyinn/URSoccerLab/blob/main-cli/python/README.md) for robot control,
-camera receiving and guest recording. Browse the [example programs](py_example/examples)
+camera receiving and guest recording. Browse the [example programs](https://github.com/LuoShaoyinn/URSoccerLab/tree/python-example/py_example/examples)
 as reference code and adapt them to your application. Match your scene's robot
 types and actuator names; walking examples also require separate controllers and
 policy weights. Pip installs the wheel's dependencies separately.

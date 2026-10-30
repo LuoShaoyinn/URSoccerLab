@@ -51,7 +51,7 @@ def status(client, ok, timeout=5):
 def run(codec):
     output = ROOT / 'artifacts/tests/inspector' / codec
     output.mkdir(parents=True, exist_ok=True)
-    original = ROOT / 'py_example/examples/standing/scene.json'
+    original = ROOT / 'Tools/runtime/fixtures/standing_scene.json'
     config = json.loads(original.read_text())
     config["robot_types"] = {name: str((original.parent / path).resolve()) for name, path in config["robot_types"].items()}
     config['field']['visual']['base_color_map'] = str((original.parent / config['field']['visual']['base_color_map']).resolve())
@@ -172,9 +172,9 @@ def run(codec):
             except ConnectionResetError: pass
             malformed.close()
             receive(a)
-            # Exercise the shipped Python CLI including incremental MP4 output.
+            # Exercise the inspector receiver including incremental MP4 output.
             b.close(); time.sleep(.1)
-            capture = subprocess.run([sys.executable, str(ROOT/'py_example/examples/inspector/receive.py'),
+            capture = subprocess.run([sys.executable, str(ROOT/'Tools/runtime/fixtures/inspector_receive.py'),
                                       '--duration', '2', '--video', str(output/'receiver.mp4')],
                                      cwd=ROOT, capture_output=True, text=True, timeout=20)
             assert capture.returncode == 0, capture.stderr

@@ -22,7 +22,6 @@ DIRECTORIES = {
     'Saved/Cleanup': 'artifacts/archive',
     'Saved/Generated': 'artifacts/generated',
     'Saved/Screenshots': 'artifacts/screenshots',
-    'py_example/out': 'artifacts/outputs',
     'runs': 'artifacts/runs',
 }
 FILES = {'Saved/AutoScreenshot.png': 'artifacts/screenshots/AutoScreenshot.png'}

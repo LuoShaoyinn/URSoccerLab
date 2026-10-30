@@ -189,7 +189,7 @@ python Tools/runtime/organize_artifacts.py
 ```
 
 This moves existing files without deleting them and creates relative compatibility
-links for Unreal's fixed `Saved/` paths, `py_example/out`, and `runs`. Re-running is
+links for Unreal's fixed `Saved/` paths and `runs`. Re-running is
 safe; conflicting destinations are rejected rather than overwritten. The links
 also keep older commands and saved absolute references usable. Model weights,
 source assets, cooked distributions, and Unreal build/cache directories retain

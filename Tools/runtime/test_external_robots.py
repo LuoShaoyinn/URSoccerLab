@@ -44,7 +44,7 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     for previous in output.glob("*_?s.png"): previous.unlink()
-    original = ROOT / 'py_example/examples/standing/scene.json'
+    original = ROOT / 'Tools/runtime/fixtures/standing_scene.json'
     config = json.loads(original.read_text())
     config['robot_types'] = {name: str(ROOT / 'external/robots' / name / 'robot.json') for name in ('pi_plus', 'mos9')}
     if args.no_robot_visuals or args.fixed_base:

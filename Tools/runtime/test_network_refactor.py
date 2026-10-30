@@ -47,7 +47,7 @@ def receive_json(connection: FrameConn) -> dict:
 
 def run(ue: Path, output: Path, codec: str) -> dict:
     output.mkdir(parents=True, exist_ok=True)
-    original = ROOT / "py_example/examples/standing/scene.json"
+    original = ROOT / "Tools/runtime/fixtures/standing_scene.json"
     config = json.loads(original.read_text())
     config["robot_types"] = {name: str((original.parent / path).resolve()) for name, path in config["robot_types"].items()}
     config["field"]["visual"]["base_color_map"] = str((original.parent / config["field"]["visual"]["base_color_map"]).resolve())
