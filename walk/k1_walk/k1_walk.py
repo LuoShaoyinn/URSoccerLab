@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 import numpy as np
 import torch
-from ursoccerlab.tcp import RobotClient
+from ursoccerlab.tcp import AdminClient, RobotClient
 
 K1_JOINTS_POLICY_ORDER = [
     "AAHead_yaw",
@@ -135,6 +135,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=10000)
+    parser.add_argument("--admin-port", type=int, default=11000)
+    parser.add_argument("--actor-id", default="robot_rp0")
     parser.add_argument("--policy", type=Path, default=Path(__file__).resolve().parents[2] / "models/policies/k1_model_46000.pt")
     parser.add_argument("--duration", type=float, default=15.0)
     parser.add_argument("--vx", type=float, default=0.3)
@@ -147,12 +149,23 @@ def main():
     default = np.asarray([K1_RESET_JOINT_POS.get(name, 0.0) for name in names], dtype=np.float32)
     scale = values(K1_ACTION_SCALE)
     client = RobotClient(args.host, args.port)
+    admin = None
+    locked = False
     client.set_controller_params(kp=dict(zip(actuators, map(float, values(K1_MOTOR_STIFFNESS)))), kv=dict(zip(actuators, map(float, values(K1_MOTOR_DAMPING)))), actuator_mode="position")
     action = np.zeros(22, dtype=np.float32)
     command = np.asarray([args.vx, args.vy, args.yaw_rate], dtype=np.float32)
     latest = None
     deadline = time.monotonic() + 5
     try:
+        admin = AdminClient(args.host, args.admin_port)
+        reply = admin.reset(args.actor_id)
+        if not reply.get("ok"):
+            raise RuntimeError(f"K1 reset failed: {reply}")
+        reply = admin.lock_pose(args.actor_id)
+        if not reply.get("ok"):
+            raise RuntimeError(f"K1 pose lock failed: {reply}")
+        locked = True
+        print(f"Reset and locked {args.actor_id}; preparing controller", flush=True)
         while latest is None and time.monotonic() < deadline:
             for kind, payload in client.recv():
                 if kind == "state": latest = payload
@@ -160,6 +173,13 @@ def main():
         if latest is None: raise RuntimeError("No robot state received")
         missing = set(actuators) - set(latest.get("actuators", {}))
         if missing: raise RuntimeError(f"Missing K1 actuators: {sorted(missing)}")
+        # Prime the position controller before releasing the upright pose.
+        client.send_command(dict(zip(actuators, map(float, default))))
+        reply = admin.unlock_pose(args.actor_id)
+        if not reply.get("ok"):
+            raise RuntimeError(f"K1 pose unlock failed: {reply}")
+        locked = False
+        print(f"Walking at vx={args.vx:.2f} m/s for {args.duration:.1f} s", flush=True)
         end = time.monotonic() + args.duration
         next_step = time.monotonic()
         while time.monotonic() < end:
@@ -180,6 +200,12 @@ def main():
             client.send_command(dict(zip(actuators, map(float, default + scale * action))))
             next_step = now + 0.02
     finally:
+        if admin is not None:
+            try:
+                if locked:
+                    admin.unlock_pose(args.actor_id)
+            finally:
+                admin.close()
         client.close()
 
 if __name__ == "__main__": main()

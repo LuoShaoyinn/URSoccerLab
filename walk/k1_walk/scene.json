@@ -29,8 +29,28 @@
         1.0
       ],
       "joint_positions_rad": {
+        "AAHead_yaw": 0.0,
+        "ALeft_Shoulder_Pitch": 0.0,
+        "ARight_Shoulder_Pitch": 0.0,
+        "Left_Hip_Pitch": 0.0,
+        "Right_Hip_Pitch": 0.0,
+        "Head_pitch": 0.0,
         "Left_Shoulder_Roll": -1.3,
-        "Right_Shoulder_Roll": 1.3
+        "Right_Shoulder_Roll": 1.3,
+        "Left_Hip_Roll": 0.0,
+        "Right_Hip_Roll": 0.0,
+        "Left_Elbow_Pitch": 0.0,
+        "Right_Elbow_Pitch": 0.0,
+        "Left_Hip_Yaw": 0.0,
+        "Right_Hip_Yaw": 0.0,
+        "Left_Elbow_Yaw": 0.0,
+        "Right_Elbow_Yaw": 0.0,
+        "Left_Knee_Pitch": 0.0,
+        "Right_Knee_Pitch": 0.0,
+        "Left_Ankle_Pitch": 0.0,
+        "Right_Ankle_Pitch": 0.0,
+        "Left_Ankle_Roll": 0.0,
+        "Right_Ankle_Roll": 0.0
       }
     }
   ],
@@ -123,7 +143,7 @@
     "keyframe_interval_s": 2
   },
   "robot_types": {
-    "booster_k1": "../../external/robots/booster_k1/robot.json"
+    "booster_k1": "../../external/robots/booster_k1_armature/robot.json"
   },
   "encoder": {
     "codec": "av1",
