@@ -3,16 +3,16 @@
 Install the supplied wheel in a Python 3.12 environment:
 
 ```bash
-python -m pip install ursoccerlab_client-0.1.1-py3-none-any.whl
+python -m pip install ursoccerlab_client-0.1.2-py3-none-any.whl
 ```
 
 The package imports as `ursoccerlab`. The wheel contains Python code; pip installs
 PyAV, NumPy and image/video helpers separately. It works on Windows and Linux
 where compatible dependency wheels are available. No simulator assets are bundled.
 
-Start the simulator AppImage separately with a scene JSON. The simulator and
-[example programs](https://github.com/LuoShaoyinn/URSoccerLab/tree/main/py_example/examples)
-remain on `main`; reusable connectors and wheel builds live on `main-cli`.
+Start the simulator AppImage separately with a scene JSON. The simulator lives
+on `main`, the [example programs](https://github.com/LuoShaoyinn/URSoccerLab/tree/python-example/py_example/examples)
+live on `python-example`, and the Python connector and wheel builds live on `main-cli`.
 
 ## Robot control, state and cameras
 
@@ -54,7 +54,7 @@ finally:
     admin.close()
 ```
 
-`lock_pose` / `unlock_pose` are also available. Actor IDs must match the scene.
+Actor IDs must match the scene.
 
 ## Guest camera
 
@@ -83,7 +83,7 @@ uv sync --project python --frozen
 uv run --project python python -m unittest discover -s python/tests
 ```
 
-The output is `build/python-wheel/ursoccerlab_client-0.1.1-py3-none-any.whl`. For video fixture
+The output is `build/python-wheel/ursoccerlab_client-0.1.2-py3-none-any.whl`. For video fixture
 tests, PyAV must contain the software encoders used by those tests. This is separate
 from the server's hardware-encoder policy. Optional ML extras retain the original
 example dependencies; they are not needed for basic connection or decoding.

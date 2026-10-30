@@ -25,6 +25,9 @@ public:
   Picture picture();
   Reply reply();
   bool alive() const { return active; }
+  bool connecting() const { return in_connect; }
+  uint64_t received_bytes() const { return rx_bytes; }
+  uint64_t sent_bytes() const { return tx_bytes; }
 
 private:
   struct Decoder {
@@ -36,7 +39,8 @@ private:
     ~Decoder();
   };
   std::thread worker;
-  std::atomic<bool> stop{false}, active{false};
+  std::atomic<bool> stop{false}, active{false}, in_connect{false};
+  std::atomic<uint64_t> rx_bytes{0}, tx_bytes{0};
   std::mutex mutex;
   std::string message = "Disconnected";
   Picture latest;

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=URSoccerLab Viewer
+Exec=urs-viewer
+Icon=urs-viewer
+Categories=Network;Utility;

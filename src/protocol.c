@@ -154,10 +154,9 @@ int urs_camera_json(char *out, size_t cap, const double p[3],
 }
 int urs_admin_json(char *out, size_t cap, const char *cmd, const char *actor,
                    const double *p, const double *q) {
-  const char *allowed[] = {"get_pose", "set_pose", "reset", "lock_pose",
-                           "unlock_pose"};
+  const char *allowed[] = {"get_pose", "set_pose", "reset"};
   int valid = 0;
-  for (int i = 0; i < 5; i++)
+  for (int i = 0; i < 3; i++)
     if (!strcmp(cmd, allowed[i]))
       valid = 1;
   if (!valid || !actor[0] || strlen(actor) > 255)

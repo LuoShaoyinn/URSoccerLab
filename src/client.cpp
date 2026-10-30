@@ -46,6 +46,8 @@ void Client::disconnect() {
   if (worker.joinable())
     worker.join();
   active = false;
+  in_connect = false;
+  set_status("Disconnected");
   decoders.clear();
 }
 void Client::connect(std::string host, int port, bool video) {
@@ -59,6 +61,9 @@ void Client::connect(std::string host, int port, bool video) {
     message = "Connecting...";
   }
   stop = false;
+  rx_bytes = 0;
+  tx_bytes = 0;
+  in_connect = true;
   wants_video = video;
   worker = std::thread(&Client::run, this, std::move(host), port);
 }
@@ -96,6 +101,7 @@ void Client::run(std::string host, int port) {
   WSADATA w;
   if (WSAStartup(MAKEWORD(2, 2), &w)) {
     set_status("Winsock startup failed");
+    in_connect = false;
     return;
   }
 #endif
@@ -150,6 +156,7 @@ void Client::run(std::string host, int port) {
     if (sock == bad || stop)
       throw std::runtime_error("Connection failed or timed out");
     active = true;
+    in_connect = false;
     set_status(wants_video ? "Connected; waiting for video keyframe"
                            : "Admin connected");
     std::vector<uint8_t> outgoing;
@@ -184,13 +191,15 @@ void Client::run(std::string host, int port) {
         int n = ::send(sock, outgoing.data() + sent, outgoing.size() - sent,
                        MSG_NOSIGNAL);
 #endif
-        if (n > 0)
+        if (n > 0) {
           sent += (size_t)n;
-        else if (n == 0 || !pending())
+          tx_bytes += (uint64_t)n;
+        } else if (n == 0 || !pending())
           throw std::runtime_error("Send failed");
       }
       int n = recv(sock, (char *)bytes, sizeof(bytes), 0);
       if (n > 0) {
+        rx_bytes += (uint64_t)n;
         if (urs_feed(&parser, bytes, (size_t)n, frame, this))
           throw std::runtime_error("Invalid server message");
       } else if (n == 0)
@@ -205,6 +214,7 @@ void Client::run(std::string host, int port) {
     set_status(e.what());
   }
   active = false;
+  in_connect = false;
   if (sock != bad)
     close_socket(sock);
   urs_parser_destroy(&parser);
@@ -238,10 +248,6 @@ int Client::frame(void *ctx, uint8_t type, const uint8_t *p, size_t n) {
       self->message = "Pose updated";
     else if (reply.operation == "reset")
       self->message = "Actor reset";
-    else if (reply.operation == "lock_pose")
-      self->message = "Pose locked";
-    else if (reply.operation == "unlock_pose")
-      self->message = "Pose unlocked";
     else
       self->message = "Request completed";
     return 0;

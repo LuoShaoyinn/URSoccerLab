@@ -5,7 +5,7 @@ camera, with an optional admin panel for actor poses. This `main-cli` branch is 
 standalone C/C++ project. The simulator and its documentation remain on the
 [main branch](https://github.com/LuoShaoyinn/URSoccerLab/tree/main).
 
-The viewer uses SDL2, Dear ImGui and FFmpeg. It receives streamed images rather
+The viewer uses wxWidgets and FFmpeg. It receives streamed images rather
 than rendering the scene locally. Python, Unreal Engine and MuJoCo are not needed
 to run the viewer. This branch also owns the reusable C/C++ connector libraries
 and the [Python connector wheel](python/README.md).
@@ -18,13 +18,13 @@ Install the development dependencies on Ubuntu, then build from the repository
 root:
 
 ```bash
-sudo apt install build-essential cmake pkg-config libsdl2-dev \
+sudo apt install build-essential cmake pkg-config libwxgtk3.2-dev \
     libavcodec-dev libavutil-dev libswscale-dev
 cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel
 cmake --build build -j
 ```
 
-CMake downloads pinned Dear ImGui and cJSON sources with SHA256 checks. SDL2 and
+CMake downloads pinned cJSON sources with a SHA256 check. wxWidgets and
 FFmpeg come from the build environment. FFmpeg needs AV1, H.264 and HEVC decoders
 for the corresponding server codecs; libdav1d is preferred for AV1.
 
@@ -35,7 +35,7 @@ Build in an MSYS2 **UCRT64** terminal:
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-gcc \
     mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
-    mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-SDL2 \
+    mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-wxwidgets3.2-msw \
     mingw-w64-ucrt-x86_64-ffmpeg
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
 cmake --build build
@@ -58,7 +58,7 @@ On Windows use `build/urs-viewer.exe`. Replace localhost with the simulator's IP
 for a remote connection; the server can run on Linux while the viewer runs on
 Windows.
 
-Click **Connect guest** using port **12000**. Video starts at a periodic keyframe.
+Click **Connect** in the Guest section using port **12000**. Video starts at a periodic keyframe.
 The scene JSON determines guest resolution, frame rate and capacity; the client
 does not negotiate them.
 
@@ -66,23 +66,26 @@ does not negotiate them.
 | --- | --- |
 | Click the video | Capture the mouse |
 | Mouse | Look around |
-| WASD | Move forward/back/left/right |
-| Space / left Ctrl | Move up/down |
-| Left Shift | Move faster |
+| WASD | Move horizontally forward/back/left/right |
+| Space / Shift | Move up/down |
+| Ctrl | Move faster |
 | Esc or losing window focus | Release the mouse |
 
-Use the speed slider or **Reset camera** in the panel. Camera positions stay
-within +/-99 metres; flight does not collide with hall geometry.
+On Linux under Wayland, mouse-look currently requires XWayland; the viewer uses
+its X11 backend when available unless `GDK_BACKEND` is explicitly set.
+
+Click **Reset camera** to restore the starting position and orientation. Camera positions stay
+within +/-99 metres; flight does not collide with hall geometry. Drag the divider
+to resize the controls, or use the arrow button to hide or show them.
 
 ### Optional admin panel
 
-Click **Connect admin** on port **11000**. Enter an actor ID from your scene, such
+Click **Connect** in the Admin section on port **11000**. Enter an actor ID from your scene, such
 as `robot_rp0` or `ball`.
 
 - **Get pose** fills the position and xyzw quaternion fields.
 - **Set pose** applies those fields, leaving joint positions unspecified.
 - **Reset actor** restores its initial pose.
-- **Lock pose** holds the specified pose; **Unlock pose** releases it.
 
 Replies use short status messages rather than raw JSON. Actor IDs are entered
 manually. The panel does not discover actors, authenticate users, pause physics
@@ -102,8 +105,7 @@ The Linux x86_64 viewer archive was built on Arch Linux and requires matching
 shared libraries; it is not a portable bundle. Extract it and run
 `./bin/urs-viewer --host 127.0.0.1`. Windows binaries are not published yet.
 
-The Linux MinSizeRel executable is approximately **678 KiB**, excluding shared dependencies.
-A standalone distribution must also supply SDL/FFmpeg libraries and their required
+A standalone distribution must also supply wxWidgets/FFmpeg libraries and their required
 license notices. Linux builds inherit their build environment's glibc and library
 requirements; the local build is not an Ubuntu 22.04-compatible AppImage.
 
@@ -121,7 +123,7 @@ cmake/                 # Installed CMake package configuration
 ```
 
 The C library has no GUI, socket, JSON-parser or decoder dependency. C++ connection
-workers own sockets and video decoding; they publish owned latest images. SDL
+workers own sockets and video decoding; they publish owned latest images. wxWidgets
 textures and UI remain on the main thread. Pending camera commands are replaced
 by the newest pose; admin commands use a bounded queue. Reconnect manually after
 a disconnect.
@@ -169,7 +171,7 @@ live in `include/ursoccerlab/`. It currently provides the guest/admin workflow;
 robot-specific high-level methods and stereo/depth splitting remain in Python.
 The C protocol API is available for custom robot clients.
 
-Build the connector without SDL/ImGui:
+Build the connector without the viewer:
 
 ```bash
 cmake -S . -B build -DURS_BUILD_CONNECTOR=ON -DURS_BUILD_VIEWER=OFF
@@ -202,7 +204,7 @@ third-party shared libraries into a portable bundle.
 
 ```bash
 uv build --wheel --out-dir build/python-wheel python
-python -m pip install build/python-wheel/ursoccerlab_client-0.1.1-py3-none-any.whl
+python -m pip install build/python-wheel/ursoccerlab_client-0.1.2-py3-none-any.whl
 ```
 
 Import `RobotClient`, `AdminClient` and `InspectorClient` from `ursoccerlab`.
@@ -215,8 +217,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 The tests cover framing, metadata, command formatting, readable JSON replies and
-three SDL/ImGui render iterations using SDL's dummy video driver. Dummy-video
-initialization does not validate interactive mouse capture or real presentation.
+the native client protocol and reply parsing. Interactive display, mouse capture,
+and real presentation require a running desktop session and simulator.
 
 Optional real AV1/H.264/H.265 decoder fixtures use Python only for testing:
 
