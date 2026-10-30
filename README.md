@@ -60,7 +60,7 @@ chmod +x URSoccerLab.AppImage
 ./URSoccerLab.AppImage scene.json
 ```
 
-Resource archives are supplied separately:
+Resource archives are supplied separately. The [updated robot archive](https://github.com/LuoShaoyinn/URSoccerLab/releases/tag/resources-v0.1.1) includes the K1 walking armatures:
 `robots.7z` contains Pi Plus, MOS9 and Booster K1 packages; `fields.7z` contains
 the example field image and grass PBR maps; `ball.7z` contains the original ball
 GLB/MJCF, extracted PBR textures and sample checkerboard maps for testing.

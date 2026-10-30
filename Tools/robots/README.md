@@ -46,3 +46,5 @@ Add the manifest to your scene:
 
 Paths above assume scene.json lives in Config/. Explicit translation_m overrides
 the package height. Robots use the existing network, nDisplay and encoding path.
+
+The generated K1 model includes joint armature values from the MOS-Brain MuJoCo K1 reference. These values are needed by the MOS-Brain walking checkpoint; the source URDF did not supply them. An eight-second URSoccerLab trial with a 0.3 m/s command remained upright.

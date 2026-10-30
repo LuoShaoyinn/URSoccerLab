@@ -11,6 +11,9 @@ import trimesh
 import mujoco
 
 
+# Joint armature values from MOS-Brain K1_22dof.xml.
+ARMATURE = {'AAHead_yaw': 0.002, 'Head_pitch': 0.002, 'ALeft_Shoulder_Pitch': 0.001, 'Left_Shoulder_Roll': 0.001, 'Left_Elbow_Pitch': 0.001, 'Left_Elbow_Yaw': 0.001, 'ARight_Shoulder_Pitch': 0.001, 'Right_Shoulder_Roll': 0.001, 'Right_Elbow_Pitch': 0.001, 'Right_Elbow_Yaw': 0.001, 'Left_Hip_Pitch': 0.0478125, 'Left_Hip_Roll': 0.0339552, 'Left_Hip_Yaw': 0.0282528, 'Left_Knee_Pitch': 0.095625, 'Left_Ankle_Pitch': 0.0565, 'Left_Ankle_Roll': 0.0565, 'Right_Hip_Pitch': 0.0478125, 'Right_Hip_Roll': 0.0339552, 'Right_Hip_Yaw': 0.0282528, 'Right_Knee_Pitch': 0.095625, 'Right_Ankle_Pitch': 0.0565, 'Right_Ankle_Roll': 0.0565}
+
 def vec(s): return np.fromstring(s, sep=' ')
 def fmt(v): return ' '.join(f'{x:.12g}' for x in v)
 def rotation(rpy):
@@ -78,7 +81,7 @@ def main():
         ET.SubElement(body,'inertial',pos=ipos,mass=inertial.find('mass').get('value'),fullinertia=fmt([t[0,0],t[1,1],t[2,2],t[0,1],t[0,2],t[1,2]]))
         if joint is None:ET.SubElement(body,'freejoint',name='root')
         else:
-            limit=joint.find('limit');ET.SubElement(body,'joint',name=joint.get('name'),type='hinge',axis=joint.find('axis').get('xyz'),range=limit.get('lower')+' '+limit.get('upper'))
+            limit=joint.find('limit'); name=joint.get('name'); ET.SubElement(body,'joint',name=name,type='hinge',axis=joint.find('axis').get('xyz'),range=limit.get('lower')+' '+limit.get('upper'),armature=str(ARMATURE[name]))
         ET.SubElement(asset,'mesh',name='visual_'+name,file=name+'.glb');ET.SubElement(body,'geom',name='visual_'+name,type='mesh',mesh='visual_'+name,contype='0',conaffinity='0',mass='0',group='2')
         for col in link.findall('collision'):
             xyz,rpy=origin(col);q=np.empty(4);mujoco.mju_mat2Quat(q,rotation(rpy).flatten());geom=ET.SubElement(body,'geom',name=f'collision_{collision_id}',pos=xyz,quat=fmt(q),group='3');collision_id+=1
