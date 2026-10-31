@@ -407,3 +407,5 @@ changing the texture layout.
 
 Edit JSON and relaunch or reapply the scene configuration. There is no file
 watcher. The packaged application loads these external maps at startup.
+
+The optional top-level `"command_timeout_sec": 1.0` sets the command watchdog in seconds. It must be positive; the default is 0.1 s. After the timeout, actuator commands become zero (zero position targets in position mode).

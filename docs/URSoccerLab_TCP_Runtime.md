@@ -23,7 +23,7 @@
 - **Camera motion blur**: real camera captures use velocity-based blur with persistent render history. JSON enables motion blur explicitly; its amount defaults to `0.5`, maximum streak to 5% of screen width, and target FPS zero follows the configured camera rate.
 - **Outbound buffering**: the network worker flushes nonblocking writes. Each client keeps one latest video frame waiting behind any partially sent frame. The byte stream is never truncated mid-frame; clients whose unsent byte buffer exceeds 4 MiB are disconnected.
 - **Admin threading**: socket I/O runs on the network worker. Ordered requests cross a queue to the game-thread admin service, and replies return to the originating connection.
-- **Command watchdog**: `CommandTimeoutSec` (default 0.1 s). If no valid command arrives within the timeout, motors are zeroed.
+- **Command watchdog**: scene JSON `command_timeout_sec` (default 0.1 s; must be positive). If no valid command arrives within the timeout, motors are zeroed.
 
 Configure motion blur, lighting and camera rates in scene JSON; see the
 [scene reference](URSoccerLab_Scene_Building_Api.md). The AppImage accepts only

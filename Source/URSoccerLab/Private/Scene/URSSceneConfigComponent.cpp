@@ -29,6 +29,7 @@
 #include "Misc/Parse.h"
 #include "Scene/URSObjectTypeRegistry.h"
 #include "Transport/URSTcpTransportComponent.h"
+#include "Core/URSRobotCoreComponent.h"
 
 using namespace URSoccerLab;
 
@@ -674,10 +675,11 @@ void UURSSceneConfigComponent::ApplyPhysicsConfig()
 	const double Dt = ActiveConfig.MujocoDt;
 	const double StateHz = ActiveConfig.StateFreq;
 	const double CamHz = ActiveConfig.CameraFreq;
+	const double TimeoutSec = ActiveConfig.CommandTimeoutSec;
 
-	if (Dt <= 0.0 && StateHz <= 0.0 && CamHz <= 0.0) return;
 
-	GetWorld()->GetTimerManager().SetTimerForNextTick([this, Dt, StateHz, CamHz]()
+
+	GetWorld()->GetTimerManager().SetTimerForNextTick([this, Dt, StateHz, CamHz, TimeoutSec]()
 	{
 		if (Dt > 0.0)
 		{
@@ -693,6 +695,8 @@ void UURSSceneConfigComponent::ApplyPhysicsConfig()
 		}
 		if (GetOwner())
 		{
+			if (auto* Core = GetOwner()->FindComponentByClass<UURSRobotCoreComponent>())
+				Core->CommandTimeoutSec = TimeoutSec;
 			if (StateHz > 0.0)
 			{
 				if (auto* Transport = GetOwner()->FindComponentByClass<UURSTcpTransportComponent>())

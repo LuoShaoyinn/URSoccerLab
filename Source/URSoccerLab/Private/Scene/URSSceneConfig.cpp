@@ -723,6 +723,7 @@ bool FURSSceneConfigIo::LoadFromFile(const FString& AbsPath, FURSSceneConfig& Ou
 
 	Root->TryGetNumberField(TEXT("mujoco_dt"), Out.MujocoDt);
 	Root->TryGetNumberField(TEXT("state_freq"), Out.StateFreq);
+	Root->TryGetNumberField(TEXT("command_timeout_sec"), Out.CommandTimeoutSec);
 	Root->TryGetNumberField(TEXT("camera_freq"), Out.CameraFreq);
 
 	const TArray<TSharedPtr<FJsonValue>>* RobotsArr = nullptr;
@@ -1263,6 +1264,8 @@ FURSSceneConfigValidationResult FURSSceneConfigIo::Validate(const FURSSceneConfi
  { Result.bOk = false; Result.Errors.Add(TEXT("Invalid shared encoder codec, backend, fallback_codec, or device")); }
 
  const auto InRange = [](double Value, double Low, double High) { return FMath::IsFinite(Value) && Value >= Low && Value <= High; };
+ if (!FMath::IsFinite(Config.CommandTimeoutSec) || Config.CommandTimeoutSec <= 0.0)
+ { Result.bOk = false; Result.Errors.Add(TEXT("command_timeout_sec must be positive and finite")); }
  const auto& Render = Config.Render;
  if (!InRange(Config.Lighting.SourceRadiusCm, 0, 500) || !InRange(Config.Lighting.SpecularScale, 0, 1))
  { Result.bOk = false; Result.Errors.Add(TEXT("lighting.source_radius_cm [0,500] and specular_scale [0,1] required")); }

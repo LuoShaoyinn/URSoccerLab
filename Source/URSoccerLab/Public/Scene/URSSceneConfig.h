@@ -243,6 +243,9 @@ struct URSOCCERLAB_API FURSSceneConfig
 	// Physics timestep override. 0 = use MJCF default.
 	double MujocoDt = 0.0;
 
+	// Command watchdog duration in seconds. Defaults to 0.1 seconds.
+	double CommandTimeoutSec = 0.1;
+
 	// State publish rate (Hz). 0 = use transport default (60).
 	double StateFreq = 0.0;
 
