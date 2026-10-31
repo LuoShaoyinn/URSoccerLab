@@ -200,25 +200,35 @@ def main() -> int:
             joint_qpos[i] = -1.4
         elif "shoulder_roll" in jn and jn.startswith("l"):
             joint_qpos[i] = 1.4
+    admin = AdminClient(args.host, args.admin_port)
+    locked = False
     try:
-        admin = AdminClient(args.host, args.admin_port)
-        admin.set_pose(args.actor, translation_m=[-3.0, 0.0, args.base_height],
-                       rotation_quat_xyzw=[0, 0, 0, 1], joint_qpos=joint_qpos)
-        admin.close()
-    except Exception as e:
-        print(f"[walk] WARNING: admin set_pose failed: {e}", flush=True)
-    send_targets(DEFAULT_QPOS)
-    print("[walk] holding standing pose for 1.0 s", flush=True)
-    hold_until = time.monotonic() + 1.0
-    while time.monotonic() < hold_until:
-        pump()
-        pump_observer()
+        reply = admin.lock_pose(args.actor, translation_m=[-3.0, 0.0, args.base_height],
+                                rotation_quat_xyzw=[0, 0, 0, 1], joint_qpos=joint_qpos)
+        if not reply.get("ok"):
+            raise RuntimeError(f"Could not reset and lock {args.actor}: {reply}")
+        locked = True
         send_targets(DEFAULT_QPOS)
-        time.sleep(0.01)
+        # Let the state stream reflect the locked pose before inference.
+        hold_until = time.monotonic() + 0.5
+        while time.monotonic() < hold_until:
+            pump()
+            pump_observer()
+            send_targets(DEFAULT_QPOS)
+            time.sleep(0.01)
+        reply = admin.unlock_pose(args.actor)
+        if not reply.get("ok"):
+            raise RuntimeError(f"Could not unlock {args.actor}: {reply}")
+        locked = False
+    finally:
+        if locked:
+            admin.unlock_pose(args.actor)
+        admin.close()
 
     # ── Walk ────────────────────────────────────────────────────────────────
     prev_action = np.zeros(18, dtype=np.float32)
-    last_policy_sim_time = -1.0
+    next_policy_sim_time = None
+    targets = DEFAULT_QPOS.copy()
     ctrl_dt = 1.0 / args.policy_hz
     start_x = latest_state["base"]["pos"][0]
     start_sim_time = latest_state.get("sim_time", 0.0)
@@ -228,17 +238,21 @@ def main() -> int:
     while time.monotonic() < end:
         pump()
         pump_observer()
-        send_targets(DEFAULT_QPOS + prev_action * ACTION_SCALES)  # resend to prevent timeout
+        send_targets(targets)  # resend the clipped targets to prevent timeout
 
         if latest_state is None:
             time.sleep(0.001)
             continue
 
         sim_time = latest_state.get("sim_time", 0.0)
-        if sim_time - last_policy_sim_time < ctrl_dt:
+        if next_policy_sim_time is None:
+            next_policy_sim_time = sim_time
+        if sim_time + 1e-6 < next_policy_sim_time:
             time.sleep(0.001)
             continue
-        last_policy_sim_time = sim_time
+        next_policy_sim_time += ctrl_dt
+        if next_policy_sim_time <= sim_time:
+            next_policy_sim_time = sim_time + ctrl_dt
 
         # ── Build 63-dim observation ────────────────────────────────────────
         base = latest_state["base"]
@@ -266,10 +280,10 @@ def main() -> int:
 
         # ── Policy inference ────────────────────────────────────────────────
         action = policy(obs).astype(np.float64)
-        target = np.clip(DEFAULT_QPOS + action * ACTION_SCALES,
+        targets = np.clip(DEFAULT_QPOS + action * ACTION_SCALES,
                          JOINT_RANGES[:, 0], JOINT_RANGES[:, 1])
         prev_action = action.astype(np.float32)
-        send_targets(target)
+        send_targets(targets)
 
     # ── Summary ─────────────────────────────────────────────────────────────
     pump()
