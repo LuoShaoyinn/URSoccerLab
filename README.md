@@ -35,3 +35,5 @@ Each example has its own `pyproject.toml`. From an example directory, run `uv sy
 The K1 checkpoint is used by the MOS-Brain MuJoCo reference in `refs/mos-brain/simulation/mujoco`: install its `requirements.txt` and run `python sim2sim_runner.py --robot-type k1 --team-size 3` from that directory. Its `app/runtime_config.py` defines the joint order, gains, observation scales and 50 Hz control settings. The URSoccerLab adaptation is in `walk/k1_walk`; see its README for usage and validation limits.
 
 Walking examples are grouped in `walk/`: `k1_walk`, `pi_walk`, and `mos9_walk`.
+
+Example scenes set `command_timeout_sec` to 1.0 second to tolerate brief command interruptions. This requires the updated simulator release; on timeout, position-mode targets become zero.

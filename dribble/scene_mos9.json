@@ -1,5 +1,6 @@
 {
   "version": "urs_scene_v1",
+  "command_timeout_sec": 1.0,
   "render": {
     "enable": true,
     "lumen": true,
